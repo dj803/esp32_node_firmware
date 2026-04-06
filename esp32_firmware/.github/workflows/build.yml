@@ -1,0 +1,123 @@
+name: Build and Release Firmware
+
+# Triggers:
+#   - Every push to main (build only, no release)
+#   - Every tag matching v*.*.* (build + attach firmware.bin to GitHub Release)
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    name: Compile ESP32 Firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Install Arduino CLI ───────────────────────────────────────────────
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+        with:
+          version: "1.0.4"
+
+      # ── 3. Configure Arduino CLI ─────────────────────────────────────────────
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      # ── 4. Install ESP32 board package ───────────────────────────────────────
+      - name: Install ESP32 board package
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+
+      # ── 5. Install libraries ──────────────────────────────────────────────────
+      # AsyncMqttClient requires AsyncTCP as a dependency.
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib install "ArduinoJson@7"
+          # AsyncMqttClient and AsyncTCP are installed from GitHub (not in registry)
+          mkdir -p ~/Arduino/libraries
+          git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
+            ~/Arduino/libraries/AsyncMqttClient
+          git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
+            ~/Arduino/libraries/AsyncTCP
+
+      # ── 6. Extract version from tag (if this is a release build) ─────────────
+      - name: Extract firmware version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      # ── 7. Patch FIRMWARE_VERSION in config.h ────────────────────────────────
+      # Ensures the compiled binary reports the same version as the git tag.
+      - name: Patch firmware version in config.h
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TIMESTAMP=$(date +%s)
+          sed -i "s|#define FIRMWARE_VERSION.*|#define FIRMWARE_VERSION           \"${VERSION}\"|" \
+            esp32_firmware/config.h
+          sed -i "s|#define FIRMWARE_BUILD_TIMESTAMP.*|#define FIRMWARE_BUILD_TIMESTAMP   ${TIMESTAMP}ULL|" \
+            esp32_firmware/config.h
+          echo "Patched config.h:"
+          grep -E "FIRMWARE_VERSION|FIRMWARE_BUILD_TIMESTAMP" esp32_firmware/config.h
+
+      # ── 8. Compile sketch ────────────────────────────────────────────────────
+      - name: Compile sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --output-dir ./build \
+            --warnings default \
+            esp32_firmware/esp32_firmware.ino
+
+      # ── 9. Rename output binary ──────────────────────────────────────────────
+      - name: Rename binary
+        run: |
+          cp ./build/esp32_firmware.ino.bin ./firmware.bin
+          echo "Binary size: $(wc -c < firmware.bin) bytes"
+
+      # ── 10. Upload artifact (every build) ───────────────────────────────────
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ steps.version.outputs.version }}
+          path: firmware.bin
+          retention-days: 30
+
+      # ── 11. Attach to GitHub Release (tag builds only) ───────────────────────
+      - name: Attach firmware.bin to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: firmware.bin
+          name: "Firmware v${{ steps.version.outputs.version }}"
+          body: |
+            ## ESP32 Credential Bootstrap Firmware v${{ steps.version.outputs.version }}
+
+            ### Installation
+            Flash via Arduino IDE or esptool:
+            ```
+            esptool.py --chip esp32 --baud 921600 write_flash 0x10000 firmware.bin
+            ```
+
+            ### OTA
+            Nodes running v1.0.0 or later will automatically detect and apply this
+            update within one OTA check interval (default: 1 hour), or immediately
+            when triggered via MQTT `cmd/ota_check`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
