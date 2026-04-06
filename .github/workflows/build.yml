@@ -22,9 +22,10 @@ jobs:
 
       # ── 2. Install Arduino CLI ───────────────────────────────────────────────
       - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v1
-        with:
-          version: "1.0.4"
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+            | BINDIR=/usr/local/bin sh -s -- 1.0.4
+          arduino-cli version
 
       # ── 3. Configure Arduino CLI ─────────────────────────────────────────────
       - name: Configure Arduino CLI
