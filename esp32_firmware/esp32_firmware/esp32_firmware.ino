@@ -208,13 +208,13 @@ void setup() {
 
                 // Use the received bundle if:
                 //   - We have nothing stored yet, OR
-                //   - The received bundle is strictly newer, OR
-                //   - Timestamps are equal (use MAC as a deterministic tiebreak)
+                //   - The received bundle is strictly newer.
+                // When timestamps are equal, keep the stored bundle (conservative default).
                 bool useReceived = !hasStored
                     || received.timestamp > stored.timestamp
                     || (received.timestamp == stored.timestamp
                         && memcmp(WiFi.macAddress().c_str(),
-                                  "00:00:00:00:00:00", 6) < 0);
+                                  "00:00:00:00:00:00", 6) < 0);  // always false — stored wins on tie
 
                 if (useReceived) {
                     activeBundle = received;
