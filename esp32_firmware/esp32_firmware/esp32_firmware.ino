@@ -208,13 +208,13 @@ void setup() {
 
                 // Use the received bundle if:
                 //   - We have nothing stored yet, OR
-                //   - The received bundle is strictly newer, OR
-                //   - Timestamps are equal (use MAC as a deterministic tiebreak)
+                //   - The received bundle is strictly newer.
+                // When timestamps are equal, keep the stored bundle (conservative default).
                 bool useReceived = !hasStored
                     || received.timestamp > stored.timestamp
                     || (received.timestamp == stored.timestamp
                         && memcmp(WiFi.macAddress().c_str(),
-                                  "00:00:00:00:00:00", 6) < 0);
+                                  "00:00:00:00:00:00", 6) < 0);  // always false — stored wins on tie
 
                 if (useReceived) {
                     activeBundle = received;
@@ -377,6 +377,28 @@ void loop() {
     // mqttHeartbeat() checks the elapsed time internally and returns immediately
     // if the interval has not elapsed yet — safe to call every loop tick.
     mqttHeartbeat();
+
+    // ── MQTT self-heal ────────────────────────────────────────────────────────
+    // Hung watchdog: if connect() was called but no callback (success or failure)
+    // arrived within MQTT_HUNG_TIMEOUT_MS the AsyncMqttClient TCP layer has
+    // silently stalled — restart immediately.
+    // Tier 2: hard restart once MQTT_RESTART_THRESHOLD consecutive failures hit.
+    // Tier 1: re-run broker discovery at MQTT_REDISCOVERY_THRESHOLD failures.
+    if (mqttIsHung()) {
+        Serial.println("[Loop] MQTT hung (no callback) — restarting device");
+        CredentialStore::incrementRestartCount();
+        ESP.restart();
+    } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
+        Serial.println("[Loop] MQTT unrecoverable — restarting device");
+        CredentialStore::incrementRestartCount();
+        ESP.restart();
+    } else if (mqttNeedsRediscovery()) {
+        mqttClearRediscoveryFlag();
+        Serial.println("[Loop] MQTT stuck — re-running broker discovery");
+        BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
+        if (broker.found()) saveBrokerToCache(broker.host, broker.port);
+        mqttReinit(broker);
+    }
 
     // ── OTA version check ─────────────────────────────────────────────────────
     // Checks GitHub for a newer firmware release every OTA_CHECK_INTERVAL_MS,
