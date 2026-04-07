@@ -37,7 +37,7 @@ jobs:
       - name: Install ESP32 board package
         run: |
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli core install esp32:esp32@3.1.1
 
       # ── 5. Install libraries ──────────────────────────────────────────────────
       # AsyncMqttClient requires AsyncTCP as a dependency.
