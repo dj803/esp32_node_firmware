@@ -41,6 +41,7 @@ static TimerHandle_t    _mqttReconnectTimer = nullptr;    // FreeRTOS timer for 
 static uint32_t         _mqttReconnectDelay = 1000;       // Current reconnect delay (ms); grows on failure
 static int              _mqttReconnectCount = 0;          // Consecutive failure count; reset on connect
 static bool             _mqttNeedsRediscovery = false;    // Set at MQTT_REDISCOVERY_THRESHOLD; cleared by loop()
+static uint32_t         _mqttConnectStartMs = 0;          // millis() when connect() was last called; 0 = idle
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
 static CredentialBundle _mqttBundle;                      // Copy of credentials, kept for rotation key access
 
@@ -229,6 +230,7 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttReconnectDelay     = 1000;   // Reset back-off delay after a successful connect
     _mqttReconnectCount     = 0;      // Clear failure counter
     _mqttNeedsRediscovery   = false;  // Clear rediscovery flag if loop() hadn't seen it yet
+    _mqttConnectStartMs     = 0;      // Clear watchdog — we are no longer in a connecting state
 
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
@@ -251,6 +253,7 @@ static void onMqttConnect(bool sessionPresent) {
 // Starts the reconnect timer instead of reconnecting immediately, to avoid
 // hammering the broker during outages.
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+    _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
     if (_mqttReconnectCount == MQTT_REDISCOVERY_THRESHOLD) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
@@ -279,7 +282,8 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 static void mqttReconnectTimerCb(TimerHandle_t) {
     if (WiFi.isConnected()) {
         Serial.println("[MQTT] Attempting reconnect...");
-        _mqttClient.connect();   // Triggers onMqttConnect on success, onMqttDisconnect on failure
+        _mqttConnectStartMs = millis();   // Start watchdog — loop() will restart if no callback arrives
+        _mqttClient.connect();            // Triggers onMqttConnect on success, onMqttDisconnect on failure
     }
     // If Wi-Fi is not connected, do nothing — the main loop handles Wi-Fi recovery
 }
@@ -338,7 +342,8 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     _mqttClient.setClientId(clientId.c_str());
 
     Serial.printf("[MQTT] Connecting to %s:%d as %s", host.c_str(), port, clientId.c_str());
-    _mqttClient.connect();   // Non-blocking — result arrives via callbacks
+    _mqttConnectStartMs = millis();   // Start watchdog for the initial connect attempt
+    _mqttClient.connect();            // Non-blocking — result arrives via callbacks
 }
 
 
@@ -349,6 +354,14 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
 bool mqttNeedsRediscovery()      { return _mqttNeedsRediscovery; }
 void mqttClearRediscoveryFlag()  { _mqttNeedsRediscovery = false; }
 int  mqttFailCount()             { return _mqttReconnectCount; }
+
+// Returns true if connect() was called but no callback has arrived within
+// MQTT_HUNG_TIMEOUT_MS — the AsyncMqttClient's TCP layer has silently stalled.
+bool mqttIsHung() {
+    return _mqttConnectStartMs > 0 &&
+           !_mqttClient.connected() &&
+           (millis() - _mqttConnectStartMs >= MQTT_HUNG_TIMEOUT_MS);
+}
 
 
 // ── mqttReinit ────────────────────────────────────────────────────────────────
@@ -366,6 +379,7 @@ void mqttReinit(const BrokerResult& broker) {
         xTimerStop(_mqttReconnectTimer, 0);
     }
     delay(100);
+    _mqttConnectStartMs = millis();   // Start watchdog for the reinit connect attempt
     _mqttClient.connect();
 }
 
