@@ -44,12 +44,14 @@ jobs:
       - name: Install Arduino libraries
         run: |
           arduino-cli lib install "ArduinoJson@7"
-          # AsyncMqttClient and AsyncTCP are installed from GitHub (not in registry)
+          # AsyncMqttClient, AsyncTCP, and ESP32-OTA-Pull are installed from GitHub (not in registry)
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
             ~/Arduino/libraries/AsyncMqttClient
           git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
             ~/Arduino/libraries/AsyncTCP
+          git clone --depth 1 https://github.com/mikalhart/ESP32-OTA-Pull.git \
+            ~/Arduino/libraries/ESP32OTAPull
 
       # ── 6. Extract version from tag (if this is a release build) ─────────────
       - name: Extract firmware version
