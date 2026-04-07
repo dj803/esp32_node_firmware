@@ -108,6 +108,13 @@ void otaCheckNow() {
     mqttPublishStatus("ota_downloading", extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
+    // Disconnect MQTT before the blocking download. The HTTPClient download
+    // holds the TCP stack busy for 30–60 s; leaving AsyncMqttClient connected
+    // starves its async_tcp task of CPU cycles and triggers the task watchdog.
+    // The device reboots immediately on success, so no reconnect is needed.
+    _mqttClient.disconnect(true);
+    delay(100);   // Let the disconnect packet flush before the socket is taken over
+
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
     ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
