@@ -54,7 +54,7 @@ static bool     _otaForced    = false; // True when MQTT has requested an immedi
 // and flashes the new firmware if a newer version is available.
 // Called periodically from otaLoop() and on demand from the MQTT handler.
 void otaCheckNow() {
-    Serial.println("[OTA] Checking for new firmware...");
+    Serial.println("[OTA] Checking for new firmware... (running: " FIRMWARE_VERSION ")");
     mqttPublishStatus("ota_checking",
                       "\"current_version\":\"" FIRMWARE_VERSION "\"");
 
@@ -80,7 +80,8 @@ void otaCheckNow() {
                                     ESP32OTAPull::DONT_DO_UPDATE);
 
     if (ret == ESP32OTAPull::NO_UPDATE_AVAILABLE) {
-        Serial.println("[OTA] Firmware is already up to date");
+        Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
+                      ota.GetVersion().c_str());
         return;
     }
 
