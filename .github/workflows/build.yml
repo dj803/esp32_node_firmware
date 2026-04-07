@@ -125,3 +125,47 @@ jobs:
             when triggered via MQTT `cmd/ota_check`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 12. Publish firmware.bin + ota.json to GitHub Pages ─────────────────
+      # GitHub Pages serves files directly (no redirect), so ESP32-OTA-Pull can
+      # download the binary without hitting the 302 that GitHub Release URLs return.
+      - name: Publish to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO_NAME="$(echo '${{ github.repository }}' | cut -d/ -f2)"
+          PAGES_URL="https://${OWNER}.github.io/${REPO_NAME}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check out gh-pages (create orphan branch if it doesn't exist yet)
+          git fetch origin gh-pages 2>/dev/null || true
+          if git ls-remote --exit-code origin gh-pages; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+          fi
+
+          # Write ota.json pointing to the Pages-hosted binary (no redirect)
+          cat > ota.json <<EOF
+          {
+            "Configurations": [
+              {
+                "Version": "${VERSION}",
+                "URL": "${PAGES_URL}/firmware.bin"
+              }
+            ]
+          }
+          EOF
+
+          # Copy the freshly built binary into the Pages tree
+          cp "$GITHUB_WORKSPACE/firmware.bin" firmware.bin
+
+          git add ota.json firmware.bin
+          git commit -m "release: firmware v${VERSION} OTA assets"
+          git push origin gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
