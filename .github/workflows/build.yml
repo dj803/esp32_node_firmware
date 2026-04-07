@@ -140,9 +140,13 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Restore config.h — it was patched in-place by step 7 but never committed.
+          # The binary is already compiled; leaving it dirty would block the branch switch.
+          git checkout -- esp32_firmware/esp32_firmware/config.h
+
           # Check out gh-pages (create orphan branch if it doesn't exist yet)
           git fetch origin gh-pages 2>/dev/null || true
-          if git ls-remote --exit-code origin gh-pages; then
+          if git ls-remote --exit-code origin gh-pages > /dev/null 2>&1; then
             git checkout gh-pages
           else
             git checkout --orphan gh-pages
