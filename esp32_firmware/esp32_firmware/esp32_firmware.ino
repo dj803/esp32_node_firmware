@@ -153,7 +153,7 @@ void setup() {
     // Load GitHub owner/repo and MQTT ISA-95 topic segments from NVS into gAppConfig.
     // Any field not yet saved in NVS falls back to the config.h compile-time default.
     // Must run BEFORE mqttBegin() (reads gAppConfig for topic building) and
-    // BEFORE otaCheckNow() (reads gAppConfig.github_owner / github_repo).
+    // BEFORE otaCheckNow() (reads gAppConfig.ota_json_url).
     AppConfigStore::load();
 
 

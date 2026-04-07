@@ -11,7 +11,7 @@
 // PURPOSE:
 //   Stores settings that are deployment-specific but NOT sensitive enough to
 //   be credentials, and NOT device identity. Specifically:
-//     - GitHub owner and repository name (used by ota.h to fetch firmware.bin)
+//     - OTA JSON URL (stable GitHub Pages URL used by ota.h to check for updates)
 //     - MQTT ISA-95 topic hierarchy segments (Enterprise, Site, Area, Line,
 //       Cell, DeviceType) used by mqtt_client.h to build all topic paths
 //
@@ -38,7 +38,7 @@
 //
 // GLOBAL INSTANCE:
 //   gAppConfig is populated by AppConfigStore::load() at boot and is then
-//   read directly by ota.h (for github_owner / github_repo) and mqtt_client.h
+//   read directly by ota.h (for ota_json_url) and mqtt_client.h
 //   (for all mqtt_* fields). It is also updated in-place by AppConfigStore::save()
 //   so changes made via the settings portal take effect immediately without restart.
 // =============================================================================
@@ -48,8 +48,7 @@
 
 // Per-field buffer sizes — generous enough for real-world values, conservative
 // enough to fit comfortably in NVS (max NVS string value is 4000 bytes)
-#define APP_CFG_GITHUB_OWNER_LEN   64   // GitHub username or organisation name
-#define APP_CFG_GITHUB_REPO_LEN    64   // GitHub repository name (not the full URL)
+#define APP_CFG_OTA_JSON_URL_LEN   256  // Full HTTPS URL of the OTA JSON filter file
 #define APP_CFG_MQTT_SEG_LEN       48   // One ISA-95 topic segment: Enterprise/Site/etc.
 
 
@@ -58,10 +57,9 @@
 // Loaded once at boot by AppConfigStore::load(), then treated as read-only
 // until the settings portal saves a new copy via AppConfigStore::save().
 struct AppConfig {
-    // GitHub OTA source — never stored in the repo to avoid credential leaks.
+    // OTA JSON URL — stable URL of the JSON filter file on GitHub Pages.
     // Set via the AP portal (first setup) or settings portal (already connected).
-    char github_owner[APP_CFG_GITHUB_OWNER_LEN]   = {0};   // e.g. "myorg"
-    char github_repo[APP_CFG_GITHUB_REPO_LEN]     = {0};   // e.g. "esp32-firmware"
+    char ota_json_url[APP_CFG_OTA_JSON_URL_LEN]   = {0};   // e.g. "https://myorg.github.io/esp32-firmware/ota.json"
 
     // MQTT topic hierarchy (ISA-95 / Unified Namespace).
     // Full path: Enterprise/Site/Area/Line/Cell/DeviceType/<UUID>/prefix
@@ -116,9 +114,8 @@ public:
         };
 
         // NVS key names are short (≤15 chars) to stay within the NVS key length limit
-        readStr("gh_owner",   gAppConfig.github_owner,     APP_CFG_GITHUB_OWNER_LEN, GITHUB_OTA_OWNER);
-        readStr("gh_repo",    gAppConfig.github_repo,      APP_CFG_GITHUB_REPO_LEN,  GITHUB_OTA_REPO);
-        readStr("mq_ent",     gAppConfig.mqtt_enterprise,  APP_CFG_MQTT_SEG_LEN,     MQTT_ENTERPRISE);
+        readStr("ota_json_url", gAppConfig.ota_json_url,     APP_CFG_OTA_JSON_URL_LEN, OTA_JSON_URL);
+        readStr("mq_ent",       gAppConfig.mqtt_enterprise,  APP_CFG_MQTT_SEG_LEN,     MQTT_ENTERPRISE);
         readStr("mq_site",    gAppConfig.mqtt_site,        APP_CFG_MQTT_SEG_LEN,     MQTT_SITE);
         readStr("mq_area",    gAppConfig.mqtt_area,        APP_CFG_MQTT_SEG_LEN,     MQTT_AREA);
         readStr("mq_line",    gAppConfig.mqtt_line,        APP_CFG_MQTT_SEG_LEN,     MQTT_LINE);
@@ -128,8 +125,7 @@ public:
         if (opened) prefs.end();
 
         // Log the active values so the serial monitor confirms what is in use
-        Serial.printf("[AppConfig] GitHub: %s/%s\n",
-                      gAppConfig.github_owner, gAppConfig.github_repo);
+        Serial.printf("[AppConfig] OTA JSON URL: %s\n", gAppConfig.ota_json_url);
         Serial.printf("[AppConfig] Topic:  %s/%s/%s/%s/%s/%s/<uuid>/...\n",
                       gAppConfig.mqtt_enterprise, gAppConfig.mqtt_site,
                       gAppConfig.mqtt_area,       gAppConfig.mqtt_line,
@@ -152,9 +148,8 @@ public:
 
         bool ok = true;
         // putString() returns the number of bytes written; 0 means failure
-        ok &= prefs.putString("gh_owner",   cfg.github_owner)     > 0;
-        ok &= prefs.putString("gh_repo",    cfg.github_repo)      > 0;
-        ok &= prefs.putString("mq_ent",     cfg.mqtt_enterprise)  > 0;
+        ok &= prefs.putString("ota_json_url", cfg.ota_json_url)      > 0;
+        ok &= prefs.putString("mq_ent",       cfg.mqtt_enterprise)   > 0;
         ok &= prefs.putString("mq_site",    cfg.mqtt_site)        > 0;
         ok &= prefs.putString("mq_area",    cfg.mqtt_area)        > 0;
         ok &= prefs.putString("mq_line",    cfg.mqtt_line)        > 0;
@@ -171,16 +166,16 @@ public:
     }
 
 
-    // ── hasCustomGithub ───────────────────────────────────────────────────────
-    // Returns true if a GitHub owner has been explicitly saved to NVS,
-    // meaning the admin has completed at least the GitHub section of setup.
+    // ── hasCustomOtaUrl ───────────────────────────────────────────────────────
+    // Returns true if an OTA JSON URL has been explicitly saved to NVS,
+    // meaning the admin has completed at least the OTA section of setup.
     // Used in the AP portal to warn if the firmware would fall back to the
-    // compile-time placeholder values in config.h.
-    static bool hasCustomGithub() {
+    // compile-time placeholder URL in config.h.
+    static bool hasCustomOtaUrl() {
         Preferences prefs;
         if (!prefs.begin(APP_CONFIG_NVS_NAMESPACE, true)) return false;
-        String owner = prefs.getString("gh_owner", "");
+        String url = prefs.getString("ota_json_url", "");
         prefs.end();
-        return owner.length() > 0;   // Empty string means never saved via portal
+        return url.length() > 0;   // Empty string means never saved via portal
     }
 };

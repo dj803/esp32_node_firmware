@@ -41,15 +41,18 @@ jobs:
 
       # ── 5. Install libraries ──────────────────────────────────────────────────
       # AsyncMqttClient requires AsyncTCP as a dependency.
+      # ESP32OTAPull requires ArduinoJson (already installed) and HTTPClient (bundled).
       - name: Install Arduino libraries
         run: |
           arduino-cli lib install "ArduinoJson@7"
-          # AsyncMqttClient and AsyncTCP are installed from GitHub (not in registry)
+          # AsyncMqttClient, AsyncTCP, and ESP32OTAPull are installed from GitHub
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
             ~/Arduino/libraries/AsyncMqttClient
           git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
             ~/Arduino/libraries/AsyncTCP
+          git clone --depth 1 https://github.com/mikalhart/ESP32-OTA-Pull.git \
+            ~/Arduino/libraries/ESP32OTAPull
 
       # ── 6. Extract version from tag (if this is a release build) ─────────────
       - name: Extract firmware version
@@ -119,5 +122,42 @@ jobs:
             Nodes running v1.0.0 or later will automatically detect and apply this
             update within one OTA check interval (default: 1 hour), or immediately
             when triggered via MQTT `cmd/ota_check`.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 12. Publish ota.json to GitHub Pages (tag builds only) ───────────────
+      # Writes a JSON filter file to the gh-pages branch. The firmware polls
+      # this stable URL (https://<owner>.github.io/<repo>/ota.json) to discover
+      # new releases without needing to call the GitHub Releases API.
+      - name: Publish ota.json to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+          DOWNLOAD_URL="https://github.com/${OWNER}/${REPO}/releases/download/v${VERSION}/firmware.bin"
+
+          # Generate the OTA JSON filter file
+          cat > ota.json <<EOF
+          {
+            "Configurations": [
+              {
+                "Version": "${VERSION}",
+                "URL": "${DOWNLOAD_URL}"
+              }
+            ]
+          }
+          EOF
+
+          # Commit ota.json to the gh-pages branch
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages 2>/dev/null || true
+          git checkout gh-pages 2>/dev/null || git checkout --orphan gh-pages
+          git rm -rf . --quiet 2>/dev/null || true
+          cp /home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}/ota.json ota.json
+          git add ota.json
+          git commit -m "ota: publish v${VERSION}"
+          git push origin gh-pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

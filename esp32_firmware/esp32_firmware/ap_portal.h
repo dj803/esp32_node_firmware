@@ -20,7 +20,7 @@
 // │  Device creates a Wi-Fi access point "ESP32-Config-xxxxxxxxxxxx".        │
 // │  Admin connects to that AP and browses to 192.168.4.1.                   │
 // │                                                                           │
-// │  GET  /           Full setup form — Wi-Fi, MQTT, GitHub, rotation key    │
+// │  GET  /           Full setup form — Wi-Fi, MQTT, OTA URL, rotation key   │
 // │  POST /save       Saves all fields, restarts                             │
 // │  GET  /status     JSON device info                                        │
 // └─────────────────────────────────────────────────────────────────────────┘
@@ -32,8 +32,8 @@
 // │  Device starts a temporary HTTP server on its STA IP (same network       │
 // │  as the admin's browser — no need to switch Wi-Fi networks).             │
 // │                                                                           │
-// │  GET  /settings   Settings-only form — GitHub + MQTT hierarchy           │
-// │  POST /settings   Saves GitHub + MQTT settings, does NOT restart         │
+// │  GET  /settings   Settings-only form — OTA URL + MQTT hierarchy          │
+// │  POST /settings   Saves OTA URL + MQTT settings, does NOT restart        │
 // │  GET  /status     JSON device info                                        │
 // └─────────────────────────────────────────────────────────────────────────┘
 //
@@ -41,11 +41,11 @@
 // physical/network proximity. AP mode requires connecting to the device's
 // own Wi-Fi network. Settings mode requires being on the same LAN.
 //
-// GITHUB CREDENTIALS:
-// GitHub owner and repo are entered through these portals — never hardcoded
-// in config.h or committed to the repository. The full setup form (Mode 1)
-// requires them before it will save. The settings form (Mode 2) can update
-// them independently at any time without re-entering Wi-Fi credentials.
+// OTA JSON URL:
+// The OTA JSON URL is entered through these portals — never hardcoded in
+// config.h or committed to the repository. The full setup form (Mode 1)
+// requires it before it will save. The settings form (Mode 2) can update
+// it independently at any time without re-entering Wi-Fi credentials.
 // =============================================================================
 
 static WebServer _apServer(80);   // Shared server instance for both modes
@@ -80,7 +80,7 @@ static const char PAGE_STYLE[] =
 
 // ── GET /status — shared by both modes ─────────────────────────────────────────
 // Returns a JSON snapshot of device identity, firmware version, LAN IP,
-// and the active GitHub owner/repo. Useful for Node-RED dashboards and
+// and the active OTA JSON URL. Useful for Node-RED dashboards and
 // for confirming which physical device you are connected to.
 static void apHandleStatus() {
     String json = String("{\"device_id\":\"")  + DeviceId::get()   + "\""
@@ -88,8 +88,7 @@ static void apHandleStatus() {
                 + ",\"firmware_version\":\"" FIRMWARE_VERSION "\""
                 + ",\"firmware_ts\":"          + String((uint32_t)FIRMWARE_BUILD_TIMESTAMP)
                 + ",\"ip\":\""                 + WiFi.localIP().toString() + "\""
-                + ",\"github_owner\":\""       + gAppConfig.github_owner + "\""
-                + ",\"github_repo\":\""        + gAppConfig.github_repo  + "\""
+                + ",\"ota_json_url\":\""       + gAppConfig.ota_json_url  + "\""
                 + "}";
     _apServer.send(200, "application/json", json);
 }
@@ -103,10 +102,10 @@ static void apHandleStatus() {
 // Serves all configuration fields in one page:
 //   Section 1: Wi-Fi SSID + password
 //   Section 2: MQTT broker URL, username, password
-//   Section 3: GitHub owner + repo (required — never stored in firmware source)
+//   Section 3: OTA JSON URL (required — stable GitHub Pages URL for firmware updates)
 //   Section 4: MQTT ISA-95 topic hierarchy (pre-filled with current gAppConfig values)
 //   Section 5: Rotation key (optional AES key for MQTT credential rotation)
-// GitHub owner and repo are pre-filled with gAppConfig values (from NVS or config.h defaults)
+// OTA JSON URL is pre-filled with gAppConfig value (from NVS or config.h default)
 // so that returning admins see what is currently configured.
 static void apHandleRoot() {
     String html = String("<!DOCTYPE html><html><head>"
@@ -131,13 +130,12 @@ static void apHandleRoot() {
         "<label>Password</label>"
         "<input name='mqtt_password' type='password'>"
 
-        "<h3>GitHub OTA</h3>"
+        "<h3>OTA Firmware Updates</h3>"
         "<p class='note'>Required for automatic firmware updates. "
-            "Never commit these values to your repository.</p>"
-        "<label>GitHub Owner / Organisation *</label>"
-        "<input name='github_owner' value='" + String(gAppConfig.github_owner) + "' required>"
-        "<label>GitHub Repository *</label>"
-        "<input name='github_repo' value='" + String(gAppConfig.github_repo) + "' required>"
+            "Paste the stable GitHub Pages URL for the ota.json filter file.</p>"
+        "<label>OTA JSON URL *</label>"
+        "<input name='ota_json_url' value='" + String(gAppConfig.ota_json_url) + "' required "
+               "placeholder='https://owner.github.io/repo/ota.json'>"
 
         "<h3>MQTT Topic Hierarchy</h3>"
         "<p class='note'>ISA-95 path: Enterprise/Site/Area/Line/Cell/DeviceType/DeviceId/...</p>"
@@ -167,17 +165,16 @@ static void apHandleRoot() {
 
 // ── POST /save — Full setup, save all fields, restart ─────────────────────────
 static void apHandleSave() {
-    String ssid = _apServer.arg("wifi_ssid");
-    String murl = _apServer.arg("mqtt_broker_url");
-    String ghOwner = _apServer.arg("github_owner");
-    String ghRepo  = _apServer.arg("github_repo");
+    String ssid       = _apServer.arg("wifi_ssid");
+    String murl       = _apServer.arg("mqtt_broker_url");
+    String otaJsonUrl = _apServer.arg("ota_json_url");
 
-    // All four fields are required — reject early with a clear message.
-    // GitHub fields are required here (not optional) to prevent the device
-    // being saved with placeholder values that would cause OTA to fail.
-    if (ssid.isEmpty() || murl.isEmpty() || ghOwner.isEmpty() || ghRepo.isEmpty()) {
+    // All three fields are required — reject early with a clear message.
+    // OTA JSON URL is required here (not optional) to prevent the device
+    // being saved with the placeholder URL that would cause OTA to fail.
+    if (ssid.isEmpty() || murl.isEmpty() || otaJsonUrl.isEmpty()) {
         _apServer.send(400, "text/plain",
-            "Error: wifi_ssid, mqtt_broker_url, github_owner and github_repo are required.");
+            "Error: wifi_ssid, mqtt_broker_url and ota_json_url are required.");
         return;
     }
 
@@ -204,10 +201,9 @@ static void apHandleSave() {
         return;
     }
 
-    // ── Save app config (GitHub + MQTT hierarchy) ─────────────────────────────
+    // ── Save app config (OTA JSON URL + MQTT hierarchy) ──────────────────────
     AppConfig cfg;
-    ghOwner.toCharArray(cfg.github_owner,    sizeof(cfg.github_owner));
-    ghRepo.toCharArray(cfg.github_repo,      sizeof(cfg.github_repo));
+    otaJsonUrl.toCharArray(cfg.ota_json_url,    sizeof(cfg.ota_json_url));
     _apServer.arg("mq_enterprise").toCharArray(cfg.mqtt_enterprise,  sizeof(cfg.mqtt_enterprise));
     _apServer.arg("mq_site")      .toCharArray(cfg.mqtt_site,        sizeof(cfg.mqtt_site));
     _apServer.arg("mq_area")      .toCharArray(cfg.mqtt_area,        sizeof(cfg.mqtt_area));
@@ -288,12 +284,10 @@ static void settingsHandleGet() {
 
         "<form method='POST' action='/settings'>"
 
-        "<h3>GitHub OTA</h3>"
-        "<p class='note'>Never commit these values to your repository.</p>"
-        "<label>GitHub Owner / Organisation *</label>"
-        "<input name='github_owner' value='" + String(gAppConfig.github_owner) + "' required>"
-        "<label>GitHub Repository *</label>"
-        "<input name='github_repo'  value='" + String(gAppConfig.github_repo)  + "' required>"
+        "<h3>OTA Firmware Updates</h3>"
+        "<label>OTA JSON URL *</label>"
+        "<input name='ota_json_url' value='" + String(gAppConfig.ota_json_url) + "' required "
+               "placeholder='https://owner.github.io/repo/ota.json'>"
 
         "<h3>MQTT Broker</h3>"
         "<p class='note'>Changing these requires a restart to reconnect to the broker.</p>"
@@ -326,14 +320,13 @@ static void settingsHandleGet() {
 }
 
 
-// ── POST /settings — Save GitHub + MQTT settings, no restart ──────────────────
+// ── POST /settings — Save OTA URL + MQTT settings, no restart ─────────────────
 static void settingsHandlePost() {
-    String ghOwner = _apServer.arg("github_owner");
-    String ghRepo  = _apServer.arg("github_repo");
+    String otaJsonUrl = _apServer.arg("ota_json_url");
 
-    if (ghOwner.isEmpty() || ghRepo.isEmpty()) {
+    if (otaJsonUrl.isEmpty()) {
         _apServer.send(400, "text/plain",
-            "Error: github_owner and github_repo are required.");
+            "Error: ota_json_url is required.");
         return;
     }
 
@@ -341,8 +334,7 @@ static void settingsHandlePost() {
     AppConfig cfg;
     memcpy(&cfg, &gAppConfig, sizeof(AppConfig));
 
-    ghOwner.toCharArray(cfg.github_owner, sizeof(cfg.github_owner));
-    ghRepo.toCharArray(cfg.github_repo,   sizeof(cfg.github_repo));
+    otaJsonUrl.toCharArray(cfg.ota_json_url, sizeof(cfg.ota_json_url));
 
     String mq_ent  = _apServer.arg("mq_enterprise");
     String mq_site = _apServer.arg("mq_site");
@@ -386,7 +378,7 @@ static void settingsHandlePost() {
     }
 
     String msg = String("<div class='ok'>Settings saved.<br>")
-               + "GitHub: " + cfg.github_owner + "/" + cfg.github_repo + "<br>"
+               + "OTA JSON URL: " + cfg.ota_json_url + "<br>"
                + "MQTT hierarchy: " + cfg.mqtt_enterprise + "/" + cfg.mqtt_site
                + "/" + cfg.mqtt_area + "/" + cfg.mqtt_line + "/" + cfg.mqtt_cell
                + "/" + cfg.mqtt_device_type;

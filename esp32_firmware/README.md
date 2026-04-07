@@ -42,8 +42,7 @@ Before flashing, set your deployment values in `config.h`:
 #define MQTT_CELL          "Cell1"
 #define MQTT_DEVICE_TYPE   "ESP32Sensor"
 
-#define GITHUB_OTA_OWNER   "your-github-username"
-#define GITHUB_OTA_REPO    "your-repo-name"
+#define OTA_JSON_URL       "https://your-github-username.github.io/your-repo-name/ota.json"
 ```
 
 ### 2. Install Required Libraries
@@ -54,6 +53,7 @@ In Arduino IDE → Library Manager:
 Install manually (download ZIP and add via Sketch → Include Library → Add .ZIP):
 - **AsyncTCP**: https://github.com/me-no-dev/AsyncTCP
 - **AsyncMqttClient**: https://github.com/marvinroger/async-mqtt-client
+- **ESP32-OTA-Pull**: https://github.com/mikalhart/ESP32-OTA-Pull
 
 ### 3. Board Settings
 
