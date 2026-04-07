@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ESP32OTAPull.h>
+#include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
 #include "config.h"
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 
@@ -108,19 +109,25 @@ void otaCheckNow() {
     mqttPublishStatus("ota_downloading", extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
-    // Disconnect MQTT and suppress reconnects for the duration of the download.
-    // The sequence matters:
-    //   1. disconnect(true) fires onMqttDisconnect asynchronously in the async_tcp
-    //      task, which re-arms the reconnect timer (1 s) because it sees the timer
-    //      is not active.
-    //   2. We wait 200 ms so the callback has time to run and re-arm the timer.
-    //   3. We stop the timer again — now it stays stopped until the device reboots.
-    // Without step 3 the timer fires mid-download, async_tcp tries to open a new
-    // socket while the TCP stack is saturated, and the task watchdog triggers.
+    // Shut down MQTT and suppress the task watchdog on async_tcp before the
+    // blocking download. Three things must happen in order:
+    //
+    //   1. disconnect(true) — fires onMqttDisconnect asynchronously, which
+    //      re-arms the reconnect timer because it sees no active timer.
+    //   2. delay(200) — gives the callback time to run and re-arm the timer.
+    //   3. xTimerStop — kills the re-armed timer so no reconnect fires during
+    //      the download (a mid-download connect attempt blocks async_tcp and
+    //      triggers the task watchdog).
+    //   4. esp_task_wdt_delete(async_tcp) — even with no reconnect attempt,
+    //      async_tcp holds a watchdog subscription and cannot reset its token
+    //      while the TCP stack is saturated by the download. Unsubscribing it
+    //      prevents the watchdog from firing at ~40-50% progress.
+    //      Safe because the device reboots immediately on success.
     _mqttClient.disconnect(true);
     delay(200);   // Let onMqttDisconnect fire and re-arm the reconnect timer
     if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
-    delay(50);    // Let the stop take effect before the download begins
+    TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
+    if (asyncTcpTask) esp_task_wdt_delete(asyncTcpTask);
 
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
