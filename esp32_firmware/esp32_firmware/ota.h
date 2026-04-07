@@ -108,14 +108,19 @@ void otaCheckNow() {
     mqttPublishStatus("ota_downloading", extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
-    // Disconnect MQTT and stop the reconnect timer before the blocking download.
-    // The HTTPClient download holds the TCP stack busy for 30–60 s. Without this,
-    // the reconnect timer fires mid-download and async_tcp hangs trying to open a
-    // new socket while the stack is saturated, triggering the task watchdog.
-    // The device reboots immediately on success so no reconnect is needed.
-    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
+    // Disconnect MQTT and suppress reconnects for the duration of the download.
+    // The sequence matters:
+    //   1. disconnect(true) fires onMqttDisconnect asynchronously in the async_tcp
+    //      task, which re-arms the reconnect timer (1 s) because it sees the timer
+    //      is not active.
+    //   2. We wait 200 ms so the callback has time to run and re-arm the timer.
+    //   3. We stop the timer again — now it stays stopped until the device reboots.
+    // Without step 3 the timer fires mid-download, async_tcp tries to open a new
+    // socket while the TCP stack is saturated, and the task watchdog triggers.
     _mqttClient.disconnect(true);
-    delay(100);   // Let the disconnect packet flush before the socket is taken over
+    delay(200);   // Let onMqttDisconnect fire and re-arm the reconnect timer
+    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
+    delay(50);    // Let the stop take effect before the download begins
 
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
