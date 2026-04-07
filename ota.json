@@ -1,0 +1,8 @@
+{
+  "Configurations": [
+    {
+      "Version": "0.0.4",
+      "URL": "https://github.com/dj803/esp32_node_firmware/releases/download/v0.0.4/firmware.bin"
+    }
+  ]
+}
