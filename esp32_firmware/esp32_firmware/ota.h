@@ -108,10 +108,12 @@ void otaCheckNow() {
     mqttPublishStatus("ota_downloading", extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
-    // Disconnect MQTT before the blocking download. The HTTPClient download
-    // holds the TCP stack busy for 30–60 s; leaving AsyncMqttClient connected
-    // starves its async_tcp task of CPU cycles and triggers the task watchdog.
-    // The device reboots immediately on success, so no reconnect is needed.
+    // Disconnect MQTT and stop the reconnect timer before the blocking download.
+    // The HTTPClient download holds the TCP stack busy for 30–60 s. Without this,
+    // the reconnect timer fires mid-download and async_tcp hangs trying to open a
+    // new socket while the stack is saturated, triggering the task watchdog.
+    // The device reboots immediately on success so no reconnect is needed.
+    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
     _mqttClient.disconnect(true);
     delay(100);   // Let the disconnect packet flush before the socket is taken over
 
