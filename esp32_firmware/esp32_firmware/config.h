@@ -68,6 +68,14 @@
                                            // attempts. The delay doubles after each
                                            // failure (exponential back-off) up to this cap.
 
+#define MQTT_REDISCOVERY_THRESHOLD     5   // Re-run broker discovery after this many
+                                           // consecutive MQTT failures (Tier 1 self-heal).
+#define MQTT_RESTART_THRESHOLD        10   // Hard-restart the device after this many
+                                           // consecutive failures (Tier 2 self-heal).
+#define MQTT_HUNG_TIMEOUT_MS       12000   // If connect() produces no callback (success or
+                                           // failure) within this window, the async client
+                                           // has hung — restart the device.
+
 #define OTA_CHECK_INTERVAL_MS      3600000 // How often (ms) the device polls GitHub
                                            // Releases for a newer firmware version.
                                            // Default: 1 hour (3 600 000 ms).
