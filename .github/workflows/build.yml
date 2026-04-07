@@ -140,6 +140,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Stash the binary outside the workspace before switching branches.
+          # gh-pages already contains firmware.bin, so after checkout $GITHUB_WORKSPACE
+          # and the working tree point to the same file — cp would fail with "same file".
+          cp firmware.bin /tmp/firmware.bin
+
           # Restore config.h — it was patched in-place by step 7 but never committed.
           # The binary is already compiled; leaving it dirty would block the branch switch.
           git checkout -- esp32_firmware/esp32_firmware/config.h
@@ -166,7 +171,7 @@ jobs:
           EOF
 
           # Copy the freshly built binary into the Pages tree
-          cp "$GITHUB_WORKSPACE/firmware.bin" firmware.bin
+          cp /tmp/firmware.bin firmware.bin
 
           git add ota.json firmware.bin
           git commit -m "release: firmware v${VERSION} OTA assets"
