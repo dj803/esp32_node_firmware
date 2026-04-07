@@ -140,10 +140,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stash the binary outside the workspace before switching branches.
-          # gh-pages already contains firmware.bin, so after checkout $GITHUB_WORKSPACE
-          # and the working tree point to the same file — cp would fail with "same file".
+          # Copy the binary out of the workspace before switching branches.
+          # Two reasons:
+          #   1. gh-pages tracks firmware.bin — git checkout refuses to overwrite an
+          #      untracked file of the same name that already exists in the workspace.
+          #   2. After checkout, $GITHUB_WORKSPACE/firmware.bin IS the tracked file,
+          #      so cp src dst would fail with "same file".
           cp firmware.bin /tmp/firmware.bin
+          rm firmware.bin
 
           # Restore config.h — it was patched in-place by step 7 but never committed.
           # The binary is already compiled; leaving it dirty would block the branch switch.
