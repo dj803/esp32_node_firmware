@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ESP32OTAPull.h>
+#include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
 #include "config.h"
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 
@@ -108,14 +109,25 @@ void otaCheckNow() {
     mqttPublishStatus("ota_downloading", extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
-    // Disconnect MQTT and stop the reconnect timer before the blocking download.
-    // The HTTPClient download holds the TCP stack busy for 30–60 s. Without this,
-    // the reconnect timer fires mid-download and async_tcp hangs trying to open a
-    // new socket while the stack is saturated, triggering the task watchdog.
-    // The device reboots immediately on success so no reconnect is needed.
-    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
+    // Shut down MQTT and suppress the task watchdog on async_tcp before the
+    // blocking download. Three things must happen in order:
+    //
+    //   1. disconnect(true) — fires onMqttDisconnect asynchronously, which
+    //      re-arms the reconnect timer because it sees no active timer.
+    //   2. delay(200) — gives the callback time to run and re-arm the timer.
+    //   3. xTimerStop — kills the re-armed timer so no reconnect fires during
+    //      the download (a mid-download connect attempt blocks async_tcp and
+    //      triggers the task watchdog).
+    //   4. esp_task_wdt_delete(async_tcp) — even with no reconnect attempt,
+    //      async_tcp holds a watchdog subscription and cannot reset its token
+    //      while the TCP stack is saturated by the download. Unsubscribing it
+    //      prevents the watchdog from firing at ~40-50% progress.
+    //      Safe because the device reboots immediately on success.
     _mqttClient.disconnect(true);
-    delay(100);   // Let the disconnect packet flush before the socket is taken over
+    delay(200);   // Let onMqttDisconnect fire and re-arm the reconnect timer
+    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
+    TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
+    if (asyncTcpTask) esp_task_wdt_delete(asyncTcpTask);
 
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
