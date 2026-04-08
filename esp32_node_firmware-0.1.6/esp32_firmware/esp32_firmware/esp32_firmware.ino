@@ -1,6 +1,6 @@
 // =============================================================================
 // esp32_firmware.ino  —  ESP32 Credential Bootstrap Firmware
-// Spec: v0.3  |  Framework: Arduino core (ESP32)
+// Spec : v1.0  |  Framework: Arduino core (ESP32)
 //
 // STATE MACHINE OVERVIEW:
 //
