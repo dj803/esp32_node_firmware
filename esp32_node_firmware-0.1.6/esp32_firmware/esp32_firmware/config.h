@@ -26,7 +26,7 @@
 //   Linux/Mac:  date +%s
 //   Windows:    PowerShell: [int][double]::Parse((Get-Date -UFormat %s))
 // -----------------------------------------------------------------------------
-#define FIRMWARE_VERSION           "0.1.2"
+#define FIRMWARE_VERSION           "0.1.7"
 #define FIRMWARE_BUILD_TIMESTAMP   1775574236ULL   // 2026-04-07 13:43:56 UTC
 
 
@@ -131,6 +131,13 @@
 #define AP_USERNAME                "admin"          // Shown as a label on the config page
                                                     // (informational only — no HTTP auth)
 #define AP_LOCAL_IP                "192.168.4.1"    // Default IP assigned by ESP32 AP mode
+
+
+// -----------------------------------------------------------------------------
+// Status LED
+// -----------------------------------------------------------------------------
+#define STATUS_LED_PIN             2    // GPIO 2 = onboard LED on most ESP32 dev boards
+                                        // (active HIGH — HIGH = on, LOW = off)
 
 
 // -----------------------------------------------------------------------------

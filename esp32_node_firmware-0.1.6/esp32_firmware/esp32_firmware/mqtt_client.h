@@ -43,6 +43,8 @@ static int              _mqttReconnectCount = 0;          // Consecutive failure
 static bool             _mqttNeedsRediscovery = false;    // Set at MQTT_REDISCOVERY_THRESHOLD; cleared by loop()
 static uint32_t         _mqttConnectStartMs = 0;          // millis() when connect() was last called; 0 = idle
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
+static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid
+static String           _mqttHost;                        // kept alive so setServer()'s raw ptr stays valid
 static CredentialBundle _mqttBundle;                      // Copy of credentials, kept for rotation key access
 
 
@@ -199,6 +201,12 @@ static void onMqttMessage(char* topic, char* payload,
     String bcastTopic = mqttBroadcastRotateTopic();      // Site-wide broadcast rotation
     String otaTopic   = mqttTopic("cmd/ota_check");      // OTA trigger
 
+    // Ignore partial fragments — only process once the final fragment arrives.
+    // AsyncMqttClient may split large payloads (e.g. encrypted rotation bundles)
+    // across multiple callbacks; acting on a fragment would pass a truncated buffer
+    // to handleCredRotation and fail the GCM auth tag check.
+    if (index + len < total) return;
+
     if (t == rotTopic || t == bcastTopic) {
         // Credential rotation request — decrypt and apply
         handleCredRotation(payload, len);
@@ -252,6 +260,20 @@ static void onMqttConnect(bool sessionPresent) {
 // Called when the broker connection is lost (network drop, broker restart, etc.)
 // Starts the reconnect timer instead of reconnecting immediately, to avoid
 // hammering the broker during outages.
+static const char* mqttDisconnectReasonStr(AsyncMqttClientDisconnectReason reason) {
+    switch (reason) {
+        case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED:             return "TCP_DISCONNECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION: return "UNACCEPTABLE_PROTOCOL_VERSION";
+        case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED:    return "IDENTIFIER_REJECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE:     return "SERVER_UNAVAILABLE";
+        case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS:  return "MALFORMED_CREDENTIALS";
+        case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED:         return "NOT_AUTHORIZED";
+        case AsyncMqttClientDisconnectReason::ESP8266_NOT_ENOUGH_SPACE:    return "NOT_ENOUGH_SPACE";
+        case AsyncMqttClientDisconnectReason::TLS_BAD_FINGERPRINT:         return "TLS_BAD_FINGERPRINT";
+        default:                                                            return "UNKNOWN";
+    }
+}
+
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
@@ -259,8 +281,8 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }
 
-    Serial.printf("[MQTT] Disconnected (reason %d) — retrying in %lu ms\n",
-                  (int)reason, _mqttReconnectDelay);
+    Serial.printf("[MQTT] Disconnected (%s) — retrying in %lu ms\n",
+                  mqttDisconnectReasonStr(reason), _mqttReconnectDelay);
 
     // Only start the timer if it isn't already running (prevents timer pile-up)
     if (xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
@@ -312,7 +334,7 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     // Use the pre-resolved broker address from discoverBroker().
     // Discovery already handled URL parsing and the three-step fallback
     // (mDNS -> port scan -> stored URL), so we just read the result.
-    String host = String(broker.host);     // IP or hostname string
+    _mqttHost = String(broker.host);        // module-level — outlives this function
     uint16_t port = broker.port;           // TCP port (typically 1883)
 
     // Log which step found the broker for serial monitor / Node-RED diagnostics
@@ -321,14 +343,20 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
         broker.method == DiscoveryMethod::PORTSCAN ? "port scan" :
                                                      "stored URL";
     Serial.printf("[MQTT] Broker: %s:%d (via %s)\n",
-                  host.c_str(), port, methodStr);
+                  _mqttHost.c_str(), port, methodStr);
 
     // Register event callbacks before calling connect()
     _mqttClient.onConnect(onMqttConnect);       // Fired after successful connect
     _mqttClient.onDisconnect(onMqttDisconnect); // Fired when connection is lost
     _mqttClient.onMessage(onMqttMessage);       // Fired when a subscribed message arrives
 
-    _mqttClient.setServer(host.c_str(), port);
+    // AsyncMqttClient hardcodes MQTT 3.1.1 in its CONNECT packet — no version setter needed.
+    _mqttClient.setServer(_mqttHost.c_str(), port);
+
+    // Persistent session: broker queues QoS 1/2 messages (including cred_rotate) while
+    // the device is offline and delivers them on reconnect. Requires a stable client ID,
+    // which we guarantee via the persistent UUID above.
+    _mqttClient.setCleanSession(false);
 
     // Only set credentials if a username was provided (some brokers allow anonymous access)
     if (strlen(bundle.mqtt_username) > 0) {
@@ -338,12 +366,21 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     // Client ID must be unique on the broker. Use the first 13 chars of the UUID
     // prefixed with "ESP32-" for a 19-char ID that is readable in broker logs.
     // e.g. "ESP32-a3f2c1d4-5e6" — unique per device, survives OTA updates.
-    String clientId = "ESP32-" + _deviceId.substring(0, 13);
-    _mqttClient.setClientId(clientId.c_str());
+    _mqttClientId = "ESP32-" + _deviceId.substring(0, 13);
+    _mqttClient.setClientId(_mqttClientId.c_str());
 
-    Serial.printf("[MQTT] Connecting to %s:%d as %s", host.c_str(), port, clientId.c_str());
-    _mqttConnectStartMs = millis();   // Start watchdog for the initial connect attempt
-    _mqttClient.connect();            // Non-blocking — result arrives via callbacks
+    if (WiFi.isConnected()) {
+        Serial.printf("[MQTT] Connecting to %s:%d as %s\n", _mqttHost.c_str(), port, _mqttClientId.c_str());
+        _mqttConnectStartMs = millis();   // Start watchdog for the initial connect attempt
+        _mqttClient.connect();            // Non-blocking — result arrives via callbacks
+    } else {
+        // WiFi IP was just assigned but the stack is not yet ready — defer via the
+        // reconnect timer (which also guards with WiFi.isConnected()) rather than
+        // calling connect() blindly.
+        Serial.println("[MQTT] WiFi not ready at mqttBegin — deferring first connect");
+        xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(500), 0);
+        xTimerStart(_mqttReconnectTimer, 0);
+    }
 }
 
 
@@ -370,17 +407,23 @@ bool mqttIsHung() {
 // Does NOT reset _mqttReconnectCount — it keeps climbing toward
 // MQTT_RESTART_THRESHOLD so Tier 2 (hard restart) still fires if needed.
 void mqttReinit(const BrokerResult& broker) {
-    String host = String(broker.host);
+    _mqttHost = String(broker.host);    // module-level — outlives this function
     Serial.printf("[MQTT] Reinit — broker %s:%d\n", broker.host, broker.port);
     _mqttClient.disconnect(true);   // Force-close any lingering TCP connection
-    _mqttClient.setServer(host.c_str(), broker.port);
+    _mqttClient.setServer(_mqttHost.c_str(), broker.port);
     _mqttReconnectDelay = 1000;     // Reset backoff for the fresh address
     if (xTimerIsTimerActive(_mqttReconnectTimer) == pdTRUE) {
         xTimerStop(_mqttReconnectTimer, 0);
     }
     delay(100);
-    _mqttConnectStartMs = millis();   // Start watchdog for the reinit connect attempt
-    _mqttClient.connect();
+    if (WiFi.isConnected()) {
+        _mqttConnectStartMs = millis();   // Start watchdog for the reinit connect attempt
+        _mqttClient.connect();
+    } else {
+        Serial.println("[MQTT] WiFi not ready at mqttReinit — deferring via reconnect timer");
+        xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(500), 0);
+        xTimerStart(_mqttReconnectTimer, 0);
+    }
 }
 
 
@@ -391,7 +434,7 @@ void mqttReinit(const BrokerResult& broker) {
 static uint32_t _lastHeartbeat = 0;
 void mqttHeartbeat() {
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        mqttPublishStatus("heartbeat");      // Sends {"mac":..., "event":"heartbeat", ...}
-        _lastHeartbeat = millis();           // Reset the timer
+        mqttPublishStatus("heartbeat");          // Sends {"mac":..., "event":"heartbeat", ...}
+        _lastHeartbeat += HEARTBEAT_INTERVAL_MS; // Advance by fixed interval to prevent drift
     }
 }
