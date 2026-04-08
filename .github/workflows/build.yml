@@ -74,11 +74,11 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TIMESTAMP=$(date +%s)
           sed -i "s|#define FIRMWARE_VERSION.*|#define FIRMWARE_VERSION           \"${VERSION}\"|" \
-            esp32_firmware/esp32_firmware/config.h
+            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
           sed -i "s|#define FIRMWARE_BUILD_TIMESTAMP.*|#define FIRMWARE_BUILD_TIMESTAMP   ${TIMESTAMP}ULL|" \
-            esp32_firmware/esp32_firmware/config.h
+            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
           echo "Patched config.h:"
-          grep -E "FIRMWARE_VERSION|FIRMWARE_BUILD_TIMESTAMP" esp32_firmware/esp32_firmware/config.h
+          grep -E "FIRMWARE_VERSION|FIRMWARE_BUILD_TIMESTAMP" esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
 
       # ── 8. Compile sketch ────────────────────────────────────────────────────
       - name: Compile sketch
@@ -87,7 +87,7 @@ jobs:
             --fqbn esp32:esp32:esp32 \
             --output-dir ./build \
             --warnings default \
-            esp32_firmware/esp32_firmware
+            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware
 
       # ── 9. Rename output binary ──────────────────────────────────────────────
       - name: Rename binary
@@ -151,7 +151,7 @@ jobs:
 
           # Restore config.h — it was patched in-place by step 7 but never committed.
           # The binary is already compiled; leaving it dirty would block the branch switch.
-          git checkout -- esp32_firmware/esp32_firmware/config.h
+          git checkout -- esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
 
           # Check out gh-pages (create orphan branch if it doesn't exist yet)
           git fetch origin gh-pages 2>/dev/null || true
