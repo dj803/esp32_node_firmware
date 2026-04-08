@@ -46,6 +46,22 @@
 // NVS namespace for this module — different from "esp32cred" and "esp32id"
 #define APP_CONFIG_NVS_NAMESPACE  "esp32cfg"
 
+
+// ── ledFlashLocate ────────────────────────────────────────────────────────────
+// Flash STATUS_LED_PIN 10 times (200 ms on / 200 ms off) so the device can be
+// physically located in a rack, cabinet, or on a shelf.
+// Called by the "Locate This Device" button in both web portals (ap_portal.h)
+// and can also be called directly from the main sketch or MQTT handlers.
+static void ledFlashLocate() {
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    for (int i = 0; i < 10; i++) {
+        digitalWrite(STATUS_LED_PIN, HIGH);
+        delay(200);
+        digitalWrite(STATUS_LED_PIN, LOW);
+        delay(200);
+    }
+}
+
 // Per-field buffer sizes — generous enough for real-world values, conservative
 // enough to fit comfortably in NVS (max NVS string value is 4000 bytes)
 #define APP_CFG_OTA_JSON_URL_LEN   256  // Full HTTPS URL of the OTA JSON filter file

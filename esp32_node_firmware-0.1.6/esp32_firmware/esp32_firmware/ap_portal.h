@@ -75,7 +75,15 @@ static const char PAGE_STYLE[] =
             "border-radius:4px;cursor:pointer;width:100%;margin-top:8px}"
     "h2{color:#2E4057}h3{color:#048A81;margin-top:20px;margin-bottom:4px}"
     ".note{font-size:12px;color:#666;margin:-8px 0 12px}"
-    ".ok{background:#e8f5e9;padding:12px;border-radius:4px;color:#2e7d32}";
+    ".ok{background:#e8f5e9;padding:12px;border-radius:4px;color:#2e7d32}"
+    ".locate{background:#E07B39}";
+
+
+// ── Locate — HTTP handler: flash LED 10 times so device can be found physically ─
+static void apHandleLocate() {
+    ledFlashLocate();
+    _apServer.send(200, "text/plain", "ok");
+}
 
 
 // ── GET /status — shared by both modes ─────────────────────────────────────────
@@ -158,7 +166,15 @@ static void apHandleRoot() {
                "placeholder='e.g. 0102030405060708090a0b0c0d0e0f10'>"
 
         "<button type='submit'>Save &amp; Restart</button>"
-        "</form></body></html>";
+        "</form>"
+        "<button type='button' class='locate' "
+          "onclick=\"this.textContent='Flashing...';"
+                   "fetch('/locate',{method:'POST'})"
+                     ".then(()=>this.textContent='Done \u2014 locate flash complete')"
+                     ".catch(()=>this.textContent='Error')\">"
+          "Locate This Device"
+        "</button>"
+        "</body></html>";
     _apServer.send(200, "text/html", html);
 }
 
@@ -245,6 +261,7 @@ void apPortalStart() {
 
     _apServer.on("/",       HTTP_GET,  apHandleRoot);
     _apServer.on("/save",   HTTP_POST, apHandleSave);
+    _apServer.on("/locate", HTTP_POST, apHandleLocate);
     _apServer.on("/status", HTTP_GET,  apHandleStatus);
     _apServer.begin();
 
@@ -315,7 +332,15 @@ static void settingsHandleGet() {
         "<input name='mq_devtype'    value='" + String(gAppConfig.mqtt_device_type)+ "'>"
 
         "<button type='submit'>Save Settings</button>"
-        "</form></body></html>";
+        "</form>"
+        "<button type='button' class='locate' "
+          "onclick=\"this.textContent='Flashing...';"
+                   "fetch('/locate',{method:'POST'})"
+                     ".then(()=>this.textContent='Done \u2014 locate flash complete')"
+                     ".catch(()=>this.textContent='Error')\">"
+          "Locate This Device"
+        "</button>"
+        "</body></html>";
     _apServer.send(200, "text/html", html);
 }
 
@@ -415,6 +440,7 @@ void settingsServerStart() {
 
     _apServer.on("/settings", HTTP_GET,  settingsHandleGet);
     _apServer.on("/settings", HTTP_POST, settingsHandlePost);
+    _apServer.on("/locate",   HTTP_POST, apHandleLocate);
     _apServer.on("/status",   HTTP_GET,  apHandleStatus);
     _apServer.begin();
     _settingsServerRunning = true;

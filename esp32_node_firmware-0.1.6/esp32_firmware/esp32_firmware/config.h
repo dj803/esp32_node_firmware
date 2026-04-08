@@ -134,6 +134,13 @@
 
 
 // -----------------------------------------------------------------------------
+// Status LED
+// -----------------------------------------------------------------------------
+#define STATUS_LED_PIN             2    // GPIO 2 = onboard LED on most ESP32 dev boards
+                                        // (active HIGH — HIGH = on, LOW = off)
+
+
+// -----------------------------------------------------------------------------
 // NVS (Non-Volatile Storage) namespace
 // All persistent data (credentials, restart counter) is stored under this
 // namespace using the Arduino Preferences library. Changing this value will
