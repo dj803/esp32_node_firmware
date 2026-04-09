@@ -68,8 +68,6 @@
                                            // attempts. The delay doubles after each
                                            // failure (exponential back-off) up to this cap.
 
-#define OTA_CHECK_INTERVAL_MS      3600000 // How often (ms) the device polls the OTA
-                                           // JSON URL for a newer firmware version.
 #define MQTT_REDISCOVERY_THRESHOLD     5   // Re-run broker discovery after this many
                                            // consecutive MQTT failures (Tier 1 self-heal).
 #define MQTT_RESTART_THRESHOLD        10   // Hard-restart the device after this many

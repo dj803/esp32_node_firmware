@@ -102,7 +102,12 @@ void WiFiEvent(WiFiEvent_t event) {
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             // Lost the connection — could be a temporary blip or a permanent drop
-            Serial.println("[WiFi] Disconnected");
+            if (wifiConnected) {
+                // Only log when transitioning from connected → disconnected.
+                // Suppresses repeated events fired by the WiFi stack during
+                // failed association attempts (where we were never connected).
+                Serial.println("[WiFi] Disconnected");
+            }
             wifiConnected = false;
             break;
 

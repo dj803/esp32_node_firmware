@@ -257,7 +257,7 @@ static void onMqttConnect(bool sessionPresent) {
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
     mqttPublishStatus("boot");
-    Serial.println("[MQTT] Boot announcement published");
+    Serial.println("[MQTT] Boot announcement published (v" FIRMWARE_VERSION ")");
 }
 
 
