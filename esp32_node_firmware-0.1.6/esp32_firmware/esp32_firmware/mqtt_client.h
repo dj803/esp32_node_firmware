@@ -240,6 +240,11 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttNeedsRediscovery   = false;  // Clear rediscovery flag if loop() hadn't seen it yet
     _mqttConnectStartMs     = 0;      // Clear watchdog — we are no longer in a connecting state
 
+    // Update sibling health advertisement — MQTT is now connected.
+    // responderSetHealthFlag is defined in espnow_responder.h, which is included
+    // before mqtt_client.h in esp32_firmware.ino.
+    responderSetHealthFlag(1, true);
+
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
     // QoS 2 = "exactly once" delivery (used for credential rotation to prevent double-apply)
@@ -277,6 +282,9 @@ static const char* mqttDisconnectReasonStr(AsyncMqttClientDisconnectReason reaso
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
+
+    // Update sibling health advertisement — MQTT is no longer connected.
+    responderSetHealthFlag(1, false);
     if (_mqttReconnectCount == MQTT_REDISCOVERY_THRESHOLD) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }

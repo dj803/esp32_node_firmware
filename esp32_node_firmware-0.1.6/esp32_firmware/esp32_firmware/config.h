@@ -195,3 +195,46 @@
 // encrypted in transit but the server certificate is not verified against a
 // pinned root CA. Acceptable for internal IoT deployments; revisit if the
 // threat model requires full certificate chain validation.
+
+
+// -----------------------------------------------------------------------------
+// Sibling credential verification
+// Added to handle stale or incomplete credentials at boot and after sustained
+// connection failures. When a node cannot connect with its stored credentials,
+// it asks healthy siblings for a fresh bundle before falling back to AP mode.
+// -----------------------------------------------------------------------------
+
+// How many rounds of sibling bootstrap to attempt from the WIFI_CONNECT failure
+// path before giving up and incrementing the restart counter.
+// Set to 1 — one sibling check per restart cycle is enough; excessive retries
+// here would delay the restart loop and AP mode fallback unnecessarily.
+#define SIBLING_REVERIFY_ATTEMPTS   1
+
+// Window (ms) during which HEALTH_RESP packets are collected during phase 1 of
+// the optional two-phase primary selection bootstrap. Longer = more siblings
+// heard; shorter = faster startup. 2000 ms is a good balance for most networks.
+#define SIBLING_HEALTH_WAIT_MS      2000
+
+// NVS key (within NVS_NAMESPACE) that stores the stale-credentials flag.
+// Written as UChar: 0 = not stale, 1 = stale.
+// Written by loop() before an unrecoverable restart; read and cleared at BOOT.
+#define NVS_KEY_CRED_STALE          "cred_stale"
+
+// Timestamp safety cap — reject received credential bundles whose timestamp
+// exceeds FIRMWARE_BUILD_TIMESTAMP by more than this many seconds (~1 year).
+// Guards against a rogue node advertising a far-future timestamp that would
+// permanently "win" all subsequent timestamp comparisons.
+#define SIBLING_TS_MAX_FUTURE_S     31536000ULL
+
+// Message type bytes for the optional two-phase primary selection bootstrap.
+// These extend the existing ESPNOW_MSG_CREDENTIAL_REQ / CREDENTIAL_RESP pair.
+#define ESPNOW_MSG_HEALTH_QUERY     0x03   // Broadcast: "who is healthy enough to serve creds?"
+#define ESPNOW_MSG_HEALTH_RESP      0x04   // Unicast reply: MAC + fw_version + health flags
+
+// Define to enable two-phase primary selection bootstrap.
+// When defined, bootstrapping nodes first collect health advertisements from
+// all siblings and request credentials from the best one (highest firmware
+// version + most health flags). Falls back to plain broadcast if no health
+// responses arrive — safe for mixed v1/v2 fleets.
+// Comment out to compile with simple broadcast bootstrap only.
+// #define SIBLING_PRIMARY_SELECTION

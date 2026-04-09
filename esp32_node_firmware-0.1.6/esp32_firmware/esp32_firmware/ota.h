@@ -81,24 +81,33 @@ void otaCheckNow() {
                                     ESP32OTAPull::DONT_DO_UPDATE);
 
     if (ret == ESP32OTAPull::NO_UPDATE_AVAILABLE) {
+        // JSON fetched successfully — GitHub is reachable
+        responderSetHealthFlag(2, true);
         Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
                       ota.GetVersion().c_str());
         return;
     }
 
     if (ret == ESP32OTAPull::NO_UPDATE_PROFILE_FOUND) {
+        // JSON fetched successfully — GitHub is reachable (no matching profile is not a network error)
+        responderSetHealthFlag(2, true);
         Serial.println("[OTA] No matching profile in OTA JSON");
         return;
     }
 
     if (ret != ESP32OTAPull::UPDATE_AVAILABLE) {
         // Positive ret values are raw HTTP error codes; negative are library codes.
+        // JSON fetch failed — GitHub is not reachable from this node right now.
+        responderSetHealthFlag(2, false);
         Serial.printf("[OTA] JSON fetch failed (code %d)\n", ret);
         mqttPublishStatus("ota_failed",
             "\"error\":\"OTA JSON unreachable\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
         return;
     }
+
+    // UPDATE_AVAILABLE — JSON was fetched successfully
+    responderSetHealthFlag(2, true);
 
     // ── Update available ─────────────────────────────────────────────────────
     String targetVersion = ota.GetVersion();

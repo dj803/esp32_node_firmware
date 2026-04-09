@@ -156,4 +156,33 @@ public:
         prefs.end();
         return n;
     }
+
+
+    // Mark credentials as potentially stale.
+    // Called by loop() before a restart caused by sustained WiFi or MQTT failure,
+    // so that the next boot forces a sibling credential re-verify even if the stored
+    // credentials came from an admin (hasPrimary() == true).
+    //
+    // Uses a read-before-write guard to avoid unnecessary NVS flash wear in
+    // flapping network scenarios where loop() would otherwise write on every restart.
+    static void setCredStale(bool stale) {
+        Preferences prefs;
+        if (!prefs.begin(NVS_NAMESPACE, false)) return;
+        uint8_t current = prefs.getUChar(NVS_KEY_CRED_STALE, 0);
+        uint8_t desired = stale ? 1 : 0;
+        if (current != desired) prefs.putUChar(NVS_KEY_CRED_STALE, desired);
+        prefs.end();
+    }
+
+
+    // Returns true if credentials were flagged stale by a previous boot cycle.
+    // Called once at the start of BOOT state before the hasPrimary() check.
+    // A true result forces BOOTSTRAP_REQUEST even for admin-provisioned devices.
+    static bool isCredStale() {
+        Preferences prefs;
+        if (!prefs.begin(NVS_NAMESPACE, true)) return false;
+        bool stale = prefs.getUChar(NVS_KEY_CRED_STALE, 0) != 0;
+        prefs.end();
+        return stale;
+    }
 };

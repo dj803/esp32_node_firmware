@@ -217,6 +217,11 @@ static void apHandleSave() {
         return;
     }
 
+    // Clear any stale-credentials flag from a previous loop() failure so that
+    // the next boot uses these fresh admin credentials directly (WIFI_CONNECT)
+    // rather than forcing an unnecessary sibling re-verify (BOOTSTRAP_REQUEST).
+    CredentialStore::setCredStale(false);
+
     // ── Save app config (OTA JSON URL + MQTT hierarchy) ──────────────────────
     AppConfig cfg;
     otaJsonUrl.toCharArray(cfg.ota_json_url,    sizeof(cfg.ota_json_url));

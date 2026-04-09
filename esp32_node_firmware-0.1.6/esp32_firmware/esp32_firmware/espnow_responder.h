@@ -18,6 +18,59 @@
 static CredentialBundle _localBundle;
 static bool             _responderActive = false;
 
+
+// ── Health flags (used by optional primary selection) ─────────────────────────
+// Tracks this node's own connectivity health for advertisement to siblings.
+// Updated by mqtt_client.h and ota.h whenever state changes.
+//
+// Bit assignments (match SiblingHealth.health_flags in espnow_bootstrap.h):
+//   bit 0 — WiFi connected
+//   bit 1 — MQTT connected
+//   bit 2 — GitHub reachable (last OTA JSON fetch succeeded)
+static volatile uint8_t _responderHealthFlags = 0x00;
+
+// Set or clear a single health flag bit. Safe to call from any context.
+// bit: 0=WiFi, 1=MQTT, 2=GitHub
+inline void responderSetHealthFlag(uint8_t bit, bool set) {
+    if (set) _responderHealthFlags |=  (uint8_t)(1u << bit);
+    else      _responderHealthFlags &= (uint8_t)~(1u << bit);
+}
+
+
+// ── Per-MAC request rate limiting ─────────────────────────────────────────────
+// Prevents a rebooting or misbehaving node from flooding siblings with requests.
+// Each slot stores the MAC and the millis() timestamp of the last response sent.
+// On overflow, the oldest slot is evicted (LRU via a round-robin write pointer).
+#define RESPONDER_COOLDOWN_MS  30000   // Ignore repeat requests within 30 s
+#define RESPONDER_MAC_SLOTS    8       // Track up to 8 distinct requesters
+
+static struct {
+    uint8_t  mac[6];
+    uint32_t last_ms;
+} _respCooldown[RESPONDER_MAC_SLOTS];
+static uint8_t _respCooldownNext = 0;   // Next slot to evict (round-robin)
+
+// Returns true if the given MAC is within its cooldown window.
+// If not, records the MAC and current time, then returns false (caller may serve).
+static bool responderIsRateLimited(const uint8_t* mac) {
+    uint32_t now = millis();
+    for (int i = 0; i < RESPONDER_MAC_SLOTS; i++) {
+        if (memcmp(_respCooldown[i].mac, mac, 6) == 0) {
+            if (now - _respCooldown[i].last_ms < RESPONDER_COOLDOWN_MS) {
+                return true;   // Still in cooldown
+            }
+            // Cooldown expired — update timestamp and allow
+            _respCooldown[i].last_ms = now;
+            return false;
+        }
+    }
+    // MAC not seen before — record in the next round-robin slot
+    memcpy(_respCooldown[_respCooldownNext].mac, mac, 6);
+    _respCooldown[_respCooldownNext].last_ms = now;
+    _respCooldownNext = (_respCooldownNext + 1) % RESPONDER_MAC_SLOTS;
+    return false;
+}
+
 void espnowResponderSetBundle(const CredentialBundle& b) {
     memcpy(&_localBundle, &b, sizeof(CredentialBundle));
     _responderActive = true;
@@ -33,6 +86,12 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
 
     if (!_responderActive) {
         Serial.println("[ESP-NOW Responder] Not active yet");
+        return;
+    }
+    if (responderIsRateLimited(requesterMac)) {
+        Serial.printf("[ESP-NOW Responder] Rate-limited %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      requesterMac[0], requesterMac[1], requesterMac[2],
+                      requesterMac[3], requesterMac[4], requesterMac[5]);
         return;
     }
     if (len != (int)REQ_LEN) {
@@ -120,6 +179,51 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     }
 }
 
+#ifdef SIBLING_PRIMARY_SELECTION
+// ── HEALTH_QUERY handler (primary selection) ──────────────────────────────────
+// Responds to a sibling's health query with this node's firmware version and
+// connectivity health flags. The querying node uses this to pick the best
+// sibling before sending a unicast credential request.
+//
+// Wire format sent: [msg_type 1B][protocol_version 1B][SiblingHealth 17B] = 19 bytes
+// SiblingHealth is defined in espnow_bootstrap.h (included before this file in .ino).
+static void onEspNowHealthQuery(const esp_now_recv_info_t* recvInfo,
+                                const uint8_t* data, int len) {
+    if (!_responderActive) return;
+    if (len < 2) return;
+    if (data[1] != ESPNOW_PROTOCOL_VERSION) return;   // Version gate
+
+    const uint8_t* requesterMac = recvInfo->src_addr;
+
+    SiblingHealth h;
+    memset(&h, 0, sizeof(h));
+    esp_wifi_get_mac(WIFI_IF_STA, h.mac);
+    h.fw_version_uint32 = fwVersionToUint32(FIRMWARE_VERSION);
+    h.health_flags      = _responderHealthFlags;
+    h.protocol_version  = ESPNOW_PROTOCOL_VERSION;
+
+    // Wire: [HEALTH_RESP][version][SiblingHealth]
+    uint8_t buf[2 + sizeof(SiblingHealth)];
+    buf[0] = ESPNOW_MSG_HEALTH_RESP;
+    buf[1] = ESPNOW_PROTOCOL_VERSION;
+    memcpy(buf + 2, &h, sizeof(SiblingHealth));
+
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, requesterMac, 6);
+    peer.channel = ESPNOW_CHANNEL;
+    peer.encrypt = false;
+    if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
+
+    esp_now_send(requesterMac, buf, sizeof(buf));
+    Serial.printf("[ESP-NOW Responder] HEALTH_RESP → %02X:%02X:%02X:%02X:%02X:%02X"
+                  "  fw=0x%06X flags=0x%02X\n",
+                  requesterMac[0], requesterMac[1], requesterMac[2],
+                  requesterMac[3], requesterMac[4], requesterMac[5],
+                  h.fw_version_uint32, h.health_flags);
+}
+#endif // SIBLING_PRIMARY_SELECTION
+
+
 // Combined receive dispatcher (used in OPERATIONAL mode)
 static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
     if (len < 2) return;
@@ -130,6 +234,11 @@ static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uin
         case ESPNOW_MSG_CREDENTIAL_RESP:
             // Ignore — only relevant during bootstrap phase
             break;
+#ifdef SIBLING_PRIMARY_SELECTION
+        case ESPNOW_MSG_HEALTH_QUERY:
+            onEspNowHealthQuery(recvInfo, data, len);
+            break;
+#endif
         default:
             break;
     }
