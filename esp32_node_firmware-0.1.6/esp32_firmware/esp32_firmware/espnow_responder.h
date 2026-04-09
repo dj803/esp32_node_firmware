@@ -14,11 +14,28 @@
 //
 // Listens for CREDENTIAL_REQUESTs in OPERATIONAL state.
 // Encrypts a WireBundle (175 bytes) per request — fits in 250-byte ESP-NOW limit.
-// Uses the same ESPNOW_CHANNEL as espnow_bootstrap.h.
+// The requester scans channels 1–13 to find us — no fixed channel constant needed.
 // =============================================================================
 
 static CredentialBundle _localBundle;
 static bool             _responderActive = false;
+
+// ── Active broker address (set after discovery, served to siblings) ────────────
+static char     _activeBrokerHost[64] = {0};
+static uint16_t _activeBrokerPort     = 0;
+
+// Call this from setup() once discoverBroker() returns a result.
+// Enables BROKER_REQ responses — siblings can ask us for the broker address.
+inline void espnowResponderSetBroker(const char* host, uint16_t port) {
+    strncpy(_activeBrokerHost, host, sizeof(_activeBrokerHost) - 1);
+    _activeBrokerHost[sizeof(_activeBrokerHost) - 1] = '\0';
+    _activeBrokerPort = port;
+}
+
+// ── Sibling broker response state (requester side) ────────────────────────────
+static volatile bool _brokerRespReceived = false;
+static char          _siblingBrokerHost[64] = {0};
+static uint16_t      _siblingBrokerPort     = 0;
 
 
 // ── Health flags (used by optional primary selection) ─────────────────────────
@@ -342,6 +359,106 @@ static void onEspNowHealthQuery(const esp_now_recv_info_t* recvInfo,
 #endif // SIBLING_PRIMARY_SELECTION
 
 
+// ── BROKER_REQ handler (responder side) ──────────────────────────────────────
+// Answers a sibling's broker query with our currently connected broker address.
+// Only responds if a broker address has been set via espnowResponderSetBroker().
+//
+// Wire format sent: [BROKER_RESP 1B][version 1B][host_len 1B][host up to 63B][port 2B]
+static void onEspNowBrokerRequest(const esp_now_recv_info_t* recvInfo,
+                                  const uint8_t* data, int len) {
+    if (!_responderActive) return;
+    if (len < 2) return;
+    if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
+    if (_activeBrokerHost[0] == '\0' || _activeBrokerPort == 0) {
+        Serial.println("[ESP-NOW Responder] BROKER_REQ ignored — no broker set yet");
+        return;
+    }
+
+    const uint8_t* requesterMac = recvInfo->src_addr;
+    uint8_t hostLen = (uint8_t)strnlen(_activeBrokerHost, 63);
+
+    // Wire: [BROKER_RESP][version][host_len][host...][port 2B]
+    uint8_t buf[2 + 1 + 63 + 2];
+    buf[0] = ESPNOW_MSG_BROKER_RESP;
+    buf[1] = ESPNOW_PROTOCOL_VERSION;
+    buf[2] = hostLen;
+    memcpy(buf + 3, _activeBrokerHost, hostLen);
+    memcpy(buf + 3 + hostLen, &_activeBrokerPort, 2);
+    size_t totalLen = 3 + hostLen + 2;
+
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, requesterMac, 6);
+    peer.channel = 0;   // current Wi-Fi channel
+    peer.encrypt = false;
+    if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
+
+    esp_now_send(requesterMac, buf, totalLen);
+    Serial.printf("[ESP-NOW Responder] BROKER_RESP → sibling: %s:%d\n",
+                  _activeBrokerHost, _activeBrokerPort);
+}
+
+
+// ── BROKER_RESP handler (requester side) ─────────────────────────────────────
+// Stores the broker address received from a sibling. Called from the dispatcher
+// when this node has broadcast a BROKER_REQ and a sibling replies.
+static void onEspNowBrokerResponse(const esp_now_recv_info_t* recvInfo,
+                                   const uint8_t* data, int len) {
+    if (_brokerRespReceived) return;   // first response wins
+    if (len < 2) return;
+    if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
+    if (len < 5) return;               // need at least 1 byte host + 2 byte port
+    uint8_t hostLen = data[2];
+    if (hostLen == 0 || hostLen > 63) return;
+    if (len < (int)(3 + hostLen + 2)) return;
+    memcpy(_siblingBrokerHost, data + 3, hostLen);
+    _siblingBrokerHost[hostLen] = '\0';
+    memcpy(&_siblingBrokerPort, data + 3 + hostLen, 2);
+    _brokerRespReceived = true;
+    Serial.printf("[ESP-NOW] BROKER_RESP from sibling: %s:%d\n",
+                  _siblingBrokerHost, _siblingBrokerPort);
+}
+
+
+// ── espnowGetSiblingBroker ────────────────────────────────────────────────────
+// Broadcasts a BROKER_REQ on the current Wi-Fi channel and waits up to
+// BROKER_ESPNOW_TIMEOUT_MS for any sibling to reply with their broker address.
+// Returns true and populates host/port if a sibling responded.
+// ESP-NOW MUST already be initialized (espnowResponderStart() called).
+bool espnowGetSiblingBroker(char* hostOut, size_t hostOutLen, uint16_t* portOut) {
+    _brokerRespReceived = false;
+    memset(_siblingBrokerHost, 0, sizeof(_siblingBrokerHost));
+    _siblingBrokerPort = 0;
+
+    // Ensure the broadcast peer exists on the current channel
+    esp_now_peer_info_t bcastPeer = {};
+    memcpy(bcastPeer.peer_addr, ESPNOW_BROADCAST, 6);
+    bcastPeer.channel = 0;   // current Wi-Fi channel
+    bcastPeer.encrypt = false;
+    if (!esp_now_is_peer_exist(ESPNOW_BROADCAST)) esp_now_add_peer(&bcastPeer);
+
+    uint8_t req[2] = { ESPNOW_MSG_BROKER_REQ, ESPNOW_PROTOCOL_VERSION };
+    esp_err_t err = esp_now_send(ESPNOW_BROADCAST, req, sizeof(req));
+    if (err != ESP_OK) {
+        Serial.printf("[ESP-NOW] BROKER_REQ send failed: %d\n", err);
+        return false;
+    }
+    Serial.println("[ESP-NOW] BROKER_REQ broadcast — waiting for sibling...");
+
+    uint32_t deadline = millis() + BROKER_ESPNOW_TIMEOUT_MS;
+    while (!_brokerRespReceived && millis() < deadline) delay(10);
+
+    if (!_brokerRespReceived) {
+        Serial.println("[ESP-NOW] No broker response from siblings");
+        return false;
+    }
+
+    strncpy(hostOut, _siblingBrokerHost, hostOutLen - 1);
+    hostOut[hostOutLen - 1] = '\0';
+    *portOut = _siblingBrokerPort;
+    return true;
+}
+
+
 // Combined receive dispatcher (used in OPERATIONAL mode)
 static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
     if (len < 2) return;
@@ -357,6 +474,12 @@ static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uin
             break;
         case ESPNOW_MSG_OTA_URL_RESP:
             onEspNowOtaUrlResponse(recvInfo, data, len);
+            break;
+        case ESPNOW_MSG_BROKER_REQ:
+            onEspNowBrokerRequest(recvInfo, data, len);
+            break;
+        case ESPNOW_MSG_BROKER_RESP:
+            onEspNowBrokerResponse(recvInfo, data, len);
             break;
 #ifdef SIBLING_PRIMARY_SELECTION
         case ESPNOW_MSG_HEALTH_QUERY:

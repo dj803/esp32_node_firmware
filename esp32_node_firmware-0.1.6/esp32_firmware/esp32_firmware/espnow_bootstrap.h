@@ -4,6 +4,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
+#include <Preferences.h>
 #include "config.h"
 #include "credentials.h"
 #include "crypto.h"
@@ -14,9 +15,10 @@
 // espnow_bootstrap.h  —  ESP-NOW credential request / response
 //
 // Fixes vs original:
-//   1. Fixed Wi-Fi channel: both nodes use ESPNOW_CHANNEL (default 1).
-//      Without this, channel=0 means "current AP channel" which is undefined
-//      before association — causing the sibling to never hear the request.
+//   1. Channel scanning: scans channels 1–13 to find the sibling automatically.
+//      Tries the last known working channel first (cached in NVS) for a fast
+//      path on subsequent boots. Falls through the full scan on first boot or
+//      if the router channel changed.
 //   2. WireBundle replaces raw CredentialBundle on the wire.
 //      CredentialBundle is ~382 bytes; encrypted that exceeds ESP-NOW's 250B
 //      hard limit. WireBundle uses tight field limits (175 bytes plaintext,
@@ -32,14 +34,9 @@
 //   [payload_len 2B][nonce 12B][ciphertext varB][auth_tag 16B]
 // =============================================================================
 
-// Channel used during the bootstrap phase (before Wi-Fi is connected).
-// OPERATIONAL nodes are already locked to the router's channel; they use
-// peer.channel=0 so ESP-NOW automatically matches their current Wi-Fi channel.
-// During BOOTSTRAP the radio is not yet connected to any AP, so an explicit
-// channel must be set here — it MUST match the router's fixed channel.
-// Set your router to a fixed (non-Auto) channel and update this value to match.
-// Mismatched channels are the most common cause of bootstrap failures.
-#define ESPNOW_CHANNEL   1    // MUST equal the router's configured Wi-Fi channel
+// Channel scanning: bootstrap scans channels 1–13 automatically.
+// The last found channel is cached in NVS (key "espnow_ch") for a fast path
+// on subsequent boots. No fixed channel constant is needed.
 
 #define REQ_LEN  (1 + 1 + 6 + CURVE25519_KEY_LEN)   // 40 bytes
 
@@ -200,8 +197,27 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
 // Forward declaration — implemented in espnow_responder.h
 void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len);
 
-// ── Send broadcast request ────────────────────────────────────────────────────
-static bool espnowSendRequest(const EcdhContext& ctx) {
+// ── Last-known channel cache (NVS) ───────────────────────────────────────────
+// Saves the channel where a sibling was last found so the next bootstrap can
+// try it first — mirrors the broker address cache in broker_discovery.h.
+// Returns 0 if no value is stored (triggers a full scan from channel 1).
+static uint8_t espnowLoadLastChannel() {
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, true);   // read-only
+    uint8_t ch = prefs.getUChar("espnow_ch", 0);
+    prefs.end();
+    return ch;
+}
+
+static void espnowSaveLastChannel(uint8_t ch) {
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putUChar("espnow_ch", ch);
+    prefs.end();
+}
+
+// ── Send broadcast request on a specific channel ─────────────────────────────
+static bool espnowSendRequest(const EcdhContext& ctx, uint8_t channel) {
     uint8_t buf[REQ_LEN] = {0};
     buf[0] = ESPNOW_MSG_CREDENTIAL_REQ;
     buf[1] = ESPNOW_PROTOCOL_VERSION;
@@ -214,11 +230,14 @@ static bool espnowSendRequest(const EcdhContext& ctx) {
     Serial.printf("[ESP-NOW] My MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
                   mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
+    // Update the broadcast peer's channel, or add it if not yet registered
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, ESPNOW_BROADCAST, 6);
-    peer.channel = ESPNOW_CHANNEL;   // explicit channel — must match sibling
+    peer.channel = channel;
     peer.encrypt = false;
-    if (!esp_now_is_peer_exist(ESPNOW_BROADCAST)) {
+    if (esp_now_is_peer_exist(ESPNOW_BROADCAST)) {
+        esp_now_mod_peer(&peer);
+    } else {
         esp_err_t addErr = esp_now_add_peer(&peer);
         if (addErr != ESP_OK) {
             Serial.printf("[ESP-NOW] Add peer failed: %d\n", addErr);
@@ -233,14 +252,14 @@ static bool espnowSendRequest(const EcdhContext& ctx) {
 }
 
 // ── Bootstrap entry point ─────────────────────────────────────────────────────
+// Scans Wi-Fi channels 1–13 to find the sibling regardless of which channel
+// the router uses. On each channel: forces the radio, broadcasts a credential
+// request, and waits ESPNOW_CHANNEL_DWELL_MS for a response. Stops as soon as
+// a valid response arrives and records which channel succeeded.
 bool espnowBootstrap(CredentialBundle& out) {
-    // Set Wi-Fi to STA mode on the fixed channel before init
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
-
-    // Lock to the fixed channel — ESP-NOW peers must share a channel
-    esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
     esp_err_t initErr = esp_now_init();
     if (initErr != ESP_OK) {
@@ -249,7 +268,7 @@ bool espnowBootstrap(CredentialBundle& out) {
     }
 
     esp_now_register_recv_cb(onEspNowReceive);
-    Serial.printf("[ESP-NOW] Init OK, listening on channel %d\n", ESPNOW_CHANNEL);
+    Serial.println("[ESP-NOW] Init OK — scanning channels 1–13");
 
     if (!cryptoGenKeypair(_requesterCtx)) {
         Serial.println("[ESP-NOW] ECDH keygen failed");
@@ -258,23 +277,45 @@ bool espnowBootstrap(CredentialBundle& out) {
     }
 
     _espnowResponseReceived = false;
+    uint8_t foundChannel = 0;
 
-    if (!espnowSendRequest(_requesterCtx)) {
-        Serial.println("[ESP-NOW] Failed to send request");
-        esp_now_deinit();
-        return false;
+    // Try the last known working channel first — fast path on repeat boots
+    uint8_t cachedChannel = espnowLoadLastChannel();
+    if (cachedChannel >= 1 && cachedChannel <= 13) {
+        Serial.printf("[ESP-NOW] Trying cached channel %d first\n", cachedChannel);
+        esp_wifi_set_channel(cachedChannel, WIFI_SECOND_CHAN_NONE);
+        if (espnowSendRequest(_requesterCtx, cachedChannel)) {
+            uint32_t deadline = millis() + ESPNOW_CHANNEL_DWELL_MS;
+            while (!_espnowResponseReceived && millis() < deadline) delay(10);
+            if (_espnowResponseReceived) foundChannel = cachedChannel;
+        }
     }
 
-    Serial.println("[ESP-NOW] Request sent, waiting for sibling response...");
-    uint32_t deadline = millis() + BOOTSTRAP_TIMEOUT_MS;
-    while (!_espnowResponseReceived && millis() < deadline) {
-        delay(10);
+    // Full scan — skips the cached channel (already tried above)
+    for (uint8_t ch = 1; ch <= 13 && !_espnowResponseReceived; ch++) {
+        if (ch == cachedChannel) continue;   // already tried
+        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        Serial.printf("[ESP-NOW] Trying channel %d\n", ch);
+
+        if (!espnowSendRequest(_requesterCtx, ch)) continue;
+
+        Serial.println("[ESP-NOW] Request sent, waiting for sibling response...");
+        uint32_t deadline = millis() + ESPNOW_CHANNEL_DWELL_MS;
+        while (!_espnowResponseReceived && millis() < deadline) {
+            delay(10);
+        }
+        if (_espnowResponseReceived) foundChannel = ch;
     }
 
     if (!_espnowResponseReceived) {
         Serial.println("[ESP-NOW] Timeout — no sibling response");
         esp_now_deinit();
         return false;
+    }
+
+    Serial.printf("[ESP-NOW] Sibling found on channel %d\n", foundChannel);
+    if (foundChannel != cachedChannel) {
+        espnowSaveLastChannel(foundChannel);   // update cache for next boot
     }
 
     // ── Parse response ────────────────────────────────────────────────────────
@@ -337,7 +378,7 @@ bool espnowBootstrap(CredentialBundle& out) {
 
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, responderMac, 6);
-        peer.channel = ESPNOW_CHANNEL;
+        peer.channel = foundChannel;   // same channel where credentials were exchanged
         peer.encrypt = false;
         if (!esp_now_is_peer_exist(responderMac)) esp_now_add_peer(&peer);
 
@@ -385,7 +426,12 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
-    esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    // Use the cached channel as the starting point for the health query.
+    // If no siblings respond (wrong channel or no v2 nodes), the fallback to
+    // espnowBootstrap() performs a full channel scan.
+    uint8_t psChannel = espnowLoadLastChannel();
+    if (psChannel < 1 || psChannel > 13) psChannel = 1;
+    esp_wifi_set_channel(psChannel, WIFI_SECOND_CHAN_NONE);
 
     esp_err_t initErr = esp_now_init();
     if (initErr != ESP_OK) {
@@ -402,7 +448,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     // Add broadcast peer and send HEALTH_QUERY
     esp_now_peer_info_t bcastPeer = {};
     memcpy(bcastPeer.peer_addr, ESPNOW_BROADCAST, 6);
-    bcastPeer.channel = ESPNOW_CHANNEL;
+    bcastPeer.channel = psChannel;
     bcastPeer.encrypt = false;
     if (!esp_now_is_peer_exist(ESPNOW_BROADCAST)) esp_now_add_peer(&bcastPeer);
 
@@ -448,7 +494,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
-    esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_channel(psChannel, WIFI_SECOND_CHAN_NONE);
 
     if (esp_now_init() != ESP_OK) {
         Serial.println("[ESP-NOW PS] Reinit failed — falling back to broadcast");
@@ -477,7 +523,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     // Register the chosen sibling as a unicast peer
     esp_now_peer_info_t uniPeer = {};
     memcpy(uniPeer.peer_addr, best.mac, 6);
-    uniPeer.channel = ESPNOW_CHANNEL;
+    uniPeer.channel = psChannel;
     uniPeer.encrypt = false;
     if (!esp_now_is_peer_exist(best.mac)) esp_now_add_peer(&uniPeer);
 
@@ -543,6 +589,9 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     memset(&wire, 0, sizeof(wire));
 
     Serial.println("[ESP-NOW PS] Bundle received and verified from primary sibling");
+    if (psChannel != espnowLoadLastChannel()) {
+        espnowSaveLastChannel(psChannel);   // update cache for next boot
+    }
 
     // ── Also request OTA URL from this sibling while ESP-NOW is still open ────
     {

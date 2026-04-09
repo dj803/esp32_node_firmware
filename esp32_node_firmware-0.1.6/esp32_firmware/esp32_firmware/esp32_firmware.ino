@@ -436,6 +436,8 @@ void setup() {
         // Persist the discovered address so next boot can skip mDNS/port scan
         if (broker.found()) {
             saveBrokerToCache(broker.host, broker.port);
+            // Share with ESP-NOW responder so siblings can ask us for the broker
+            espnowResponderSetBroker(broker.host, broker.port);
         }
 
         // Connect to the MQTT broker — non-blocking; result arrives via callbacks

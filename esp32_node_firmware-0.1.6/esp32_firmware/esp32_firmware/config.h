@@ -186,13 +186,22 @@
 // Channel note: ESP-NOW and Wi-Fi share the same radio. In OPERATIONAL mode
 // the radio is locked to the router's channel; all ESP-NOW responses use
 // peer.channel=0 (= current Wi-Fi channel automatically). During BOOTSTRAP
-// (before Wi-Fi connects) the firmware forces ESPNOW_CHANNEL explicitly —
-// that value MUST match your router's fixed channel. Set your router to a
-// static channel (not "Auto") and keep ESPNOW_CHANNEL in sync.
+// (before Wi-Fi connects) the firmware scans channels 1–13 to find a sibling
+// automatically — no fixed channel constant is required. The last found channel
+// is cached in NVS so subsequent boots skip straight to the right channel.
 // -----------------------------------------------------------------------------
 #define ESPNOW_PROTOCOL_VERSION    1      // Increment on any breaking wire format change
 #define ESPNOW_MSG_CREDENTIAL_REQ  0x01   // Message type byte: "I need credentials"
 #define ESPNOW_MSG_CREDENTIAL_RESP 0x02   // Message type byte: "Here are your credentials"
+
+// Per-channel dwell time (ms) used during ESP-NOW bootstrap channel scanning.
+// The new device cycles through Wi-Fi channels 1–13, broadcasting a credential
+// request on each and waiting this long for a sibling reply before moving on.
+// The sibling is always on the router's channel — this scan finds it automatically
+// without requiring the router channel to be known or fixed in advance.
+// Total worst-case scan time: ESPNOW_CHANNEL_DWELL_MS × 13 per bootstrap attempt.
+// Increase if siblings respond slowly; 500 ms is sufficient for all normal loads.
+#define ESPNOW_CHANNEL_DWELL_MS   500
 
 
 // Note: ISRG Root X1 certificate removed. OTA now uses ESP32-OTA-Pull which
@@ -237,6 +246,12 @@
 #define ESPNOW_MSG_HEALTH_RESP      0x04   // Unicast reply: MAC + fw_version + health flags
 #define ESPNOW_MSG_OTA_URL_REQ      0x05   // Broadcast/unicast: "what is your OTA JSON URL?"
 #define ESPNOW_MSG_OTA_URL_RESP     0x06   // Unicast reply: sender MAC + URL string
+#define ESPNOW_MSG_BROKER_REQ       0x07   // Broadcast: "what MQTT broker are you using?"
+#define ESPNOW_MSG_BROKER_RESP      0x08   // Unicast reply: host string + port
+
+// How long (ms) to wait for a sibling's broker address response.
+// Tried before mDNS and port scan — fast path when a sibling is on the same LAN.
+#define BROKER_ESPNOW_TIMEOUT_MS    2000
 
 // How long (ms) to wait for an OTA URL response from a sibling.
 // Short timeout — this is a best-effort enrichment, not a critical boot path.

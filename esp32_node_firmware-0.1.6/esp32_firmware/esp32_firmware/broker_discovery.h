@@ -66,7 +66,8 @@ enum class DiscoveryMethod {
     MDNS      = 1,   // Found via mDNS _mqtt._tcp advertisement
     PORTSCAN  = 2,   // Found via TCP port scan of the local /24 subnet
     STORED    = 3,   // Using the URL stored in the NVS credential bundle
-    CACHED    = 4    // Re-connected to a previously-used broker address
+    CACHED    = 4,   // Re-connected to a previously-used broker address
+    SIBLING   = 5    // Received from an operational sibling via ESP-NOW
 };
 
 struct BrokerResult {
@@ -175,6 +176,36 @@ static BrokerResult tryCachedBrokers() {
         Serial.printf("[Discovery] Step 0: %s:%d unreachable\n", c.host[i], c.port[i]);
     }
     return result;   // empty — caller falls through to Steps 1–3
+}
+
+
+// ── Step 0.5: Ask siblings via ESP-NOW ────────────────────────────────────────
+// Broadcasts a BROKER_REQ on the current Wi-Fi channel. Any OPERATIONAL sibling
+// that already has a connected broker will reply with its address within
+// BROKER_ESPNOW_TIMEOUT_MS. This is faster than mDNS and requires no broker-side
+// config — ideal for networks without mDNS or when the port scan would be slow.
+// Declared in espnow_responder.h (included before broker_discovery.h).
+static BrokerResult tryEspNowBroker() {
+    BrokerResult result;
+    char     host[64] = {0};
+    uint16_t port     = 0;
+    if (!espnowGetSiblingBroker(host, sizeof(host), &port)) return result;
+    if (host[0] == '\0' || port == 0) return result;
+
+    // Verify the address is actually reachable before returning it
+    Serial.printf("[Discovery] Step 0.5: sibling gave %s:%d — probing...\n", host, port);
+    uint32_t t = tcpPingMs(host, port, 1000);
+    if (t == 0xFFFFFFFF) {
+        Serial.printf("[Discovery] Step 0.5: %s:%d unreachable — discarding\n", host, port);
+        return result;
+    }
+
+    strncpy(result.host, host, sizeof(result.host) - 1);
+    result.port   = port;
+    result.method = DiscoveryMethod::SIBLING;
+    Serial.printf("[Discovery] Step 0.5: using sibling broker %s:%d (%u ms)\n",
+                  result.host, result.port, t);
+    return result;
 }
 
 
@@ -354,6 +385,10 @@ BrokerResult discoverBroker(const char* storedUrl) {
     if (result.found()) return result;
 
 #if BROKER_DISCOVERY_ENABLED
+
+    // Step 0.5: ask a sibling via ESP-NOW (fast, no broker-side config needed)
+    result = tryEspNowBroker();
+    if (result.found()) return result;
 
     result = tryMdnsDiscovery();
     if (result.found()) return result;
