@@ -159,23 +159,37 @@ void setup() {
 
     // ─────────────────────────────────────────────────────────────────────────
     // STATE: BOOT
-    // Check whether this device was already configured by an admin via AP mode.
-    // If so, skip the ESP-NOW bootstrap entirely and go straight to Wi-Fi.
-    // This makes re-boots fast for already-provisioned devices.
+    // Check whether credentials were flagged stale by a previous boot cycle
+    // (written by loop() before a sustained-failure restart). If so, force a
+    // sibling re-verify even if admin credentials are present — they may no
+    // longer be valid after a network change.
+    //
+    // Otherwise, if admin credentials exist, skip bootstrap for a fast re-boot.
+    // If no credentials of any kind exist, go to BOOTSTRAP_REQUEST to ask siblings.
     // ─────────────────────────────────────────────────────────────────────────
-    if (CredentialStore::hasPrimary()) {
-        // Admin credentials are in NVS — load them
-        Serial.println("[BOOT] Admin credentials found — skipping bootstrap");
-        if (CredentialStore::load(activeBundle)) {
-            currentState = State::WIFI_CONNECT;   // Go straight to Wi-Fi
+    {
+        bool credStale = CredentialStore::isCredStale();
+        if (credStale) {
+            // Clear the flag now — this boot is the re-verify attempt.
+            // If sibling bootstrap fails, the device falls back to its stored
+            // credentials or AP mode as normal; the flag will not re-trigger.
+            CredentialStore::setCredStale(false);
+            Serial.println("[BOOT] Credentials flagged stale — forcing sibling re-verify");
+            currentState = State::BOOTSTRAP_REQUEST;
+        } else if (CredentialStore::hasPrimary()) {
+            // Admin credentials are in NVS and not stale — load them
+            Serial.println("[BOOT] Admin credentials found — skipping bootstrap");
+            if (CredentialStore::load(activeBundle)) {
+                currentState = State::WIFI_CONNECT;   // Go straight to Wi-Fi
+            } else {
+                // NVS said admin credentials exist but they couldn't be loaded — corrupted?
+                Serial.println("[BOOT] Failed to load admin credentials — entering AP mode");
+                currentState = State::AP_MODE;
+            }
         } else {
-            // NVS said admin credentials exist but they couldn't be loaded — corrupted?
-            Serial.println("[BOOT] Failed to load admin credentials — entering AP mode");
-            currentState = State::AP_MODE;
+            // No admin credentials — need to ask a sibling node for them
+            currentState = State::BOOTSTRAP_REQUEST;
         }
-    } else {
-        // No admin credentials — need to ask a sibling node for them
-        currentState = State::BOOTSTRAP_REQUEST;
     }
 
 
@@ -192,6 +206,10 @@ void setup() {
 
         bool gotBundle = false;   // True once we have valid credentials to use
 
+        // Timestamp safety cap — reject bundles from rogue nodes advertising a
+        // far-future timestamp that would permanently win all comparisons.
+        const uint64_t BOOTSTRAP_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
+
         for (int attempt = 1;
              attempt <= BOOTSTRAP_MAX_ATTEMPTS && !gotBundle;
              attempt++)
@@ -200,7 +218,18 @@ void setup() {
                           attempt, BOOTSTRAP_MAX_ATTEMPTS);
 
             CredentialBundle received;
-            if (espnowBootstrap(received)) {
+#ifdef SIBLING_PRIMARY_SELECTION
+            bool gotResp = espnowBootstrapWithPrimarySelection(received);
+#else
+            bool gotResp = espnowBootstrap(received);
+#endif
+            if (gotResp) {
+                // Reject bundles with an unreasonably far-future timestamp
+                if (received.timestamp > BOOTSTRAP_MAX_TS) {
+                    Serial.printf("[BOOTSTRAP] Received bundle timestamp %llu exceeds cap %llu"
+                                  " — discarding\n", received.timestamp, BOOTSTRAP_MAX_TS);
+                    // Treat as if no response arrived for this attempt
+                } else {
                 // A sibling responded — compare with whatever is already in NVS
                 // and keep whichever bundle has the newer timestamp.
                 CredentialBundle stored;
@@ -225,6 +254,7 @@ void setup() {
                     Serial.println("[BOOTSTRAP] Kept existing NVS bundle (newer timestamp)");
                 }
                 gotBundle = true;   // We have credentials — exit the retry loop
+                } // end timestamp cap else
 
             } else {
                 // No response this attempt
@@ -272,21 +302,73 @@ void setup() {
         }
 
         if (!connected) {
-            // All Wi-Fi attempts failed — increment the persistent restart counter
-            uint8_t restarts = CredentialStore::incrementRestartCount();
-            Serial.printf("[WiFi] Failed — restart count now %d / %d\n",
-                          restarts, DEVICE_RESTART_MAX);
+            // All Wi-Fi attempts failed. Before incrementing the restart counter,
+            // ask siblings for fresh credentials — they may have a newer bundle
+            // (e.g. after an admin rotated credentials on the network).
+            // WiFi is NOT connected here so it is safe to change the channel.
+            Serial.println("[WiFi] All attempts failed — trying sibling credential re-verify");
 
-            if (restarts < DEVICE_RESTART_MAX) {
-                // Still within the restart budget — reboot and try again
-                Serial.println("[WiFi] Restarting device...");
-                delay(1000);    // Brief pause so the serial message is transmitted
-                ESP.restart();  // Full hardware restart
-            } else {
-                // Restart budget exhausted — credentials may be wrong or router is down.
-                // Enter AP_MODE so the admin can update credentials.
-                Serial.println("[WiFi] Restart limit reached — entering AP mode");
-                currentState = State::AP_MODE;
+            // Timestamp safety cap (same rule as BOOTSTRAP_REQUEST above)
+            const uint64_t REVERIFY_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
+
+            for (int sibAttempt = 0;
+                 sibAttempt < SIBLING_REVERIFY_ATTEMPTS && !connected;
+                 sibAttempt++)
+            {
+                CredentialBundle fresh;
+#ifdef SIBLING_PRIMARY_SELECTION
+                bool gotFresh = espnowBootstrapWithPrimarySelection(fresh);
+#else
+                bool gotFresh = espnowBootstrap(fresh);
+#endif
+                if (gotFresh) {
+                    if (fresh.timestamp > REVERIFY_MAX_TS) {
+                        Serial.printf("[WiFi] Sibling bundle timestamp %llu exceeds cap"
+                                      " — discarding\n", fresh.timestamp);
+                    } else if (fresh.timestamp > activeBundle.timestamp) {
+                        // Strictly newer credentials received — adopt and retry WiFi
+                        activeBundle = fresh;
+                        CredentialStore::save(activeBundle);
+                        Serial.println("[WiFi] Fresh credentials from sibling — retrying WiFi");
+
+                        for (int ra = 1; ra <= WIFI_MAX_ATTEMPTS && !connected; ra++) {
+                            Serial.printf("[WiFi] Re-verify attempt %d of %d\n", ra, WIFI_MAX_ATTEMPTS);
+                            connected = connectWifi(activeBundle);
+                            if (!connected && ra < WIFI_MAX_ATTEMPTS) delay(2000);
+                        }
+                        if (connected) {
+                            CredentialStore::clearRestartCount();
+                            currentState = State::OPERATIONAL;
+                        } else {
+                            Serial.println("[WiFi] Still failed with fresh sibling credentials");
+                        }
+                    } else {
+                        Serial.printf("[WiFi] Sibling bundle not newer (sibling ts=%llu"
+                                      " <= stored ts=%llu) — no retry\n",
+                                      fresh.timestamp, activeBundle.timestamp);
+                    }
+                } else {
+                    Serial.println("[WiFi] No sibling responded to re-verify request");
+                }
+            }
+
+            if (!connected) {
+                // All attempts exhausted including sibling re-verify
+                uint8_t restarts = CredentialStore::incrementRestartCount();
+                Serial.printf("[WiFi] Failed — restart count now %d / %d\n",
+                              restarts, DEVICE_RESTART_MAX);
+
+                if (restarts < DEVICE_RESTART_MAX) {
+                    // Still within the restart budget — reboot and try again
+                    Serial.println("[WiFi] Restarting device...");
+                    delay(1000);    // Brief pause so the serial message is transmitted
+                    ESP.restart();  // Full hardware restart
+                } else {
+                    // Restart budget exhausted — credentials may be wrong or router is down.
+                    // Enter AP_MODE so the admin can update credentials.
+                    Serial.println("[WiFi] Restart limit reached — entering AP mode");
+                    currentState = State::AP_MODE;
+                }
             }
         } else {
             // Successfully connected — reset the restart counter
@@ -323,6 +405,13 @@ void setup() {
         // new node that asks us for credentials gets the active bundle
         espnowResponderSetBundle(activeBundle);
         espnowResponderStart();   // Start listening for incoming ESP-NOW requests
+
+        // Initialise health flags for sibling health advertisements.
+        // WiFi is confirmed connected (we are here). GitHub is assumed reachable
+        // until the first OTA check proves otherwise (~1 hour). MQTT starts at 0
+        // and is set by onMqttConnect once the broker responds.
+        responderSetHealthFlag(0, true);   // bit 0: WiFi connected
+        responderSetHealthFlag(2, true);   // bit 2: GitHub assumed reachable
 
         // Discover the MQTT broker using mDNS, then port scan, then stored URL.
         // discoverBroker() returns the best address found by any method.
@@ -363,8 +452,10 @@ void loop() {
         }
 
         if (!wifiConnected) {
-            // Persistent Wi-Fi failure — restart and let the boot sequence retry
-            Serial.println("[Loop] Could not reconnect — restarting");
+            // Persistent Wi-Fi failure — flag credentials as stale so the next
+            // boot forces a sibling re-verify before falling back to AP mode.
+            Serial.println("[Loop] Could not reconnect — flagging credentials stale and restarting");
+            CredentialStore::setCredStale(true);
             CredentialStore::incrementRestartCount();   // Track this failure
             ESP.restart();
         }
@@ -389,7 +480,10 @@ void loop() {
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
-        Serial.println("[Loop] MQTT unrecoverable — restarting device");
+        // Sustained MQTT failure — credentials may be wrong (wrong broker URL,
+        // bad username/password). Flag as stale so next boot asks siblings.
+        Serial.println("[Loop] MQTT unrecoverable — flagging credentials stale and restarting");
+        CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttNeedsRediscovery()) {
