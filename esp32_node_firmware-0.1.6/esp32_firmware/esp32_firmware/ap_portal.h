@@ -122,6 +122,15 @@ static void apHandleRoot() {
         "<title>ESP32 Setup</title>"
         "<style>") + PAGE_STYLE + "</style></head><body>"
         "<h2>ESP32 Device Setup</h2>"
+        "<h3>Locate Device</h3>"
+        "<button type='button' class='locate' "
+          "onclick=\"this.textContent='Flashing...';"
+                   "fetch('/locate',{method:'POST'})"
+                     ".then(()=>this.textContent='Done \u2014 locate flash complete')"
+                     ".catch(()=>this.textContent='Error')\">"
+          "Locate This Device"
+        "</button>"
+
         "<form method='POST' action='/save'>"
 
         "<h3>Wi-Fi</h3>"
@@ -167,13 +176,6 @@ static void apHandleRoot() {
 
         "<button type='submit'>Save &amp; Restart</button>"
         "</form>"
-        "<button type='button' class='locate' "
-          "onclick=\"this.textContent='Flashing...';"
-                   "fetch('/locate',{method:'POST'})"
-                     ".then(()=>this.textContent='Done \u2014 locate flash complete')"
-                     ".catch(()=>this.textContent='Error')\">"
-          "Locate This Device"
-        "</button>"
         "</body></html>";
     _apServer.send(200, "text/html", html);
 }

@@ -7,6 +7,7 @@
 #include "config.h"
 #include "credentials.h"
 #include "crypto.h"
+#include "app_config.h"   // gAppConfig + AppConfigStore::save() for OTA URL adoption
 
 // =============================================================================
 // espnow_bootstrap.h  —  ESP-NOW credential request / response
@@ -124,6 +125,11 @@ static void wireToBundle(const WireBundle& w, CredentialBundle& b) {
 }
 
 // ── Shared state ──────────────────────────────────────────────────────────────
+// Bootstrap-time OTA URL reception — populated by onEspNowReceive when a
+// sibling sends OTA_URL_RESP during the bootstrap phase.
+static volatile bool _bootstrapOtaUrlReceived = false;
+static char          _bootstrapOtaUrl[201]     = {0};
+
 static volatile bool _espnowResponseReceived = false;
 static uint8_t       _espnowRespBuf[250]     = {0};
 static size_t        _espnowRespLen          = 0;
@@ -147,6 +153,18 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
         return;
     }
 #endif
+
+    // ── Bootstrap-time OTA URL response ──────────────────────────────────────
+    if (data[0] == ESPNOW_MSG_OTA_URL_RESP && !_bootstrapOtaUrlReceived) {
+        if (len < 10 || data[1] != ESPNOW_PROTOCOL_VERSION) return;
+        uint8_t urlLen = data[8];
+        if (urlLen == 0 || urlLen > 200 || len < (int)(9 + urlLen)) return;
+        memcpy(_bootstrapOtaUrl, data + 9, urlLen);
+        _bootstrapOtaUrl[urlLen] = '\0';
+        _bootstrapOtaUrlReceived = true;
+        Serial.printf("[ESP-NOW CB] OTA URL from sibling: %s\n", _bootstrapOtaUrl);
+        return;
+    }
 
     // ── Phase 2 / plain bootstrap: credential response ────────────────────────
     if (data[0] != ESPNOW_MSG_CREDENTIAL_RESP) {
@@ -295,6 +313,42 @@ bool espnowBootstrap(CredentialBundle& out) {
     memset(&wire, 0, sizeof(wire));
 
     Serial.println("[ESP-NOW] Bundle received and verified");
+
+    // ── Also request OTA URL from this sibling while ESP-NOW is still open ────
+    // The responder's MAC is in the response header at bytes 2–7.
+    // This is a best-effort enrichment — if the sibling doesn't respond or their
+    // GitHub health flag is not set, we keep our existing OTA URL and continue.
+    {
+        _bootstrapOtaUrlReceived = false;
+        memset(_bootstrapOtaUrl, 0, sizeof(_bootstrapOtaUrl));
+
+        const uint8_t* responderMac = _espnowRespBuf + 2;   // bytes 2–7 in response
+        uint8_t req[2] = { ESPNOW_MSG_OTA_URL_REQ, ESPNOW_PROTOCOL_VERSION };
+
+        esp_now_peer_info_t peer = {};
+        memcpy(peer.peer_addr, responderMac, 6);
+        peer.channel = ESPNOW_CHANNEL;
+        peer.encrypt = false;
+        if (!esp_now_is_peer_exist(responderMac)) esp_now_add_peer(&peer);
+
+        esp_err_t urlErr = esp_now_send(responderMac, req, sizeof(req));
+        if (urlErr == ESP_OK) {
+            uint32_t urlDeadline = millis() + OTA_URL_REQUEST_TIMEOUT_MS;
+            while (!_bootstrapOtaUrlReceived && millis() < urlDeadline) delay(10);
+        }
+
+        if (_bootstrapOtaUrlReceived) {
+            AppConfig cfg;
+            memcpy(&cfg, &gAppConfig, sizeof(AppConfig));
+            strncpy(cfg.ota_json_url, _bootstrapOtaUrl, sizeof(cfg.ota_json_url) - 1);
+            cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
+            AppConfigStore::save(cfg);
+            Serial.printf("[ESP-NOW] OTA URL adopted from sibling: %s\n", gAppConfig.ota_json_url);
+        } else {
+            Serial.println("[ESP-NOW] No OTA URL from sibling — keeping existing");
+        }
+    }
+
     esp_now_deinit();
     return true;
 }
@@ -479,6 +533,34 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     memset(&wire, 0, sizeof(wire));
 
     Serial.println("[ESP-NOW PS] Bundle received and verified from primary sibling");
+
+    // ── Also request OTA URL from this sibling while ESP-NOW is still open ────
+    {
+        _bootstrapOtaUrlReceived = false;
+        memset(_bootstrapOtaUrl, 0, sizeof(_bootstrapOtaUrl));
+
+        uint8_t req[2] = { ESPNOW_MSG_OTA_URL_REQ, ESPNOW_PROTOCOL_VERSION };
+
+        // best.mac is already registered as a peer from the credential request above
+        esp_err_t urlErr = esp_now_send(best.mac, req, sizeof(req));
+        if (urlErr == ESP_OK) {
+            uint32_t urlDeadline = millis() + OTA_URL_REQUEST_TIMEOUT_MS;
+            while (!_bootstrapOtaUrlReceived && millis() < urlDeadline) delay(10);
+        }
+
+        if (_bootstrapOtaUrlReceived) {
+            AppConfig cfg;
+            memcpy(&cfg, &gAppConfig, sizeof(AppConfig));
+            strncpy(cfg.ota_json_url, _bootstrapOtaUrl, sizeof(cfg.ota_json_url) - 1);
+            cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
+            AppConfigStore::save(cfg);
+            Serial.printf("[ESP-NOW PS] OTA URL adopted from primary sibling: %s\n",
+                          gAppConfig.ota_json_url);
+        } else {
+            Serial.println("[ESP-NOW PS] No OTA URL from primary sibling — keeping existing");
+        }
+    }
+
     esp_now_deinit();
     return true;
 }

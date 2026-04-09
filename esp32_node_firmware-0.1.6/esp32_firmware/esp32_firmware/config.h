@@ -228,6 +228,12 @@
 // These extend the existing ESPNOW_MSG_CREDENTIAL_REQ / CREDENTIAL_RESP pair.
 #define ESPNOW_MSG_HEALTH_QUERY     0x03   // Broadcast: "who is healthy enough to serve creds?"
 #define ESPNOW_MSG_HEALTH_RESP      0x04   // Unicast reply: MAC + fw_version + health flags
+#define ESPNOW_MSG_OTA_URL_REQ      0x05   // Broadcast/unicast: "what is your OTA JSON URL?"
+#define ESPNOW_MSG_OTA_URL_RESP     0x06   // Unicast reply: sender MAC + URL string
+
+// How long (ms) to wait for an OTA URL response from a sibling.
+// Short timeout — this is a best-effort enrichment, not a critical boot path.
+#define OTA_URL_REQUEST_TIMEOUT_MS  3000
 
 // Define to enable two-phase primary selection bootstrap.
 // When defined, bootstrapping nodes first collect health advertisements from

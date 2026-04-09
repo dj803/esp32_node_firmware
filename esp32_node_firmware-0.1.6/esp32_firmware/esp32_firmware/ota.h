@@ -103,6 +103,21 @@ void otaCheckNow() {
         mqttPublishStatus("ota_failed",
             "\"error\":\"OTA JSON unreachable\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
+
+        // Ask siblings for a working OTA URL and retry once with it.
+        // espnowRequestOtaUrl() is defined in espnow_responder.h (included before
+        // this file). The retry flag prevents infinite recursion — if the sibling-
+        // provided URL also fails, we give up rather than asking again.
+        static bool _otaRetrying = false;
+        if (!_otaRetrying) {
+            Serial.println("[OTA] Asking siblings for a working OTA URL...");
+            if (espnowRequestOtaUrl()) {
+                _otaRetrying = true;
+                Serial.println("[OTA] Retrying with sibling-provided URL");
+                otaCheckNow();
+                _otaRetrying = false;
+            }
+        }
         return;
     }
 

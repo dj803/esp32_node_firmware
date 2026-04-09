@@ -6,6 +6,7 @@
 #include "config.h"
 #include "credentials.h"
 #include "crypto.h"
+#include "app_config.h"   // gAppConfig (ota_json_url) + AppConfigStore::save()
 
 // =============================================================================
 // espnow_responder.h  —  Serve credential bundles to bootstrapping siblings
@@ -35,6 +36,13 @@ inline void responderSetHealthFlag(uint8_t bit, bool set) {
     if (set) _responderHealthFlags |=  (uint8_t)(1u << bit);
     else      _responderHealthFlags &= (uint8_t)~(1u << bit);
 }
+
+
+// ── OTA URL sharing state ──────────────────────────────────────────────────────
+// Written by onEspNowOtaUrlResponse() when a sibling's URL arrives.
+// Read by espnowRequestOtaUrl() which blocks on _otaUrlRespReceived.
+static volatile bool _otaUrlRespReceived = false;
+static char          _receivedOtaUrl[201] = {0};   // max 200 chars + null
 
 
 // ── Per-MAC request rate limiting ─────────────────────────────────────────────
@@ -179,6 +187,112 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     }
 }
 
+// ── OTA URL request handler (responder side) ──────────────────────────────────
+// Answers an OTA_URL_REQ from any sibling by sending our own OTA JSON URL.
+// Only responds if health flag bit 2 is set — confirming our URL actually works.
+static void onEspNowOtaUrlRequest(const esp_now_recv_info_t* recvInfo,
+                                   const uint8_t* data, int len) {
+    if (!_responderActive) return;
+    if (len < 2) return;
+    if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
+    if (!(_responderHealthFlags & (1u << 2))) {
+        Serial.println("[ESP-NOW Responder] OTA URL req ignored — own URL not verified");
+        return;
+    }
+
+    const uint8_t* requesterMac = recvInfo->src_addr;
+    size_t urlLen = strnlen(gAppConfig.ota_json_url, 200);
+    if (urlLen == 0) {
+        Serial.println("[ESP-NOW Responder] OTA URL req ignored — no URL configured");
+        return;
+    }
+
+    // Wire: [OTA_URL_RESP 1B][version 1B][sender_mac 6B][url_len 1B][url up to 200B]
+    uint8_t buf[2 + 6 + 1 + 200];
+    buf[0] = ESPNOW_MSG_OTA_URL_RESP;
+    buf[1] = ESPNOW_PROTOCOL_VERSION;
+    uint8_t myMac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, myMac);
+    memcpy(buf + 2, myMac, 6);
+    buf[8] = (uint8_t)urlLen;
+    memcpy(buf + 9, gAppConfig.ota_json_url, urlLen);
+    size_t totalLen = 9 + urlLen;
+
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, requesterMac, 6);
+    peer.channel = ESPNOW_CHANNEL;
+    peer.encrypt = false;
+    if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
+    esp_now_send(requesterMac, buf, totalLen);
+    Serial.println("[ESP-NOW Responder] OTA URL sent to requester");
+}
+
+
+// ── OTA URL response handler (requester side, OPERATIONAL mode) ───────────────
+// Populates _receivedOtaUrl when a sibling's OTA_URL_RESP arrives.
+// Called from espnowReceiveDispatch while this node is OPERATIONAL.
+static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
+                                    const uint8_t* data, int len) {
+    if (len < 2) return;
+    if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
+    if (len < 10) return;              // 2 header + 6 mac + 1 len_byte + ≥1 char
+    if (_otaUrlRespReceived) return;   // Already accepted one — first response wins
+    uint8_t urlLen = data[8];
+    if (urlLen == 0 || urlLen > 200) return;
+    if (len < (int)(9 + urlLen)) return;
+    memcpy(_receivedOtaUrl, data + 9, urlLen);
+    _receivedOtaUrl[urlLen] = '\0';
+    _otaUrlRespReceived = true;
+    Serial.printf("[ESP-NOW] OTA URL received from sibling: %s\n", _receivedOtaUrl);
+}
+
+
+// ── espnowRequestOtaUrl ───────────────────────────────────────────────────────
+// Broadcasts an OTA_URL_REQ on the existing OPERATIONAL ESP-NOW session and
+// waits up to OTA_URL_REQUEST_TIMEOUT_MS for a sibling response.
+// If a response arrives, adopts the URL into gAppConfig and persists it to NVS.
+// Returns true if the URL was updated, false if no sibling responded.
+//
+// Called by ota.h when a GitHub fetch fails. ESP-NOW MUST already be initialized
+// (espnowResponderStart() was called during OPERATIONAL setup).
+bool espnowRequestOtaUrl() {
+    _otaUrlRespReceived = false;
+    memset(_receivedOtaUrl, 0, sizeof(_receivedOtaUrl));
+
+    // Broadcast peer may already exist from responder setup; add it if not
+    esp_now_peer_info_t bcastPeer = {};
+    memcpy(bcastPeer.peer_addr, ESPNOW_BROADCAST, 6);
+    bcastPeer.channel = ESPNOW_CHANNEL;
+    bcastPeer.encrypt = false;
+    if (!esp_now_is_peer_exist(ESPNOW_BROADCAST)) esp_now_add_peer(&bcastPeer);
+
+    uint8_t req[2] = { ESPNOW_MSG_OTA_URL_REQ, ESPNOW_PROTOCOL_VERSION };
+    esp_err_t err = esp_now_send(ESPNOW_BROADCAST, req, sizeof(req));
+    if (err != ESP_OK) {
+        Serial.printf("[ESP-NOW] OTA URL req send failed: %d\n", err);
+        return false;
+    }
+    Serial.println("[ESP-NOW] OTA URL request broadcast — waiting for sibling...");
+
+    uint32_t deadline = millis() + OTA_URL_REQUEST_TIMEOUT_MS;
+    while (!_otaUrlRespReceived && millis() < deadline) delay(10);
+
+    if (!_otaUrlRespReceived) {
+        Serial.println("[ESP-NOW] No OTA URL response from siblings");
+        return false;
+    }
+
+    // Adopt the received URL — update live gAppConfig and persist to NVS
+    AppConfig cfg;
+    memcpy(&cfg, &gAppConfig, sizeof(AppConfig));
+    strncpy(cfg.ota_json_url, _receivedOtaUrl, sizeof(cfg.ota_json_url) - 1);
+    cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
+    AppConfigStore::save(cfg);
+    Serial.printf("[ESP-NOW] OTA URL updated to: %s\n", gAppConfig.ota_json_url);
+    return true;
+}
+
+
 #ifdef SIBLING_PRIMARY_SELECTION
 // ── HEALTH_QUERY handler (primary selection) ──────────────────────────────────
 // Responds to a sibling's health query with this node's firmware version and
@@ -233,6 +347,12 @@ static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uin
             break;
         case ESPNOW_MSG_CREDENTIAL_RESP:
             // Ignore — only relevant during bootstrap phase
+            break;
+        case ESPNOW_MSG_OTA_URL_REQ:
+            onEspNowOtaUrlRequest(recvInfo, data, len);
+            break;
+        case ESPNOW_MSG_OTA_URL_RESP:
+            onEspNowOtaUrlResponse(recvInfo, data, len);
             break;
 #ifdef SIBLING_PRIMARY_SELECTION
         case ESPNOW_MSG_HEALTH_QUERY:
