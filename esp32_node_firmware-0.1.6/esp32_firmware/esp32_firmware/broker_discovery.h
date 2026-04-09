@@ -127,9 +127,8 @@ static void saveBrokerToCache(const char* host, uint16_t port) {
 // Used to rank multiple mDNS candidates by response latency.
 static uint32_t tcpPingMs(const char* host, uint16_t port, uint32_t timeoutMs) {
     WiFiClient client;
-    client.setTimeout(timeoutMs);
     uint32_t t0 = millis();
-    if (client.connect(host, port)) {
+    if (client.connect(host, port, (int32_t)timeoutMs)) {
         uint32_t elapsed = millis() - t0;
         client.stop();
         return elapsed;
@@ -315,8 +314,7 @@ static BrokerResult tryPortScan() {
                           i, min(i + 9, 254));
         }
 
-        client.setTimeout(PORTSCAN_TIMEOUT_MS);
-        if (client.connect(target, PORTSCAN_PORT)) {
+        if (client.connect(target, PORTSCAN_PORT, PORTSCAN_TIMEOUT_MS)) {
             client.stop();
             candidates[foundCount++] = target;
             Serial.printf("[Discovery] Port scan: open port at %s\n",
