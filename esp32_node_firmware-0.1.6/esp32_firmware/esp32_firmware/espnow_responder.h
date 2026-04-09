@@ -7,6 +7,7 @@
 #include "credentials.h"
 #include "crypto.h"
 #include "app_config.h"   // gAppConfig (ota_json_url) + AppConfigStore::save()
+#include "led.h"
 
 // =============================================================================
 // espnow_responder.h  —  Serve credential bundles to bootstrapping siblings
@@ -173,7 +174,7 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     // Register requester as peer on the fixed channel and send
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, requesterMac, 6);
-    peer.channel = ESPNOW_CHANNEL;
+    peer.channel = 0;   // 0 = current Wi-Fi channel (matches router in OPERATIONAL mode)
     peer.encrypt = false;
     if (!esp_now_is_peer_exist(requesterMac)) {
         esp_now_add_peer(&peer);
@@ -182,6 +183,7 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     esp_err_t err = esp_now_send(requesterMac, resp, idx);
     if (err == ESP_OK) {
         Serial.println("[ESP-NOW Responder] Bundle sent to sibling");
+        ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
     } else {
         Serial.printf("[ESP-NOW Responder] Send failed: %d\n", err);
     }
@@ -220,10 +222,11 @@ static void onEspNowOtaUrlRequest(const esp_now_recv_info_t* recvInfo,
 
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, requesterMac, 6);
-    peer.channel = ESPNOW_CHANNEL;
+    peer.channel = 0;   // 0 = current Wi-Fi channel
     peer.encrypt = false;
     if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
     esp_now_send(requesterMac, buf, totalLen);
+    ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
     Serial.println("[ESP-NOW Responder] OTA URL sent to requester");
 }
 
@@ -262,7 +265,7 @@ bool espnowRequestOtaUrl() {
     // Broadcast peer may already exist from responder setup; add it if not
     esp_now_peer_info_t bcastPeer = {};
     memcpy(bcastPeer.peer_addr, ESPNOW_BROADCAST, 6);
-    bcastPeer.channel = ESPNOW_CHANNEL;
+    bcastPeer.channel = 0;   // 0 = current Wi-Fi channel (router's channel in OPERATIONAL mode)
     bcastPeer.encrypt = false;
     if (!esp_now_is_peer_exist(ESPNOW_BROADCAST)) esp_now_add_peer(&bcastPeer);
 
@@ -272,6 +275,7 @@ bool espnowRequestOtaUrl() {
         Serial.printf("[ESP-NOW] OTA URL req send failed: %d\n", err);
         return false;
     }
+    ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
     Serial.println("[ESP-NOW] OTA URL request broadcast — waiting for sibling...");
 
     uint32_t deadline = millis() + OTA_URL_REQUEST_TIMEOUT_MS;
@@ -324,7 +328,7 @@ static void onEspNowHealthQuery(const esp_now_recv_info_t* recvInfo,
 
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, requesterMac, 6);
-    peer.channel = ESPNOW_CHANNEL;
+    peer.channel = 0;   // 0 = current Wi-Fi channel
     peer.encrypt = false;
     if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
 
@@ -365,9 +369,15 @@ static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uin
 }
 
 void espnowResponderStart() {
-    // Ensure we're on the fixed channel
-    esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    // Do NOT call esp_wifi_set_channel() here. In OPERATIONAL mode Wi-Fi is
+    // already connected and the radio is locked to the router's channel.
+    // Forcing a different channel would drop the Wi-Fi connection.
+    // ESP-NOW automatically uses the current Wi-Fi channel; peers are
+    // registered with channel=0 so their responses go out on the same channel.
     esp_now_init();
     esp_now_register_recv_cb(espnowReceiveDispatch);
-    Serial.printf("[ESP-NOW Responder] Listening on channel %d\n", ESPNOW_CHANNEL);
+    uint8_t ch = 0;
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    esp_wifi_get_channel(&ch, &second);
+    Serial.printf("[ESP-NOW Responder] Listening on Wi-Fi channel %d\n", ch);
 }

@@ -9,6 +9,7 @@
 #include "device_id.h"   // Persistent UUID-based device identity
 #include "app_config.h"   // gAppConfig: runtime GitHub + MQTT topic segments (NVS-backed)
 #include "broker_discovery.h"  // BrokerResult from mDNS / port scan / stored URL
+#include "led.h"
 
 // ota.h is included AFTER this file in the main sketch.
 // Forward-declare otaCheckNow here so onMqttMessage can call it when
@@ -244,6 +245,7 @@ static void onMqttConnect(bool sessionPresent) {
     // responderSetHealthFlag is defined in espnow_responder.h, which is included
     // before mqtt_client.h in esp32_firmware.ino.
     responderSetHealthFlag(1, true);
+    ledSetPattern(LedPattern::MQTT_CONNECTED);   // 50ms pulse / 2s off — normal operational
 
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
@@ -285,6 +287,7 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 
     // Update sibling health advertisement — MQTT is no longer connected.
     responderSetHealthFlag(1, false);
+    ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow 2s/2s blink — Wi-Fi up, MQTT reconnecting
     if (_mqttReconnectCount == MQTT_REDISCOVERY_THRESHOLD) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }

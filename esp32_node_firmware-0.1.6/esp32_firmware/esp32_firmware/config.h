@@ -26,8 +26,8 @@
 //   Linux/Mac:  date +%s
 //   Windows:    PowerShell: [int][double]::Parse((Get-Date -UFormat %s))
 // -----------------------------------------------------------------------------
-#define FIRMWARE_VERSION           "0.1.7"
-#define FIRMWARE_BUILD_TIMESTAMP   1775574236ULL   // 2026-04-07 13:43:56 UTC
+#define FIRMWARE_VERSION           "0.2.4"
+#define FIRMWARE_BUILD_TIMESTAMP   1744193400ULL   // 2026-04-09 10:30:00 UTC
 
 
 // -----------------------------------------------------------------------------
@@ -182,6 +182,13 @@
 // Changing ESPNOW_PROTOCOL_VERSION will make this firmware incompatible with
 // nodes running an older version — increment it whenever the message layout
 // changes so that mismatched nodes reject each other's packets gracefully.
+//
+// Channel note: ESP-NOW and Wi-Fi share the same radio. In OPERATIONAL mode
+// the radio is locked to the router's channel; all ESP-NOW responses use
+// peer.channel=0 (= current Wi-Fi channel automatically). During BOOTSTRAP
+// (before Wi-Fi connects) the firmware forces ESPNOW_CHANNEL explicitly —
+// that value MUST match your router's fixed channel. Set your router to a
+// static channel (not "Auto") and keep ESPNOW_CHANNEL in sync.
 // -----------------------------------------------------------------------------
 #define ESPNOW_PROTOCOL_VERSION    1      // Increment on any breaking wire format change
 #define ESPNOW_MSG_CREDENTIAL_REQ  0x01   // Message type byte: "I need credentials"

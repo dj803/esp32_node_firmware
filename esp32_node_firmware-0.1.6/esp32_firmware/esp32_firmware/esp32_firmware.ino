@@ -58,6 +58,7 @@
 #include <esp_now.h>
 
 #include "config.h"
+#include "led.h"
 #include "credentials.h"
 #include "crypto.h"
 #include "espnow_bootstrap.h"
@@ -146,6 +147,8 @@ static bool connectWifi(const CredentialBundle& b) {
 void setup() {
     Serial.begin(115200);
     delay(500);   // Give the serial monitor time to connect before the first print
+    ledInit();                          // Start LED timer — must be early so all states can blink
+    ledSetPattern(LedPattern::BOOT);    // Solid ON during initialisation
     Serial.println("\n[BOOT] ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
     // Initialise the persistent device UUID (stored in NVS namespace "esp32id").
@@ -207,6 +210,7 @@ void setup() {
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::BOOTSTRAP_REQUEST) {
         Serial.println("[BOOTSTRAP] Starting ESP-NOW bootstrap");
+        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — searching for sibling
         WiFi.mode(WIFI_STA);   // ESP-NOW requires STA mode even before AP association
 
         bool gotBundle = false;   // True once we have valid credentials to use
@@ -294,6 +298,7 @@ void setup() {
     // (prevents an infinite restart loop if credentials are wrong).
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::WIFI_CONNECT) {
+        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — associating with router
         bool connected = false;
 
         for (int attempt = 1;
@@ -343,6 +348,7 @@ void setup() {
                         }
                         if (connected) {
                             CredentialStore::clearRestartCount();
+                            ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow blink — waiting for MQTT
                             currentState = State::OPERATIONAL;
                         } else {
                             Serial.println("[WiFi] Still failed with fresh sibling credentials");
@@ -366,6 +372,7 @@ void setup() {
                 if (restarts < DEVICE_RESTART_MAX) {
                     // Still within the restart budget — reboot and try again
                     Serial.println("[WiFi] Restarting device...");
+                    ledSetPattern(LedPattern::ERROR);   // 3× flash — visible during 1s delay
                     delay(1000);    // Brief pause so the serial message is transmitted
                     ESP.restart();  // Full hardware restart
                 } else {
@@ -378,6 +385,7 @@ void setup() {
         } else {
             // Successfully connected — reset the restart counter
             CredentialStore::clearRestartCount();
+            ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow blink — waiting for MQTT
             currentState = State::OPERATIONAL;
         }
     }
@@ -390,6 +398,7 @@ void setup() {
     // and calls ESP.restart() after the admin saves credentials.
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::AP_MODE) {
+        ledSetPattern(LedPattern::AP_MODE);   // rapid 100/100 blink — config portal active
         apPortalStart();
         // Execution does not reach here
     }
@@ -449,6 +458,7 @@ void loop() {
     // try to reconnect. If reconnection fails repeatedly, restart the device.
     if (!wifiConnected) {
         Serial.println("[Loop] Wi-Fi lost — attempting reconnect");
+        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 — reconnecting
         int attempts = 0;
         while (!wifiConnected && attempts < WIFI_MAX_ATTEMPTS) {
             connectWifi(activeBundle);
@@ -460,6 +470,7 @@ void loop() {
             // Persistent Wi-Fi failure — flag credentials as stale so the next
             // boot forces a sibling re-verify before falling back to AP mode.
             Serial.println("[Loop] Could not reconnect — flagging credentials stale and restarting");
+            ledSetPattern(LedPattern::ERROR);   // 3× flash before restart
             CredentialStore::setCredStale(true);
             CredentialStore::incrementRestartCount();   // Track this failure
             ESP.restart();
@@ -482,17 +493,20 @@ void loop() {
     // Tier 1: re-run broker discovery at MQTT_REDISCOVERY_THRESHOLD failures.
     if (mqttIsHung()) {
         Serial.println("[Loop] MQTT hung (no callback) — restarting device");
+        ledSetPattern(LedPattern::ERROR);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
         // Sustained MQTT failure — credentials may be wrong (wrong broker URL,
         // bad username/password). Flag as stale so next boot asks siblings.
         Serial.println("[Loop] MQTT unrecoverable — flagging credentials stale and restarting");
+        ledSetPattern(LedPattern::ERROR);
         CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttNeedsRediscovery()) {
         mqttClearRediscoveryFlag();
+        ledSetPattern(LedPattern::WIFI_CONNECTING);   // re-running discovery
         Serial.println("[Loop] MQTT stuck — re-running broker discovery");
         BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
         if (broker.found()) saveBrokerToCache(broker.host, broker.port);

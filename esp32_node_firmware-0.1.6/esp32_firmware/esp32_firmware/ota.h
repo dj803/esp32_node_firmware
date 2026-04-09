@@ -5,6 +5,7 @@
 #include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
 #include "config.h"
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
+#include "led.h"
 
 // =============================================================================
 // ota.h  —  Automatic OTA firmware updates via ESP32-OTA-Pull (spec §13)
@@ -155,6 +156,7 @@ void otaCheckNow() {
 
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
+    ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
     ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
                                 FIRMWARE_VERSION,
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);

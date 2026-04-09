@@ -8,6 +8,7 @@
 #include "credentials.h"
 #include "crypto.h"
 #include "app_config.h"   // gAppConfig + AppConfigStore::save() for OTA URL adoption
+#include "led.h"
 
 // =============================================================================
 // espnow_bootstrap.h  —  ESP-NOW credential request / response
@@ -31,7 +32,14 @@
 //   [payload_len 2B][nonce 12B][ciphertext varB][auth_tag 16B]
 // =============================================================================
 
-#define ESPNOW_CHANNEL   1    // Both nodes MUST use this channel
+// Channel used during the bootstrap phase (before Wi-Fi is connected).
+// OPERATIONAL nodes are already locked to the router's channel; they use
+// peer.channel=0 so ESP-NOW automatically matches their current Wi-Fi channel.
+// During BOOTSTRAP the radio is not yet connected to any AP, so an explicit
+// channel must be set here — it MUST match the router's fixed channel.
+// Set your router to a fixed (non-Auto) channel and update this value to match.
+// Mismatched channels are the most common cause of bootstrap failures.
+#define ESPNOW_CHANNEL   1    // MUST equal the router's configured Wi-Fi channel
 
 #define REQ_LEN  (1 + 1 + 6 + CURVE25519_KEY_LEN)   // 40 bytes
 
@@ -185,6 +193,7 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
     memcpy(_espnowRespBuf, data, len);
     _espnowRespLen = len;
     _espnowResponseReceived = true;
+    ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief RX indicator
     Serial.println("[ESP-NOW CB] Credential response accepted");
 }
 
@@ -218,6 +227,7 @@ static bool espnowSendRequest(const EcdhContext& ctx) {
     }
 
     esp_err_t err = esp_now_send(ESPNOW_BROADCAST, buf, REQ_LEN);
+    if (err == ESP_OK) ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
     Serial.printf("[ESP-NOW] esp_now_send returned: %d\n", err);
     return err == ESP_OK;
 }
