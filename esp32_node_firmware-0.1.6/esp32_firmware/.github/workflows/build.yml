@@ -44,7 +44,7 @@ jobs:
       # ESP32OTAPull requires ArduinoJson (already installed) and HTTPClient (bundled).
       - name: Install Arduino libraries
         run: |
-          arduino-cli lib install "ArduinoJson@7"
+          arduino-cli lib install "ArduinoJson@7" "MFRC522v2"
           # AsyncMqttClient, AsyncTCP, and ESP32OTAPull are installed from GitHub
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \

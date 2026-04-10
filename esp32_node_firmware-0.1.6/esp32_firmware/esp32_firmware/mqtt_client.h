@@ -411,6 +411,8 @@ bool mqttIsHung() {
            (millis() - _mqttConnectStartMs >= MQTT_HUNG_TIMEOUT_MS);
 }
 
+bool mqttIsConnected() { return _mqttClient.connected(); }
+
 
 // ── mqttReinit ────────────────────────────────────────────────────────────────
 // Re-points the MQTT client at a new broker address and kicks off a fresh

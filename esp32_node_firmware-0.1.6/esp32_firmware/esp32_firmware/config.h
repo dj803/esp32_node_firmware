@@ -132,6 +132,19 @@
 
 
 // -----------------------------------------------------------------------------
+// RFID reader (MFRC522v2 via SPI)
+// Define RFID_ENABLED to activate the RFID module. Comment out on nodes
+// that do not have an MFRC522 reader attached — no code overhead either way.
+// -----------------------------------------------------------------------------
+#define RFID_ENABLED                    // Comment out to disable on reader-less nodes
+
+#define RFID_SS_PIN        5            // SPI Slave Select GPIO
+                                        // SCK=18, MISO=19, MOSI=23 (default ESP32 VSPI)
+#define RFID_DEBOUNCE_MS   2000         // Min ms between publishes for the same card UID
+                                        // Different cards are always processed immediately
+
+
+// -----------------------------------------------------------------------------
 // Status LED
 // -----------------------------------------------------------------------------
 #define STATUS_LED_PIN             2    // GPIO 2 = onboard LED on most ESP32 dev boards

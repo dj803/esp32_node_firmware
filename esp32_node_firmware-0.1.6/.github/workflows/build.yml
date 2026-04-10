@@ -45,7 +45,7 @@ jobs:
       # AsyncMqttClient requires AsyncTCP as a dependency.
       - name: Install Arduino libraries
         run: |
-          arduino-cli lib install "ArduinoJson@7"
+          arduino-cli lib install "ArduinoJson@7" "MFRC522v2"
           # AsyncMqttClient, AsyncTCP, and ESP32-OTA-Pull are installed from GitHub (not in registry)
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \

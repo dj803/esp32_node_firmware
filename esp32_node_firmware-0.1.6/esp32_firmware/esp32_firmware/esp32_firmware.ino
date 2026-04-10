@@ -66,6 +66,7 @@
 #include "ap_portal.h"
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
+#include "rfid.h"          // MUST come after mqtt_client.h — calls mqttPublish/mqttIsConnected
 
 
 // ── State machine definition ──────────────────────────────────────────────────
@@ -442,6 +443,12 @@ void setup() {
 
         // Connect to the MQTT broker — non-blocking; result arrives via callbacks
         mqttBegin(activeBundle, broker);
+
+#ifdef RFID_ENABLED
+        // Initialise the MFRC522 reader over SPI. Called here (after Wi-Fi connects and
+        // ESP-NOW channel scanning is complete) so SPI is free from radio contention.
+        rfidInit();
+#endif
     }
 }
 
@@ -520,6 +527,11 @@ void loop() {
     // or immediately if an MQTT ota_check command was received.
     // otaLoop() returns quickly if the interval hasn't elapsed.
     otaLoop();
+
+#ifdef RFID_ENABLED
+    rfidLoop();             // Poll for RFID card scans; publishes UID to .../telemetry
+#endif
+
     settingsServerTick();   // Handle HTTP requests on the settings portal (no-op
                             // when portal is not active — returns false immediately)
 
