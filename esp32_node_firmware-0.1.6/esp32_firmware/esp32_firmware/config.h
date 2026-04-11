@@ -140,7 +140,17 @@
 
 #define RFID_SS_PIN        5            // SPI Slave Select GPIO
                                         // SCK=18, MISO=19, MOSI=23 (default ESP32 VSPI)
-#define RFID_DEBOUNCE_MS   2000         // Min ms between publishes for the same card UID
+#define RFID_RST_PIN       22           // RST (NRSTPD) GPIO — pulsed LOW→HIGH in rfidInit()
+                                        // to guarantee a clean hardware reset on every boot
+#define RFID_IRQ_PIN       4            // IRQ GPIO (active LOW, open-drain; uses INPUT_PULLUP)
+                                        // Fires when a card sends ATQA in response to REQA
+#define RFID_REARM_MS           150     // Re-issue REQA every N ms when no card is present
+                                        // REQA times out in ~25 ms; 150 ms gives ~6 checks/sec
+#define RFID_POST_READ_QUIET_MS 300     // After a read (success or fail), suppress re-arming
+                                        // for this long to let the card fully enter HALT state
+                                        // and discard the spurious IRQ it can cause. Must be
+                                        // > RFID_REARM_MS so re-arming resumes naturally.
+#define RFID_DEBOUNCE_MS        2000    // Min ms between publishes for the same card UID
                                         // Different cards are always processed immediately
 
 

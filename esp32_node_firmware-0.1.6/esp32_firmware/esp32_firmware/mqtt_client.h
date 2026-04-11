@@ -80,6 +80,7 @@ static void mqttPublish(const char* prefix, const String& payload,
                         uint8_t qos = 0, bool retain = false) {
     if (!_mqttClient.connected()) return;   // Do nothing if not connected
     String topic = mqttTopic(prefix);
+    Serial.printf("[TELEMETRY] %s  %s\n", topic.c_str(), payload.c_str());
     _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
 }
 
