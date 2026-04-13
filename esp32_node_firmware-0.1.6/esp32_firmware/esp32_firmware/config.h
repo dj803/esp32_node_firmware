@@ -287,3 +287,41 @@
 // responses arrive — safe for mixed v1/v2 fleets.
 // Comment out to compile with simple broadcast bootstrap only.
 // #define SIBLING_PRIMARY_SELECTION
+
+
+// -----------------------------------------------------------------------------
+// WS2812B LED Strip
+// Addressable RGB strip driven by FastLED on a dedicated FreeRTOS task (Core 1).
+// GPIO5 is reserved for RFID SPI SS — use GPIO27 or another safe alternative.
+// -----------------------------------------------------------------------------
+#define LED_STRIP_PIN             27      // GPIO27 — avoids GPIO5 (RFID SPI SS)
+                                          // Alternatives: GPIO25, GPIO26
+#define LED_MAX_NUM_LEDS          64      // Compile-time buffer size (pre-allocated,
+                                          // never heap). Set to the largest strip you
+                                          // will ever connect to this firmware build.
+#define LED_DEFAULT_COUNT          8      // Active LEDs at boot. Adjustable at
+                                          // runtime via MQTT cmd/led count command.
+#define LED_MAX_BRIGHTNESS        80      // 0-255 soft brightness cap.
+                                          // FRD recommended range: 30-120.
+                                          // FastLED.setMaxPowerInVoltsAndMilliamps
+                                          // provides a secondary hard current cap.
+#define LED_REFRESH_MS            30      // Strip update interval (~33 fps).
+                                          // FRD spec: 20-50 ms.
+#define LED_RFID_OVERRIDE_MS    2000      // Duration (ms) of RFID-triggered
+                                          // animation before returning to previous state.
+#define LED_TASK_STACK          4096      // FreeRTOS stack size for WS2812 task (bytes)
+#define LED_TASK_PRIORITY          1      // Task priority — below Wi-Fi/MQTT (priority 5)
+#define LED_EVENT_QUEUE_DEPTH     10      // Max queued LED events (drops oldest if full)
+#define LED_STRIP_NVS_NAMESPACE "esp32led"  // NVS namespace: persists activeLedCount
+                                            // and activeBrightness across reboots
+
+
+// -----------------------------------------------------------------------------
+// RFID Whitelist
+// UIDs are stored in compact uppercase hex format without separators ("AABBCCDD").
+// Colon-separated formats are normalised on ingestion.
+// -----------------------------------------------------------------------------
+#define RFID_MAX_WHITELIST        20      // Maximum number of stored known UIDs
+#define RFID_UID_STR_LEN          15      // Max UID string length: 7 bytes × 2 hex
+                                          // chars = 14 chars + null terminator = 15
+#define RFID_NVS_NAMESPACE    "esp32rfid" // NVS namespace for whitelist persistence

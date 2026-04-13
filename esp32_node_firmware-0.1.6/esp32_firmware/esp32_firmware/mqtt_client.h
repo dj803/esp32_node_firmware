@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <AsyncMqttClient.h>   // Non-blocking MQTT client (marvinroger/async-mqtt-client)
+#include <ArduinoJson.h>       // JSON parsing for cmd/led and cmd/rfid/whitelist handlers
 #include <esp_wifi.h>          // esp_wifi_get_mac / WIFI_IF_STA
 #include "config.h"
 #include "credentials.h"
@@ -15,6 +16,20 @@
 // Forward-declare otaCheckNow here so onMqttMessage can call it when
 // an OTA trigger arrives via MQTT, even though ota.h isn't included yet.
 void otaCheckNow();
+
+// ws2812.h is included BEFORE this file in the main sketch.
+// Forward-declare the API functions used inside mqtt_client.h handlers so the
+// compiler sees the declarations regardless of include ordering edge cases.
+// (ws2812PostEvent and ws2812PublishState are defined as inline in ws2812.h.)
+void ws2812PublishState();
+void ws2812PostEvent(const LedEvent& e);
+
+// rfid.h whitelist API — forward declarations so handleRfidWhitelist can call
+// them. rfid.h is included AFTER mqtt_client.h in the main sketch.
+bool    rfidWhitelistAdd(const char* uid);
+bool    rfidWhitelistRemove(const char* uid);
+void    rfidWhitelistClear();
+void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 
 // =============================================================================
 // mqtt_client.h  —  MQTT connectivity, topic helpers, credential rotation,
@@ -115,6 +130,151 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // still sees the last known status. All other events are non-retained.
     bool retain = (strcmp(event, "boot") == 0);
     mqttPublish("status", payload, 1, retain);
+}
+
+
+// ── LED state publish helper ───────────────────────────────────────────────────
+// Called by ws2812PublishState() (defined in ws2812.h) to publish current strip
+// state to .../status/led as a retained QoS 1 message.
+// ws2812PublishState() is the outward-facing function; this helper is the MQTT
+// transport layer so ws2812.h stays decoupled from MQTT internals.
+static void mqttPublishLedState(const char* state,
+                                uint8_t r, uint8_t g, uint8_t b,
+                                uint8_t brightness, uint8_t count) {
+    String payload = "{\"state\":\""    + String(state)      + "\""
+                   + ",\"r\":"          + String(r)
+                   + ",\"g\":"          + String(g)
+                   + ",\"b\":"          + String(b)
+                   + ",\"brightness\":" + String(brightness)
+                   + ",\"count\":"      + String(count)
+                   + ",\"uptime_s\":"   + String(millis() / 1000) + "}";
+    mqttPublish("status/led", payload, 1, true);   // QoS 1, retained
+}
+
+
+// ── LED command handler ────────────────────────────────────────────────────────
+// Called from onMqttMessage when a message arrives on .../cmd/led.
+// Parses the JSON command and posts the appropriate event to the WS2812 task.
+static void handleLedCommand(const char* payload, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        Serial.println("[MQTT] cmd/led: JSON parse error");
+        return;
+    }
+    const char* cmd = doc["cmd"] | "";
+
+    if (strcmp(cmd, "color") == 0) {
+        LedEvent e{};
+        e.type = LedEventType::MQTT_COLOR;
+        e.r    = (uint8_t)constrain(doc["r"] | 0, 0, 255);
+        e.g    = (uint8_t)constrain(doc["g"] | 0, 0, 255);
+        e.b    = (uint8_t)constrain(doc["b"] | 0, 0, 255);
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "brightness") == 0) {
+        LedEvent e{};
+        e.type       = LedEventType::MQTT_BRIGHTNESS;
+        e.brightness = (uint8_t)constrain(doc["value"] | LED_MAX_BRIGHTNESS, 1, 255);
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "animation") == 0) {
+        LedEvent e{};
+        e.type = LedEventType::MQTT_ANIMATION;
+        strlcpy(e.animName, doc["name"] | "solid", sizeof(e.animName));
+        ws2812PostEvent(e);
+
+    } else if (strcmp(cmd, "count") == 0) {
+        LedEvent e{};
+        e.type  = LedEventType::MQTT_COUNT;
+        e.count = (uint8_t)constrain(doc["value"] | LED_DEFAULT_COUNT,
+                                     1, LED_MAX_NUM_LEDS);
+        ws2812PostEvent(e);
+
+    } else if (strcmp(cmd, "off") == 0) {
+        LedEvent e{};
+        e.type = LedEventType::MQTT_OFF;
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "reset") == 0) {
+        LedEvent e{};
+        e.type = LedEventType::RESET;
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else {
+        Serial.printf("[MQTT] cmd/led: unknown cmd '%s'\n", cmd);
+    }
+}
+
+
+// ── RFID whitelist handler ────────────────────────────────────────────────────
+// Called from onMqttMessage when a message arrives on .../cmd/rfid/whitelist.
+// All UIDs are normalised (uppercase, no separators) before processing.
+static void handleRfidWhitelist(const char* payload, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        Serial.println("[MQTT] cmd/rfid/whitelist: JSON parse error");
+        return;
+    }
+    const char* cmd = doc["cmd"] | "";
+
+    if (strcmp(cmd, "add") == 0) {
+        const char* raw = doc["uid"] | "";
+        char uid[RFID_UID_STR_LEN] = {};
+        strlcpy(uid, raw, RFID_UID_STR_LEN);
+        { char buf[RFID_UID_STR_LEN]={}; int j=0;
+          for(int i=0;uid[i]&&j<RFID_UID_STR_LEN-1;i++)
+            if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
+          memcpy(uid,buf,RFID_UID_STR_LEN); }
+        bool ok = rfidWhitelistAdd(uid);
+        Serial.printf("[MQTT] rfid/whitelist add %s: %s\n", uid, ok ? "ok" : "full");
+        String resp = ok
+            ? ("{\"event\":\"rfid_whitelist\",\"cmd\":\"add\",\"uid\":\"" + String(uid) + "\",\"result\":\"ok\"}")
+            : ("{\"event\":\"rfid_whitelist\",\"cmd\":\"add\",\"uid\":\"" + String(uid) + "\",\"result\":\"error\",\"reason\":\"list full\"}");
+        mqttPublish("response", resp);
+
+    } else if (strcmp(cmd, "remove") == 0) {
+        const char* raw = doc["uid"] | "";
+        char uid[RFID_UID_STR_LEN] = {};
+        strlcpy(uid, raw, RFID_UID_STR_LEN);
+        { char buf[RFID_UID_STR_LEN]={}; int j=0;
+          for(int i=0;uid[i]&&j<RFID_UID_STR_LEN-1;i++)
+            if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
+          memcpy(uid,buf,RFID_UID_STR_LEN); }
+        bool ok = rfidWhitelistRemove(uid);
+        Serial.printf("[MQTT] rfid/whitelist remove %s: %s\n", uid, ok ? "ok" : "not found");
+        String resp = ok
+            ? ("{\"event\":\"rfid_whitelist\",\"cmd\":\"remove\",\"uid\":\"" + String(uid) + "\",\"result\":\"ok\"}")
+            : ("{\"event\":\"rfid_whitelist\",\"cmd\":\"remove\",\"uid\":\"" + String(uid) + "\",\"result\":\"error\",\"reason\":\"not found\"}");
+        mqttPublish("response", resp);
+
+    } else if (strcmp(cmd, "clear") == 0) {
+        rfidWhitelistClear();
+        Serial.println("[MQTT] rfid/whitelist cleared");
+        mqttPublish("response",
+            String("{\"event\":\"rfid_whitelist\",\"cmd\":\"clear\",\"result\":\"ok\"}"));
+
+    } else if (strcmp(cmd, "list") == 0) {
+        char buf[RFID_MAX_WHITELIST][RFID_UID_STR_LEN] = {};
+        uint8_t count = 0;
+        rfidWhitelistList(buf, count);
+        String resp = "{\"event\":\"rfid_whitelist\",\"cmd\":\"list\","
+                      "\"count\":" + String(count) + ",\"uids\":[";
+        for (uint8_t i = 0; i < count; i++) {
+            if (i > 0) resp += ",";
+            resp += "\"";
+            resp += buf[i];
+            resp += "\"";
+        }
+        resp += "]}";
+        mqttPublish("response", resp);
+
+    } else {
+        Serial.printf("[MQTT] cmd/rfid/whitelist: unknown cmd '%s'\n", cmd);
+    }
 }
 
 
@@ -228,6 +388,12 @@ static void onMqttMessage(char* topic, char* payload,
         mqttPublishStatus("config_mode_active",
             (String("\"settings_url\":\"http://") + WiFi.localIP().toString() + "/settings\"").c_str());
         settingsServerStart();
+    } else if (t == mqttTopic("cmd/led")) {
+        // WS2812B LED strip control
+        handleLedCommand(payload, len);
+    } else if (t == mqttTopic("cmd/rfid/whitelist")) {
+        // RFID UID whitelist management
+        handleRfidWhitelist(payload, len);
     }
 }
 
@@ -251,16 +417,22 @@ static void onMqttConnect(bool sessionPresent) {
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
     // QoS 2 = "exactly once" delivery (used for credential rotation to prevent double-apply)
-    _mqttClient.subscribe(mqttTopic("cmd").c_str(),             1);   // General commands
-    _mqttClient.subscribe(mqttTopic("cmd/cred_rotate").c_str(), 2);   // Device-specific rotation
-    _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),   1);
-    _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(), 1);   // Start HTTP settings portal on LAN IP
-    _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),   2);   // Site-wide rotation
+    _mqttClient.subscribe(mqttTopic("cmd").c_str(),               1);   // General commands
+    _mqttClient.subscribe(mqttTopic("cmd/cred_rotate").c_str(),   2);   // Device-specific rotation
+    _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),     1);
+    _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(),   1);   // Start HTTP settings portal on LAN IP
+    _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
+    _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
+    _mqttClient.subscribe(mqttTopic("cmd/rfid/whitelist").c_str(), 1);  // RFID whitelist management
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
     mqttPublishStatus("boot");
     Serial.println("[MQTT] Boot announcement published (v" FIRMWARE_VERSION ")");
+
+    // Re-publish current LED strip state (retained) so Node-RED re-syncs after
+    // a broker restart or reconnect without requiring a reboot.
+    ws2812PublishState();
 }
 
 

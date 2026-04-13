@@ -50,7 +50,9 @@
 //
 // INCLUDE ORDER MATTERS:
 //   ap_portal.h before mqtt_client.h (settingsServerStart forward decl)
+//   ws2812.h before mqtt_client.h (ws2812PostEvent/ws2812PublishState called there)
 //   mqtt_client.h before ota.h (mqttPublishStatus forward decl)
+//   rfid.h after mqtt_client.h AND ws2812.h (calls both mqttPublish and ws2812PostEvent)
 // =============================================================================
 
 #include <Arduino.h>
@@ -64,9 +66,10 @@
 #include "espnow_bootstrap.h"
 #include "espnow_responder.h"
 #include "ap_portal.h"
+#include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
-#include "rfid.h"          // MUST come after mqtt_client.h — calls mqttPublish/mqttIsConnected
+#include "rfid.h"          // MUST come after mqtt_client.h AND ws2812.h
 
 
 // ── State machine definition ──────────────────────────────────────────────────
@@ -150,6 +153,8 @@ void setup() {
     delay(500);   // Give the serial monitor time to connect before the first print
     ledInit();                          // Start LED timer — must be early so all states can blink
     ledSetPattern(LedPattern::BOOT);    // Solid ON during initialisation
+    ws2812Init();                       // WS2812B strip: FastLED setup, LEDs off, create event queue
+    ws2812TaskStart();                  // Spawn strip task on Core 1 — boot animations from here
     Serial.println("\n[BOOT] ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
     // Initialise the persistent device UUID (stored in NVS namespace "esp32id").
@@ -212,6 +217,8 @@ void setup() {
     if (currentState == State::BOOTSTRAP_REQUEST) {
         Serial.println("[BOOTSTRAP] Starting ESP-NOW bootstrap");
         ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — searching for sibling
+        { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
+          strlcpy(e.animName, "bootstrap", sizeof(e.animName)); ws2812PostEvent(e); }
         WiFi.mode(WIFI_STA);   // ESP-NOW requires STA mode even before AP association
 
         bool gotBundle = false;   // True once we have valid credentials to use
@@ -300,6 +307,8 @@ void setup() {
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::WIFI_CONNECT) {
         ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — associating with router
+        { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
+          strlcpy(e.animName, "wifi", sizeof(e.animName)); ws2812PostEvent(e); }
         bool connected = false;
 
         for (int attempt = 1;
@@ -400,6 +409,8 @@ void setup() {
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::AP_MODE) {
         ledSetPattern(LedPattern::AP_MODE);   // rapid 100/100 blink — config portal active
+        { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
+          strlcpy(e.animName, "ap_mode", sizeof(e.animName)); ws2812PostEvent(e); }
         apPortalStart();
         // Execution does not reach here
     }
@@ -440,6 +451,9 @@ void setup() {
             // Share with ESP-NOW responder so siblings can ask us for the broker
             espnowResponderSetBroker(broker.host, broker.port);
         }
+
+        // Strip returns to idle blue breathing — OPERATIONAL state reached
+        { LedEvent e{}; e.type = LedEventType::RESET; ws2812PostEvent(e); }
 
         // Connect to the MQTT broker — non-blocking; result arrives via callbacks
         mqttBegin(activeBundle, broker);

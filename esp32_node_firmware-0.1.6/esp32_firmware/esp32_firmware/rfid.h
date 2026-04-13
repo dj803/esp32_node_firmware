@@ -3,12 +3,15 @@
 // =============================================================================
 // rfid.h  —  MFRC522v2 RFID tag reader module
 //
-// Detects ISO 14443A RFID cards via hardware IRQ and publishes the scanned
-// UID to the MQTT telemetry topic as JSON.
+// Detects ISO 14443A RFID cards via hardware IRQ. Each scan checks the UID
+// against a NVS-persisted whitelist and publishes the result (including an
+// "authorized" field) to .../telemetry/rfid. The WS2812B strip shows green
+// for authorised cards and red for unknown ones.
 //
-// INCLUDE ORDER: Must come after mqtt_client.h in esp32_firmware.ino.
-// mqttPublish() and mqttIsConnected() are static in mqtt_client.h and are
-// visible here because Arduino compiles all headers as a single translation unit.
+// INCLUDE ORDER: Must come after mqtt_client.h AND ws2812.h in esp32_firmware.ino.
+// mqttPublish(), mqttIsConnected(), ws2812PostEvent() are all static in their
+// respective headers and visible here because Arduino compiles all headers as
+// a single translation unit.
 //
 // WIRING (default ESP32 VSPI):
 //
@@ -44,6 +47,7 @@
 #include <MFRC522DriverSPI.h>
 #include <MFRC522DriverPinSimple.h>
 #include <MFRC522Debug.h>
+#include <Preferences.h>
 #include "config.h"
 #include "led.h"
 
@@ -52,12 +56,108 @@ static MFRC522DriverPinSimple _rfidRstPin(RFID_RST_PIN);
 static MFRC522DriverSPI       _rfidDriver{_rfidSsPin};
 static MFRC522                _rfid{_rfidDriver};
 static bool                   _rfidReady        = false; // False if reader not detected at init
-static String                 _rfidLastUid      = "";    // UID of last published card
+static String                 _rfidLastUid      = "";    // UID of last published card (colon fmt)
 static uint32_t               _rfidLastReadMs   = 0;     // millis() of last publish
 static volatile bool          _rfidIrqFired     = false; // Set by ISR, cleared in rfidLoop()
 static uint32_t               _rfidLastArmMs    = 0;     // millis() of last rfidArm() call
 static uint32_t               _rfidQuietUntilMs = 0;     // Suppress re-arm until this time
                                                           // (post-read quiet period)
+
+// ── Whitelist storage ─────────────────────────────────────────────────────────
+// UIDs stored in compact uppercase hex, no separators (e.g. "AABBCCDD").
+// All external UIDs (colon-separated or mixed case) are normalised before use.
+static char    _rfidWhitelist[RFID_MAX_WHITELIST][RFID_UID_STR_LEN] = {};
+static uint8_t _rfidWhitelistCount = 0;
+
+
+// ── rfidNormaliseUid ──────────────────────────────────────────────────────────
+// Strip colons and hyphens, convert to uppercase in-place.
+// Applied to every UID before whitelist lookup, add, or remove.
+static void rfidNormaliseUid(char* uid) {
+    char buf[RFID_UID_STR_LEN] = {};
+    int  j = 0;
+    for (int i = 0; uid[i] && j < RFID_UID_STR_LEN - 1; i++) {
+        if (uid[i] != ':' && uid[i] != '-')
+            buf[j++] = (char)toupper((unsigned char)uid[i]);
+    }
+    memcpy(uid, buf, RFID_UID_STR_LEN);
+}
+
+
+// ── Whitelist NVS helpers ─────────────────────────────────────────────────────
+
+static void _rfidWhitelistSave() {
+    Preferences p;
+    p.begin(RFID_NVS_NAMESPACE, false);
+    p.putUChar("count", _rfidWhitelistCount);
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+        char key[4];
+        snprintf(key, sizeof(key), "u%d", i);
+        p.putString(key, _rfidWhitelist[i]);
+    }
+    p.end();
+}
+
+void rfidWhitelistLoad() {
+    Preferences p;
+    p.begin(RFID_NVS_NAMESPACE, true);
+    _rfidWhitelistCount = p.getUChar("count", 0);
+    if (_rfidWhitelistCount > RFID_MAX_WHITELIST)
+        _rfidWhitelistCount = 0;
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+        char key[4];
+        snprintf(key, sizeof(key), "u%d", i);
+        String val = p.getString(key, "");
+        strlcpy(_rfidWhitelist[i], val.c_str(), RFID_UID_STR_LEN);
+    }
+    p.end();
+    Serial.printf("[RFID] Whitelist loaded: %d UID(s)\n", _rfidWhitelistCount);
+}
+
+
+// ── Whitelist public API ──────────────────────────────────────────────────────
+
+static bool rfidWhitelistContains(const char* uid) {
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+        if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) return true;
+    }
+    return false;
+}
+
+bool rfidWhitelistAdd(const char* uid) {
+    if (_rfidWhitelistCount >= RFID_MAX_WHITELIST) return false;
+    if (rfidWhitelistContains(uid)) return true;   // already present — idempotent
+    strlcpy(_rfidWhitelist[_rfidWhitelistCount++], uid, RFID_UID_STR_LEN);
+    _rfidWhitelistSave();
+    return true;
+}
+
+bool rfidWhitelistRemove(const char* uid) {
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+        if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) {
+            // Compact array: overwrite with last entry
+            if (i < _rfidWhitelistCount - 1)
+                memcpy(_rfidWhitelist[i], _rfidWhitelist[_rfidWhitelistCount - 1],
+                       RFID_UID_STR_LEN);
+            memset(_rfidWhitelist[--_rfidWhitelistCount], 0, RFID_UID_STR_LEN);
+            _rfidWhitelistSave();
+            return true;
+        }
+    }
+    return false;
+}
+
+void rfidWhitelistClear() {
+    memset(_rfidWhitelist, 0, sizeof(_rfidWhitelist));
+    _rfidWhitelistCount = 0;
+    _rfidWhitelistSave();
+}
+
+void rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count) {
+    count = _rfidWhitelistCount;
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++)
+        memcpy(out[i], _rfidWhitelist[i], RFID_UID_STR_LEN);
+}
 
 
 // ── rfidIrqHandler ────────────────────────────────────────────────────────────
@@ -143,6 +243,9 @@ void rfidInit() {
     _rfidLastArmMs = millis();
     Serial.printf("[RFID] Armed — re-arming every %lu ms, debounce %lu ms per card\n",
                   (unsigned long)RFID_REARM_MS, (unsigned long)RFID_DEBOUNCE_MS);
+
+    // Load UID whitelist from NVS
+    rfidWhitelistLoad();
     Serial.println("[RFID] Waiting for tag...");
 }
 
@@ -217,20 +320,34 @@ void rfidLoop() {
     MFRC522::PICC_Type piccType = _rfid.PICC_GetType(_rfid.uid.sak);
     String typeName = String(MFRC522Debug::PICC_GetTypeName(piccType));
 
-    Serial.printf("[RFID] Tag scanned: %s  type=%s  size=%d bytes  uptime=%lus\n",
-                  uid.c_str(), typeName.c_str(), _rfid.uid.size, millis() / 1000);
+    // Whitelist check — use compact form (strip colons from colon-separated uid)
+    String uidCompact = uid;
+    uidCompact.replace(":", "");
+    char uidCompactBuf[RFID_UID_STR_LEN] = {};
+    strlcpy(uidCompactBuf, uidCompact.c_str(), RFID_UID_STR_LEN);
+    rfidNormaliseUid(uidCompactBuf);   // enforce uppercase, remove any stray separators
+    bool authorized = rfidWhitelistContains(uidCompactBuf);
 
-    ledFlashLocate();   // Brief LED flash as visual scan confirmation
+    Serial.printf("[RFID] Tag scanned: %s  type=%s  size=%d bytes  authorized=%s  uptime=%lus\n",
+                  uid.c_str(), typeName.c_str(), _rfid.uid.size,
+                  authorized ? "YES" : "NO", millis() / 1000);
 
-    String payload = "{\"uid\":\""       + uid                    + "\","
-                      "\"uid_size\":"    + String(_rfid.uid.size) + ","
-                      "\"card_type\":\"" + typeName               + "\"}";
+    // Post WS2812 strip event — green for authorized, red for unknown
+    {
+        LedEvent e{};
+        e.type = authorized ? LedEventType::RFID_OK : LedEventType::RFID_FAIL;
+        ws2812PostEvent(e);
+    }
+
+    String payload = "{\"uid\":\""         + uid
+                   + "\",\"uid_size\":"    + String(_rfid.uid.size)
+                   + ",\"card_type\":\""   + typeName
+                   + "\",\"authorized\":"  + (authorized ? "true" : "false") + "}";
 
     if (!mqttIsConnected()) {
-        // MQTT not connected — log the dropped publish so it's visible in the serial monitor
         Serial.printf("[RFID] MQTT not connected — publish dropped (uid=%s)\n", uid.c_str());
     } else {
-        mqttPublish("telemetry", payload);
+        mqttPublish("telemetry/rfid", payload);
     }
 
     _rfid.PICC_HaltA();

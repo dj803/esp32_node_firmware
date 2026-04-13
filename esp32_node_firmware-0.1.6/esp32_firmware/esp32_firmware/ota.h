@@ -157,6 +157,7 @@ void otaCheckNow() {
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
     ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
+    { LedEvent e{}; e.type = LedEventType::OTA_START; ws2812PostEvent(e); }
     ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
                                 FIRMWARE_VERSION,
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);
@@ -169,6 +170,7 @@ void otaCheckNow() {
         ESP.restart();  // Boot into the new firmware
     } else {
         Serial.printf("[OTA] Flash failed (code %d)\n", ret);
+        { LedEvent e{}; e.type = LedEventType::OTA_DONE; ws2812PostEvent(e); }
         mqttPublishStatus("ota_failed",
             ("\"error\":\"flash failed code " + String(ret) +
              "\",\"current_version\":\"" FIRMWARE_VERSION "\"").c_str());
