@@ -2,11 +2,15 @@
 #ifdef BLE_ENABLED
 
 // =============================================================================
-// ble.h  —  Passive BLE beacon scanner
+// ble.h  —  Passive BLE beacon scanner  (NimBLE-Arduino backend)
 //
 // ROLE: BLE central only (scanner). No advertising, no GATT server.
 //       The ESP32 never pairs or connects to beacons — it only reads their
 //       broadcast advertisements.
+//
+// WHY NimBLE: Bluedroid (the default ESP32 BLE library) adds ~700 KB to the
+//       binary. NimBLE-Arduino adds ~150 KB — a saving of ~550 KB that keeps
+//       the firmware within the min_spiffs OTA partition limit (1.9 MB).
 //
 // MQTT INTERFACE (all topics relative to device base topic):
 //   cmd/ble/scan              → trigger a 5-second full scan
@@ -36,9 +40,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
-#include <BLEDevice.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <NimBLEDevice.h>
 #include "config.h"
 
 
@@ -117,41 +119,47 @@ static void _bleNvsClear() {
 // ── Scan result callback ──────────────────────────────────────────────────────
 // Runs in the BLE stack task (Core 0). Must be fast and non-blocking.
 // Drops the result silently if the mutex is already held (best-effort).
-class _BleScanCb : public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice dev) override {
+//
+// NimBLE passes a POINTER to NimBLEAdvertisedDevice (unlike Bluedroid which
+// passes by value). All member access uses -> instead of .
+class _BleScanCb : public NimBLEAdvertisedDeviceCallbacks {
+    void onResult(NimBLEAdvertisedDevice* dev) override {
         if (xSemaphoreTake(_bleMutex, 0) != pdTRUE) return;
 
         if (_bleBeaconCount < BLE_MAX_BEACONS) {
             BleBeacon& b = _bleBeacons[_bleBeaconCount++];
 
-            // MAC address
-            strncpy(b.mac, dev.getAddress().toString().c_str(), 17);
+            // MAC address (NimBLE toString() returns std::string)
+            std::string mac_str = dev->getAddress().toString();
+            strncpy(b.mac, mac_str.c_str(), 17);
             b.mac[17] = '\0';
 
-            // Advertised local name
-            if (dev.haveName()) {
-                strncpy(b.name, dev.getName().c_str(), sizeof(b.name) - 1);
+            // Advertised local name (NimBLE getName() returns std::string)
+            if (dev->haveName()) {
+                std::string name_str = dev->getName();
+                strncpy(b.name, name_str.c_str(), sizeof(b.name) - 1);
                 b.name[sizeof(b.name) - 1] = '\0';
             } else {
                 b.name[0] = '\0';
             }
 
             // RSSI
-            b.rssi = (int8_t)dev.getRSSI();
+            b.rssi = (int8_t)dev->getRSSI();
 
             // TX power — prefer iBeacon measured power at byte [24]
+            // NimBLE getManufacturerData() returns std::string
             b.txPower = BLE_DEFAULT_TX_POWER;
-            if (dev.haveManufacturerData()) {
-                String mfr = dev.getManufacturerData();
+            if (dev->haveManufacturerData()) {
+                std::string mfr = dev->getManufacturerData();
                 // iBeacon: company id 0x004C (little-endian), type 0x02, length 0x15
-                if (mfr.length() >= 25
+                if (mfr.size() >= 25
                     && (uint8_t)mfr[0] == 0x4C && (uint8_t)mfr[1] == 0x00
                     && (uint8_t)mfr[2] == 0x02 && (uint8_t)mfr[3] == 0x15) {
                     b.txPower = (int8_t)mfr[24];
                 }
             }
-            if (b.txPower == BLE_DEFAULT_TX_POWER && dev.haveTXPower())
-                b.txPower = (int8_t)dev.getTXPower();
+            if (b.txPower == BLE_DEFAULT_TX_POWER && dev->haveTXPower())
+                b.txPower = (int8_t)dev->getTXPower();
 
             b.distM = _bleCalcDist(b.rssi, b.txPower);
 
@@ -173,7 +181,7 @@ class _BleScanCb : public BLEAdvertisedDeviceCallbacks {
 
 // ── Scan completion callback ──────────────────────────────────────────────────
 // Runs in the BLE stack task — only sets flags, never blocks.
-static void _bleScanDoneCb(BLEScanResults /*results*/) {
+static void _bleScanDoneCb(NimBLEScanResults /*results*/) {
     _bleScanInProgress = false;
     _bleScanDone       = true;
 }
@@ -195,12 +203,12 @@ static void _bleRunScan(uint8_t durationS) {
         }
     }
 
-    BLEScan* pScan = BLEDevice::getScan();
+    NimBLEScan* pScan = NimBLEDevice::getScan();
     pScan->setAdvertisedDeviceCallbacks(new _BleScanCb(), /*wantDuplicates=*/false);
     pScan->setActiveScan(false);  // passive — do not send scan requests
     pScan->setInterval(100);      // ms
     pScan->setWindow(99);         // ms — just under interval for maximum coverage
-    pScan->start(durationS, _bleScanDoneCb, /*async=*/true);
+    pScan->start(durationS, _bleScanDoneCb, /*is_continue=*/false);
     // Returns immediately; completion fires _bleScanDoneCb from BLE task
 }
 
@@ -276,13 +284,13 @@ inline void bleInit() {
     _bleMutex = xSemaphoreCreateMutex();
     _bleNvsLoad();   // restore tracked MAC from NVS
 
-    BLEDevice::init("");  // empty device name — we are not advertising
-    BLEDevice::getScan(); // initialise scan object
+    NimBLEDevice::init("");  // empty device name — we are not advertising
+    NimBLEDevice::getScan(); // initialise scan object
 
     if (_bleTrackedMac[0] != '\0')
-        Serial.printf("[BLE] scanner ready — tracking %s\n", _bleTrackedMac);
+        Serial.printf("[BLE] scanner ready (NimBLE) — tracking %s\n", _bleTrackedMac);
     else
-        Serial.println("[BLE] scanner ready — no beacon tracked");
+        Serial.println("[BLE] scanner ready (NimBLE) — no beacon tracked");
 }
 
 
