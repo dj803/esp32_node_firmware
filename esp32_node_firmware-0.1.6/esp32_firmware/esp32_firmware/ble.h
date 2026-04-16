@@ -2,7 +2,7 @@
 #ifdef BLE_ENABLED
 
 // =============================================================================
-// ble.h  —  Passive BLE beacon scanner  (NimBLE-Arduino backend)
+// ble.h  —  Passive BLE beacon scanner  (NimBLE-Arduino 2.x backend)
 //
 // ROLE: BLE central only (scanner). No advertising, no GATT server.
 //       The ESP32 never pairs or connects to beacons — it only reads their
@@ -11,6 +11,13 @@
 // WHY NimBLE: Bluedroid (the default ESP32 BLE library) adds ~700 KB to the
 //       binary. NimBLE-Arduino adds ~150 KB — a saving of ~550 KB that keeps
 //       the firmware within the min_spiffs OTA partition limit (1.9 MB).
+//
+// NimBLE-Arduino 2.x API differences from 1.x:
+//   - Callbacks class: NimBLEScanCallbacks (was NimBLEAdvertisedDeviceCallbacks)
+//   - onResult: const NimBLEAdvertisedDevice* (const pointer, not value)
+//   - onScanEnd: replaces the free-function callback passed to start()
+//   - setScanCallbacks: replaces setAdvertisedDeviceCallbacks
+//   - start(durationS, is_continue): no longer takes a callback argument
 //
 // MQTT INTERFACE (all topics relative to device base topic):
 //   cmd/ble/scan              → trigger a 5-second full scan
@@ -116,14 +123,15 @@ static void _bleNvsClear() {
 }
 
 
-// ── Scan result callback ──────────────────────────────────────────────────────
-// Runs in the BLE stack task (Core 0). Must be fast and non-blocking.
-// Drops the result silently if the mutex is already held (best-effort).
+// ── Scan callbacks (NimBLE-Arduino 2.x) ──────────────────────────────────────
+// NimBLE 2.x uses NimBLEScanCallbacks which handles both per-device results
+// (onResult) and scan completion (onScanEnd) in a single class.
 //
-// NimBLE passes a POINTER to NimBLEAdvertisedDevice (unlike Bluedroid which
-// passes by value). All member access uses -> instead of .
-class _BleScanCb : public NimBLEAdvertisedDeviceCallbacks {
-    void onResult(NimBLEAdvertisedDevice* dev) override {
+// onResult runs in the BLE stack task (Core 0) — must be fast and non-blocking.
+// Drops the result silently if the mutex is already held (best-effort).
+class _BleScanCb : public NimBLEScanCallbacks {
+
+    void onResult(const NimBLEAdvertisedDevice* dev) override {
         if (xSemaphoreTake(_bleMutex, 0) != pdTRUE) return;
 
         if (_bleBeaconCount < BLE_MAX_BEACONS) {
@@ -176,15 +184,13 @@ class _BleScanCb : public NimBLEAdvertisedDeviceCallbacks {
 
         xSemaphoreGive(_bleMutex);
     }
+
+    // Replaces the free-function scan-done callback that NimBLE 1.x passed to start()
+    void onScanEnd(const NimBLEScanResults& /*results*/, int /*reason*/) override {
+        _bleScanInProgress = false;
+        _bleScanDone       = true;
+    }
 };
-
-
-// ── Scan completion callback ──────────────────────────────────────────────────
-// Runs in the BLE stack task — only sets flags, never blocks.
-static void _bleScanDoneCb(NimBLEScanResults /*results*/) {
-    _bleScanInProgress = false;
-    _bleScanDone       = true;
-}
 
 
 // ── Scan launcher ─────────────────────────────────────────────────────────────
@@ -204,12 +210,14 @@ static void _bleRunScan(uint8_t durationS) {
     }
 
     NimBLEScan* pScan = NimBLEDevice::getScan();
-    pScan->setAdvertisedDeviceCallbacks(new _BleScanCb(), /*wantDuplicates=*/false);
+    // NimBLE 2.x: setScanCallbacks replaces setAdvertisedDeviceCallbacks
+    pScan->setScanCallbacks(new _BleScanCb(), /*wantDuplicates=*/false);
     pScan->setActiveScan(false);  // passive — do not send scan requests
     pScan->setInterval(100);      // ms
     pScan->setWindow(99);         // ms — just under interval for maximum coverage
-    pScan->start(durationS, _bleScanDoneCb, /*is_continue=*/false);
-    // Returns immediately; completion fires _bleScanDoneCb from BLE task
+    // NimBLE 2.x: start() no longer takes a completion-callback argument
+    pScan->start(durationS, /*is_continue=*/false);
+    // Returns immediately; completion fires _BleScanCb::onScanEnd from BLE task
 }
 
 
