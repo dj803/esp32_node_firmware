@@ -31,6 +31,15 @@ bool    rfidWhitelistRemove(const char* uid);
 void    rfidWhitelistClear();
 void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 
+// ble.h API — forward declarations so BLE MQTT handlers can call them.
+// ble.h is included AFTER mqtt_client.h in the main sketch.
+#ifdef BLE_ENABLED
+void bleTriggerScan();
+void bleSetTrackedMac(const char* mac);
+void bleClearTracked();
+void blePublishList();
+#endif
+
 // =============================================================================
 // mqtt_client.h  —  MQTT connectivity, topic helpers, credential rotation,
 //                   and OTA trigger via MQTT (spec Sections 9, 10, 12)
@@ -394,6 +403,20 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd/rfid/whitelist")) {
         // RFID UID whitelist management
         handleRfidWhitelist(payload, len);
+#ifdef BLE_ENABLED
+    } else if (t == mqttTopic("cmd/ble/scan")) {
+        bleTriggerScan();
+    } else if (t == mqttTopic("cmd/ble/clear")) {
+        bleClearTracked();
+    } else if (t == mqttTopic("cmd/ble/list")) {
+        blePublishList();
+    } else if (t == mqttTopic("cmd/ble/track")) {
+        JsonDocument doc;
+        if (deserializeJson(doc, payload, len) == DeserializationError::Ok) {
+            const char* mac = doc["mac"];
+            if (mac && strlen(mac) == 17) bleSetTrackedMac(mac);
+        }
+#endif
     }
 }
 
@@ -424,6 +447,12 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
     _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
     _mqttClient.subscribe(mqttTopic("cmd/rfid/whitelist").c_str(), 1);  // RFID whitelist management
+#ifdef BLE_ENABLED
+    _mqttClient.subscribe(mqttTopic("cmd/ble/scan").c_str(),      1);   // BLE: trigger scan
+    _mqttClient.subscribe(mqttTopic("cmd/ble/track").c_str(),     1);   // BLE: set tracked beacon
+    _mqttClient.subscribe(mqttTopic("cmd/ble/clear").c_str(),     1);   // BLE: clear tracked beacon
+    _mqttClient.subscribe(mqttTopic("cmd/ble/list").c_str(),      1);   // BLE: re-publish last results
+#endif
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.

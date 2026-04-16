@@ -325,3 +325,21 @@
 #define RFID_UID_STR_LEN          15      // Max UID string length: 7 bytes × 2 hex
                                           // chars = 14 chars + null terminator = 15
 #define RFID_NVS_NAMESPACE    "esp32rfid" // NVS namespace for whitelist persistence
+
+
+// -----------------------------------------------------------------------------
+// BLE Beacon Scanner
+// Passive BLE central scanner — detects NRF51822 beacons and estimates distance
+// via RSSI + log-distance path loss model. No BLE peripheral/advertising.
+// Controlled entirely via MQTT; Node-RED provides the UI.
+// -----------------------------------------------------------------------------
+#define BLE_ENABLED
+#define BLE_SCAN_DURATION_S        5      // Seconds per on-demand full scan (cmd/ble/scan)
+#define BLE_TRACK_SCAN_DURATION_S  2      // Seconds per repeated tracking scan
+#define BLE_MAX_BEACONS           32      // Max beacon entries in discovered list
+#define BLE_DEFAULT_TX_POWER     -59      // dBm at 1 m when iBeacon data is absent
+#define BLE_PATH_LOSS_N          2.0f     // Path-loss exponent (2.0 = free space)
+#define BLE_MQTT_PUBLISH_MS    2000UL     // Publish tracked beacon RSSI to MQTT every 2 s
+#define BLE_SERIAL_PRINT_MS   10000UL     // Serial print tracked beacon every 10 s
+#define BLE_NVS_NAMESPACE     "esp32ble"  // NVS namespace — persists tracked MAC
+#define BLE_NVS_KEY_TRACKED   "tracked_mac"

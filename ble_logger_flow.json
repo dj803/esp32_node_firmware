@@ -1,0 +1,133 @@
+[
+    {
+        "id": "ble2000000000001",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "BLE Tracked Beacon (all devices)",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/telemetry/ble",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 150,
+        "y": 1040,
+        "wires": [
+            [
+                "ble2000000000002"
+            ]
+        ]
+    },
+    {
+        "id": "ble2000000000002",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect BLE Event & Timeout",
+        "func": "// Extract ESP32 UUID from topic segment [6]:\n// Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<UUID>/telemetry/ble\nvar uuid = msg.topic.split('/')[6];\nif (!uuid || !msg.payload || !msg.payload.mac) return null;\n\nvar d = msg.payload;\n\n// Per-beacon timeout — if no update in 10 s (5 missed publishes) mark as lost\nvar key = uuid + ':' + d.mac;\nvar timeouts = context.get('timeouts') || {};\nif (timeouts[key]) clearTimeout(timeouts[key]);\n\nnode.status({ fill: 'green', shape: 'dot', text: d.mac + '  ' + d.dist_m + ' m' });\n\ntimeouts[key] = setTimeout(function () {\n    node.status({ fill: 'red', shape: 'ring', text: d.mac + ' — lost' });\n}, 10000);\n\ncontext.set('timeouts', timeouts);\n\nmsg.uuid   = uuid;\nmsg.mac    = d.mac;\nmsg.name   = d.name || '';\nmsg.rssi   = d.rssi;\nmsg.dist_m = d.dist_m;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "var timeouts = context.get('timeouts') || {};\nObject.keys(timeouts).forEach(function(k) { clearTimeout(timeouts[k]); });\ncontext.set('timeouts', {});",
+        "libs": [],
+        "x": 430,
+        "y": 1040,
+        "wires": [
+            [
+                "ble2000000000003",
+                "ble2000000000004"
+            ]
+        ]
+    },
+    {
+        "id": "ble2000000000003",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "BLE Tracking Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "mac",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "ble2000000000004",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Beacon MAC Logger",
+        "func": "// Maintain a sorted list of unique device/beacon pairs seen\nvar known = flow.get('knownBeaconMacs') || [];\nvar entry = msg.uuid + '/' + msg.mac;\n\nif (known.indexOf(entry) === -1) {\n    known.push(entry);\n    known.sort();\n    flow.set('knownBeaconMacs', known);\n}\n\n// Output 1: updated beacon list (overwrites file each time, like UUID logger)\nvar listMsg = { payload: known.join('\\n') };\n\n// Output 2: timestamped CSV row appended to tracking log\nvar ts = new Date().toISOString();\nvar csvLine = [ts, msg.uuid, msg.mac, msg.name, msg.rssi, msg.dist_m].join(',') + '\\n';\nvar logMsg = { payload: csvLine };\n\nreturn [listMsg, logMsg];",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 680,
+        "y": 1040,
+        "wires": [
+            [
+                "ble2000000000005",
+                "ble2000000000006"
+            ],
+            [
+                "ble2000000000007"
+            ]
+        ]
+    },
+    {
+        "id": "ble2000000000005",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Known Beacons",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 920,
+        "y": 1000,
+        "wires": []
+    },
+    {
+        "id": "ble2000000000006",
+        "type": "file",
+        "z": "0cc8e394107eb034",
+        "name": "ble_beacons.txt",
+        "filename": "C:\\Users\\drowa\\ble_beacons.txt",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "true",
+        "encoding": "utf8",
+        "x": 920,
+        "y": 1040,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ble2000000000007",
+        "type": "file",
+        "z": "0cc8e394107eb034",
+        "name": "ble_tracking_log.csv",
+        "filename": "C:\\Users\\drowa\\ble_tracking_log.csv",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 930,
+        "y": 1080,
+        "wires": [
+            []
+        ]
+    }
+]

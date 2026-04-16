@@ -70,6 +70,9 @@
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
 #include "rfid.h"          // MUST come after mqtt_client.h AND ws2812.h
+#ifdef BLE_ENABLED
+#include "ble.h"           // MUST come last — uses mqttPublish from mqtt_client.h
+#endif
 
 
 // ── State machine definition ──────────────────────────────────────────────────
@@ -463,6 +466,12 @@ void setup() {
         // ESP-NOW channel scanning is complete) so SPI is free from radio contention.
         rfidInit();
 #endif
+
+#ifdef BLE_ENABLED
+        // Initialise BLE scanner. Called after Wi-Fi is up — BLE and WiFi share the
+        // 2.4 GHz radio and ESP-IDF handles the coexistence automatically.
+        bleInit();
+#endif
     }
 }
 
@@ -544,6 +553,10 @@ void loop() {
 
 #ifdef RFID_ENABLED
     rfidLoop();             // Poll for RFID card scans; publishes UID to .../telemetry
+#endif
+
+#ifdef BLE_ENABLED
+    bleLoop();              // BLE scan trigger, tracked beacon MQTT publish (2 s), serial print (10 s)
 #endif
 
     settingsServerTick();   // Handle HTTP requests on the settings portal (no-op
