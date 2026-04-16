@@ -53,11 +53,13 @@
 
 // ── Beacon record ─────────────────────────────────────────────────────────────
 struct BleBeacon {
-    char   mac[18];    // "AA:BB:CC:DD:EE:FF\0"
-    char   name[32];   // advertised local name — may be empty
-    int8_t rssi;       // dBm at time of scan
-    int8_t txPower;    // measured power at 1 m (from iBeacon) or BLE_DEFAULT_TX_POWER
-    float  distM;      // estimated distance in metres
+    char     mac[18];       // "AA:BB:CC:DD:EE:FF\0"
+    char     name[32];      // advertised local name — may be empty
+    int8_t   rssi;          // dBm at time of scan
+    int8_t   txPower;       // measured power at 1 m (from iBeacon) or BLE_DEFAULT_TX_POWER
+    float    distM;         // estimated distance in metres
+    uint16_t companyId;     // manufacturer company ID (0 = not present), e.g. 0x07D0 = Tuya
+    char     svcUuid[5];    // first 16-bit service UUID as uppercase hex, e.g. "FD50" (empty if none)
 };
 
 
@@ -156,10 +158,18 @@ class _BleScanCb : public NimBLEScanCallbacks {
 
             // TX power — prefer iBeacon measured power at byte [24]
             // NimBLE getManufacturerData() returns std::string
-            b.txPower = BLE_DEFAULT_TX_POWER;
+            b.txPower   = BLE_DEFAULT_TX_POWER;
+            b.companyId = 0;
+            b.svcUuid[0] = '\0';
+
             if (dev->haveManufacturerData()) {
                 std::string mfr = dev->getManufacturerData();
-                // iBeacon: company id 0x004C (little-endian), type 0x02, length 0x15
+                if (mfr.size() >= 2) {
+                    // Company ID is first 2 bytes, little-endian
+                    b.companyId = (uint16_t)((uint8_t)mfr[0])
+                                | (uint16_t)((uint8_t)mfr[1] << 8);
+                }
+                // iBeacon: Apple company id 0x004C, type 0x02, length 0x15
                 if (mfr.size() >= 25
                     && (uint8_t)mfr[0] == 0x4C && (uint8_t)mfr[1] == 0x00
                     && (uint8_t)mfr[2] == 0x02 && (uint8_t)mfr[3] == 0x15) {
@@ -169,11 +179,27 @@ class _BleScanCb : public NimBLEScanCallbacks {
             if (b.txPower == BLE_DEFAULT_TX_POWER && dev->haveTXPower())
                 b.txPower = (int8_t)dev->getTXPower();
 
+            // First 16-bit service UUID (e.g. "FD50" for Tuya) — useful when
+            // the device uses a Resolvable Private Address that rotates over time.
+            // NimBLE 2.x: getNative() removed; toString() returns "fd50" for 16-bit UUIDs.
+            b.svcUuid[0] = '\0';
+            if (dev->haveServiceUUID()) {
+                NimBLEUUID uuid = dev->getServiceUUID(0);
+                if (uuid.bitSize() == 16) {
+                    std::string s = uuid.toString();
+                    strncpy(b.svcUuid, s.c_str(), sizeof(b.svcUuid) - 1);
+                    b.svcUuid[sizeof(b.svcUuid) - 1] = '\0';
+                    for (char* p = b.svcUuid; *p; p++) *p = toupper((unsigned char)*p);
+                }
+            }
+
             b.distM = _bleCalcDist(b.rssi, b.txPower);
 
-            // Update tracked beacon cache if this is the one we care about
+            // Update tracked beacon cache if this is the one we care about.
+            // Use NimBLEAddress operator== (compares raw bytes) instead of
+            // strcasecmp on strings — avoids any string formatting edge cases.
             if (_bleTrackedMac[0] != '\0'
-                && strcasecmp(b.mac, _bleTrackedMac) == 0) {
+                && dev->getAddress() == NimBLEAddress(_bleTrackedMac)) {
                 _bleTrackedRssi  = b.rssi;
                 _bleTrackedDistM = b.distM;
                 strncpy(_bleTrackedName, b.name, sizeof(_bleTrackedName) - 1);
@@ -196,6 +222,9 @@ class _BleScanCb : public NimBLEScanCallbacks {
 // ── Scan launcher ─────────────────────────────────────────────────────────────
 // durationS: BLE_SCAN_DURATION_S (full scan, clears list)
 //         or BLE_TRACK_SCAN_DURATION_S (tracking scan, accumulates into list)
+//
+// IMPORTANT: NimBLE-Arduino 2.x start() takes MILLISECONDS (1.x used seconds).
+//   Callbacks are set once in bleInit() — do NOT call setScanCallbacks here.
 static void _bleRunScan(uint8_t durationS) {
     _bleScanInProgress = true;
     _bleScanDone       = false;
@@ -210,13 +239,12 @@ static void _bleRunScan(uint8_t durationS) {
     }
 
     NimBLEScan* pScan = NimBLEDevice::getScan();
-    // NimBLE 2.x: setScanCallbacks replaces setAdvertisedDeviceCallbacks
-    pScan->setScanCallbacks(new _BleScanCb(), /*wantDuplicates=*/false);
-    pScan->setActiveScan(false);  // passive — do not send scan requests
-    pScan->setInterval(100);      // ms
-    pScan->setWindow(99);         // ms — just under interval for maximum coverage
-    // NimBLE 2.x: start() no longer takes a completion-callback argument
-    pScan->start(durationS, /*is_continue=*/false);
+    // Tracking scans use active mode → scanner sends scan requests → receives scan
+    // responses containing "TUYA_" name and Tuya manufacturer data (company_id 0x07D0).
+    // Discovery scans stay passive (no scan requests) → less WiFi contention.
+    pScan->setActiveScan(durationS == BLE_TRACK_SCAN_DURATION_S);
+    // NimBLE 2.x: duration is in MILLISECONDS — multiply seconds constant by 1000
+    pScan->start((uint32_t)durationS * 1000UL, /*is_continue=*/false);
     // Returns immediately; completion fires _BleScanCb::onScanEnd from BLE task
 }
 
@@ -234,10 +262,13 @@ static void _blePublishResults() {
         doc["count"] = _bleBeaconCount;
         for (uint8_t i = 0; i < _bleBeaconCount; i++) {
             JsonObject o = arr.add<JsonObject>();
-            o["mac"]    = _bleBeacons[i].mac;
-            o["name"]   = _bleBeacons[i].name;
-            o["rssi"]   = _bleBeacons[i].rssi;
-            o["dist_m"] = serialized(String(_bleBeacons[i].distM, 1));
+            o["mac"]        = _bleBeacons[i].mac;
+            o["name"]       = _bleBeacons[i].name;
+            o["rssi"]       = _bleBeacons[i].rssi;
+            o["dist_m"]     = serialized(String(_bleBeacons[i].distM, 1));
+            o["company_id"] = _bleBeacons[i].companyId;   // 2000 = 0x07D0 Tuya; 76 = 0x004C Apple iBeacon
+            if (_bleBeacons[i].svcUuid[0] != '\0')
+                o["svc_uuid"] = _bleBeacons[i].svcUuid;   // e.g. "FD50" for Tuya Smart protocol
         }
         xSemaphoreGive(_bleMutex);
     }
@@ -288,12 +319,24 @@ inline void blePublishList() {
 
 
 // ── bleInit ───────────────────────────────────────────────────────────────────
+// Static callback instance — allocated once, reused for every scan.
+// Must outlive all scan calls; static storage duration satisfies this.
+static _BleScanCb _bleScanCbInstance;
+
 inline void bleInit() {
     _bleMutex = xSemaphoreCreateMutex();
     _bleNvsLoad();   // restore tracked MAC from NVS
 
     NimBLEDevice::init("");  // empty device name — we are not advertising
-    NimBLEDevice::getScan(); // initialise scan object
+
+    // Configure scan object once — callbacks, mode, and timing persist across
+    // start() calls. setScanCallbacks must NOT be called per-scan (memory leak).
+    NimBLEScan* pScan = NimBLEDevice::getScan();
+    pScan->setScanCallbacks(&_bleScanCbInstance, /*wantDuplicates=*/false);
+    // setActiveScan is NOT set here — it is set per-scan in _bleRunScan()
+    // so discovery scans can stay passive while tracking scans use active mode
+    pScan->setInterval(100);      // ms
+    pScan->setWindow(99);         // ms
 
     if (_bleTrackedMac[0] != '\0')
         Serial.printf("[BLE] scanner ready (NimBLE) — tracking %s\n", _bleTrackedMac);
