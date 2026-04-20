@@ -26,7 +26,7 @@
 //   Linux/Mac:  date +%s
 //   Windows:    PowerShell: [int][double]::Parse((Get-Date -UFormat %s))
 // -----------------------------------------------------------------------------
-#define FIRMWARE_VERSION           "0.2.16"
+#define FIRMWARE_VERSION           "0.2.17"
 #define FIRMWARE_BUILD_TIMESTAMP   1744193400ULL   // 2026-04-09 10:30:00 UTC
 
 
@@ -271,6 +271,7 @@
 #define ESPNOW_MSG_OTA_URL_RESP     0x06   // Unicast reply: sender MAC + URL string
 #define ESPNOW_MSG_BROKER_REQ       0x07   // Broadcast: "what MQTT broker are you using?"
 #define ESPNOW_MSG_BROKER_RESP      0x08   // Unicast reply: host string + port
+#define ESPNOW_MSG_RANGING_BEACON   0x09   // Periodic broadcast for RSSI-based peer ranging
 
 // How long (ms) to wait for a sibling's broker address response.
 // Tried before mDNS and port scan — fast path when a sibling is on the same LAN.
@@ -344,3 +345,18 @@
 #define BLE_SERIAL_PRINT_MS   10000UL     // Serial print tracked beacon every 10 s
 #define BLE_NVS_NAMESPACE     "esp32ble"  // NVS namespace — persists tracked MACs
 #define BLE_NVS_KEY_TRACKED   "tracked_mac"  // CSV of up to BLE_MAX_TRACKED MACs
+
+
+// -----------------------------------------------------------------------------
+// ESP-NOW Ranging
+// Passive RSSI-based distance estimation for nearby ESP32 sibling nodes.
+// Every node periodically broadcasts ESPNOW_MSG_RANGING_BEACON; the receiver
+// uses recvInfo->rx_power to estimate distance with the same log-distance
+// formula used by the BLE scanner. Results are published to MQTT topic "espnow".
+// -----------------------------------------------------------------------------
+#define ESPNOW_TX_POWER_DBM        -59      // Assumed Tx power at 1 m (dBm); calibrate per antenna
+#define ESPNOW_PATH_LOSS_N         2.5f     // Path-loss exponent (slightly higher than BLE free-space)
+#define ESPNOW_MAX_TRACKED          8       // Max simultaneously tracked peers
+#define ESPNOW_MQTT_PUBLISH_MS   2000UL    // Publish peer data to MQTT every 2 s
+#define ESPNOW_STALE_MS         15000UL    // Drop peer from table after 15 s of silence
+#define ESPNOW_BEACON_INTERVAL_MS 3000UL   // How often this node broadcasts its ranging beacon

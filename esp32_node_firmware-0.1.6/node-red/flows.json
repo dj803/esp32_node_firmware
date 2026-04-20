@@ -1,0 +1,1748 @@
+[
+    {
+        "id": "0cc8e394107eb034",
+        "type": "tab",
+        "label": "Heartbeats",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "alpha_ble_flow",
+        "type": "tab",
+        "label": "Alpha BLE Scanner",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "espnow_flow",
+        "type": "tab",
+        "label": "ESP-NOW Tracking",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "c75948adae7d87ef",
+        "type": "mqtt-broker",
+        "name": "LocalIP",
+        "broker": "192.168.10.30",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "e8185b6b5201bb62",
+        "type": "mqtt-broker",
+        "name": "LocalIP",
+        "broker": "192.168.10.30",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "mqtt_broker",
+        "type": "mqtt-broker",
+        "name": "Local MQTT Broker",
+        "broker": "192.168.10.30",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": "",
+        "closeTopic": "",
+        "closePayload": "",
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": ""
+    },
+    {
+        "id": "45a25337ec9ca43a",
+        "type": "ui-base",
+        "name": "Node-RED Dashboard",
+        "path": "/dashboard",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui_notification",
+            "ui_control"
+        ]
+    },
+    {
+        "id": "alpha_ble_theme",
+        "type": "ui-theme",
+        "name": "Default",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#0094CE",
+            "bgPage": "#eeeeee",
+            "groupBg": "#ffffff",
+            "groupOutline": "#cccccc"
+        }
+    },
+    {
+        "id": "alpha_ble_ui_tab",
+        "type": "ui-page",
+        "name": "Alpha BLE",
+        "ui": "45a25337ec9ca43a",
+        "path": "/alpha-ble",
+        "icon": "bluetooth",
+        "layout": "notebook",
+        "theme": "alpha_ble_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Small Desktop",
+                "px": 768,
+                "cols": 9
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 1,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "alpha_ble_grp_scan",
+        "type": "ui-group",
+        "name": "BLE Scanner",
+        "page": "alpha_ble_ui_tab",
+        "width": "12",
+        "order": 2,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "alpha_ble_grp_track",
+        "type": "ui-group",
+        "name": "BLE Tracking",
+        "page": "alpha_ble_ui_tab",
+        "width": "12",
+        "order": 1,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "hb_ui_page",
+        "type": "ui-page",
+        "name": "Device Status",
+        "ui": "45a25337ec9ca43a",
+        "path": "/device-status",
+        "icon": "mdi-heart-pulse",
+        "layout": "notebook",
+        "theme": "alpha_ble_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 2,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "hb_ui_group",
+        "type": "ui-group",
+        "name": "ESP32 Devices",
+        "page": "hb_ui_page",
+        "width": "12",
+        "order": 1,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "hb_ctrl_group",
+        "type": "ui-group",
+        "name": "Device Controls",
+        "page": "hb_ui_page",
+        "width": "12",
+        "order": 2,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "espnow_ui_tab",
+        "type": "ui-page",
+        "name": "ESP-NOW Tracking",
+        "ui": "45a25337ec9ca43a",
+        "path": "/espnow-tracking",
+        "icon": "mdi-wifi-arrow-left-right",
+        "layout": "notebook",
+        "theme": "alpha_ble_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Small Desktop",
+                "px": 768,
+                "cols": 9
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 3,
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "espnow_grp_scan",
+        "type": "ui-group",
+        "name": "ESP-NOW Peers",
+        "page": "espnow_ui_tab",
+        "width": "12",
+        "order": 1,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "espnow_grp_track",
+        "type": "ui-group",
+        "name": "ESP-NOW Tracking",
+        "page": "espnow_ui_tab",
+        "width": "12",
+        "order": 2,
+        "showTitle": true,
+        "groupType": "default"
+    },
+    {
+        "id": "19b489a245f7823e",
+        "type": "mqtt out",
+        "z": "0cc8e394107eb034",
+        "name": "Publish Test",
+        "topic": "node-red/test/topic",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "c75948adae7d87ef",
+        "x": 310,
+        "y": 20,
+        "wires": []
+    },
+    {
+        "id": "e6e73f8a42533e4f",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "Subscribe Test",
+        "topic": "node-red/test/topic",
+        "qos": "2",
+        "datatype": "auto",
+        "broker": "e8185b6b5201bb62",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 480,
+        "y": 20,
+        "wires": [
+            [
+                "01229a4a7536ab96"
+            ]
+        ]
+    },
+    {
+        "id": "01229a4a7536ab96",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Debug Receive",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "x": 680,
+        "y": 20,
+        "wires": []
+    },
+    {
+        "id": "c346ac70c7b39923",
+        "type": "inject",
+        "z": "0cc8e394107eb034",
+        "d": true,
+        "name": "Send Message",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "Hello MQTT",
+        "payloadType": "str",
+        "x": 120,
+        "y": 20,
+        "wires": [
+            [
+                "19b489a245f7823e"
+            ]
+        ]
+    },
+    {
+        "id": "9c8494d1aef9a906",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "ESP32 - Bravo",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/6cfe177f-92eb-4699-a9a6-8a3603aae175/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 100,
+        "y": 160,
+        "wires": [
+            [
+                "a137257f399b451c"
+            ]
+        ]
+    },
+    {
+        "id": "a137257f399b451c",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect Heartbeat & Timeout",
+        "func": "// Only react to heartbeat events — the status topic carries boot,\n// OTA, credential-rotation and heartbeat events on the same channel.\nif (!msg.payload || msg.payload.event !== 'heartbeat') return null;\n\n// Clear previous timeout\nif (context.timeout) {\n    clearTimeout(context.timeout);\n}\n\n// Mark connected\nnode.status({fill:'green', shape:'dot', text:'Connected'});\nnode.send({payload: 'Connected'});\n\n// Firmware heartbeat interval is 60 s — allow one missed beat before\n// declaring the device offline (90 s > 60 s).\ncontext.timeout = setTimeout(function() {\n    node.status({fill:'red', shape:'ring', text:'Disconnected'});\n    node.send({payload: 'Disconnected'});\n}, 90000);\n\nreturn null;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "if (context.timeout) {\n    clearTimeout(context.timeout);\n}",
+        "libs": [],
+        "x": 380,
+        "y": 160,
+        "wires": [
+            [
+                "4151e36c0618cab0"
+            ]
+        ]
+    },
+    {
+        "id": "4151e36c0618cab0",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Heartbeat Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 690,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "3368028ec615e710",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "ESP32 - Alpha",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 100,
+        "y": 100,
+        "wires": [
+            [
+                "ba3c27eaab91295c"
+            ]
+        ]
+    },
+    {
+        "id": "ba3c27eaab91295c",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect Heartbeat & Timeout",
+        "func": "// Only react to heartbeat events — the status topic carries boot,\n// OTA, credential-rotation and heartbeat events on the same channel.\nif (!msg.payload || msg.payload.event !== 'heartbeat') return null;\n\n// Clear previous timeout\nif (context.timeout) {\n    clearTimeout(context.timeout);\n}\n\n// Mark connected\nnode.status({fill:'green', shape:'dot', text:'Connected'});\nnode.send({payload: 'Connected'});\n\n// Firmware heartbeat interval is 60 s — allow one missed beat before\n// declaring the device offline (90 s > 60 s).\ncontext.timeout = setTimeout(function() {\n    node.status({fill:'red', shape:'ring', text:'Disconnected'});\n    node.send({payload: 'Disconnected'});\n}, 90000);\n\nreturn null;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "if (context.timeout) {\n    clearTimeout(context.timeout);\n}",
+        "libs": [],
+        "x": 380,
+        "y": 100,
+        "wires": [
+            [
+                "ecbab7ea7c91013e"
+            ]
+        ]
+    },
+    {
+        "id": "ecbab7ea7c91013e",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Heartbeat Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 690,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "084977b7247edfb1",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "ESP32 - Charlie",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/79eb6f5f-2072-4904-b91d-50601f195c18/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 100,
+        "y": 220,
+        "wires": [
+            [
+                "7911dadbfe093c62"
+            ]
+        ]
+    },
+    {
+        "id": "7911dadbfe093c62",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect Heartbeat & Timeout",
+        "func": "// Only react to heartbeat events — the status topic carries boot,\n// OTA, credential-rotation and heartbeat events on the same channel.\nif (!msg.payload || msg.payload.event !== 'heartbeat') return null;\n\n// Clear previous timeout\nif (context.timeout) {\n    clearTimeout(context.timeout);\n}\n\n// Mark connected\nnode.status({fill:'green', shape:'dot', text:'Connected'});\nnode.send({payload: 'Connected'});\n\n// Firmware heartbeat interval is 60 s — allow one missed beat before\n// declaring the device offline (90 s > 60 s).\ncontext.timeout = setTimeout(function() {\n    node.status({fill:'red', shape:'ring', text:'Disconnected'});\n    node.send({payload: 'Disconnected'});\n}, 90000);\n\nreturn null;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "if (context.timeout) {\n    clearTimeout(context.timeout);\n}",
+        "libs": [],
+        "x": 380,
+        "y": 220,
+        "wires": [
+            [
+                "71c42e6e80ce213b"
+            ]
+        ]
+    },
+    {
+        "id": "71c42e6e80ce213b",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Heartbeat Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 690,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "ef2a7d8d36840748",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "ESP32 Heartbeat (all)",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 120,
+        "y": 320,
+        "wires": [
+            [
+                "67bf8dcee18c68fb"
+            ]
+        ]
+    },
+    {
+        "id": "67bf8dcee18c68fb",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect Heartbeat & Timeout",
+        "func": "// React to heartbeat AND boot events (boot is retained — gives us fw version on startup)\nvar event = msg.payload && msg.payload.event;\nif (event !== \"heartbeat\" && event !== \"boot\") return null;\n\nvar uuid = msg.topic.split(\"/\")[6];\nif (!uuid) return null;\n\nvar timeouts = context.get(\"timeouts\") || {};\nif (timeouts[uuid]) clearTimeout(timeouts[uuid]);\n\nnode.status({ fill: \"green\", shape: \"dot\", text: uuid + \" connected\" });\n\ntimeouts[uuid] = setTimeout(function () {\n    node.status({ fill: \"red\", shape: \"ring\", text: uuid + \" disconnected\" });\n    node.send({ payload: \"Disconnected\", uuid: uuid, firmware_version: \"\", uptime_s: 0 });\n}, 90000);\ncontext.set(\"timeouts\", timeouts);\n\nmsg.uuid             = uuid;\nmsg.firmware_version = msg.payload.firmware_version || \"\";\nmsg.uptime_s         = msg.payload.uptime_s || 0;\nmsg.payload          = \"Connected\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "var timeouts = context.get('timeouts') || {};\nObject.keys(timeouts).forEach(function(uuid) {\n    clearTimeout(timeouts[uuid]);\n});\ncontext.set('timeouts', {});\n",
+        "libs": [],
+        "x": 380,
+        "y": 320,
+        "wires": [
+            [
+                "32be75c3b14901b1",
+                "7a5342d0bab23e91",
+                "hb_status_fn"
+            ]
+        ]
+    },
+    {
+        "id": "32be75c3b14901b1",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Heartbeat Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 690,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "7a5342d0bab23e91",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "UUID Logger",
+        "func": "// Maintain a sorted list of unique UUIDs seen across all boots\nvar known = flow.get('knownUuids') || [];\n\nif (msg.uuid && known.indexOf(msg.uuid) === -1) {\n    known.push(msg.uuid);\n    known.sort();\n    flow.set('knownUuids', known);\n}\n\n// Output the full list as a plain newline-separated string\nmsg.payload = known.join('\\n');\nreturn msg;\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 670,
+        "y": 340,
+        "wires": [
+            [
+                "52c1f44e772d9f8f",
+                "a63a4bbad3768eaa",
+                "029f0c7542c10536"
+            ]
+        ]
+    },
+    {
+        "id": "52c1f44e772d9f8f",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Known UUIDs",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "a63a4bbad3768eaa",
+        "type": "file",
+        "z": "0cc8e394107eb034",
+        "name": "esp32_uuids.txt",
+        "filename": "C:\\Users\\drowa\\Documents\\git\\Arduino\\NodeFirmware\\Logs\\esp32_uuids.txt",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "true",
+        "encoding": "utf8",
+        "x": 940,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "029f0c7542c10536",
+        "type": "file",
+        "z": "0cc8e394107eb034",
+        "name": "esp32_uuids.csv",
+        "filename": "C:\\Users\\drowa\\Documents\\git\\Arduino\\NodeFirmware\\Logs\\esp32_uuids.csv",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": false,
+        "overwriteFile": "true",
+        "encoding": "utf8",
+        "x": 950,
+        "y": 360,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0fda718a06984e8b",
+        "type": "mqtt in",
+        "z": "0cc8e394107eb034",
+        "name": "ESP32 - Alpha",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/status",
+        "qos": "1",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 100,
+        "y": 420,
+        "wires": [
+            [
+                "bd4b23814c8b5136"
+            ]
+        ]
+    },
+    {
+        "id": "bd4b23814c8b5136",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Detect Heartbeat & Timeout",
+        "func": "if (!msg.payload || msg.payload.event !== 'heartbeat') return null;\n\nif (context.timeout) {\n    clearTimeout(context.timeout);\n}\n\nnode.status({fill:'green', shape:'dot', text:'Connected'});\nnode.send([{payload: 'Connected'}, null]);\n\ncontext.timeout = setTimeout(function() {\n    node.status({fill:'red', shape:'ring', text:'Disconnected'});\n    node.send([null, {payload: 'Disconnected'}]);\n}, 90000);\n\nreturn null;",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "if (context.timeout) { clearTimeout(context.timeout); }",
+        "libs": [],
+        "x": 380,
+        "y": 420,
+        "wires": [
+            [
+                "1c3a04c0bd57f1de"
+            ],
+            [
+                "79a6385c1593bcc5"
+            ]
+        ]
+    },
+    {
+        "id": "1c3a04c0bd57f1de",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Heartbeat Status",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 690,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "79a6385c1593bcc5",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Prepare Claude Alert",
+        "func": "msg.payload = \"Device 'ESP32 - Alpha' (Office/Line/Cell NodeBox, ID: 32925666-155a-4a67-bf50-27c1ffa22b11) has gone offline. No heartbeat received for over 90 seconds.\";\nmsg.systemPrompt = \"You are an IoT monitoring assistant. When a device goes offline, respond with a 2-3 sentence alert summary and one actionable next step for the engineer. Be concise.\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 500,
+        "wires": [
+            [
+                "cde3241e05a1727a"
+            ]
+        ]
+    },
+    {
+        "id": "cde3241e05a1727a",
+        "type": "claude",
+        "z": "0cc8e394107eb034",
+        "d": true,
+        "name": "Claude - Alert Generator",
+        "model": "claude-sonnet-4-6",
+        "maxTokens": 256,
+        "systemPrompt": "",
+        "temperature": "",
+        "topP": "",
+        "topK": "",
+        "x": 670,
+        "y": 520,
+        "wires": [
+            [
+                "728e92e0cb751185"
+            ]
+        ]
+    },
+    {
+        "id": "728e92e0cb751185",
+        "type": "debug",
+        "z": "0cc8e394107eb034",
+        "name": "Claude Alert Output",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 910,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "hb_status_fn",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Aggregate Device Status",
+        "func": "const names = {\n  \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n  \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n  \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n};\nconst uuid = msg.uuid;\nif (!uuid) return null;\nconst devices = flow.get(\"hb_devices\") || {};\nconst prev = devices[uuid] || {};\nconst connected = msg.payload === \"Connected\";\ndevices[uuid] = {\n  name:     names[uuid] || uuid.slice(0,8) + \"...\",\n  uuid:     uuid,\n  status:   msg.payload,\n  firmware: connected && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"—\"),\n  lastSeen: connected ? new Date().toLocaleString() : (prev.lastSeen || \"Never\")\n};\nflow.set(\"hb_devices\", devices);\nmsg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 710,
+        "y": 400,
+        "wires": [
+            [
+                "hb_status_tpl"
+            ]
+        ]
+    },
+    {
+        "id": "hb_status_tpl",
+        "type": "ui-template",
+        "z": "0cc8e394107eb034",
+        "group": "hb_ui_group",
+        "name": "Device Status Cards",
+        "order": 1,
+        "width": "12",
+        "height": 8,
+        "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No devices seen yet — waiting for heartbeats...\n    </div>\n    <div v-for=\"(d, i) in (msg && msg.payload || [])\" :key=\"i\"\n         style=\"display:flex;align-items:center;padding:12px 16px;margin-bottom:8px;border-radius:8px;background:#1e272e\">\n      <div :style=\"{\n        width:'14px', height:'14px', borderRadius:'50%', marginRight:'14px', flexShrink:0,\n        background: d.status === 'Connected' ? '#00c853' : '#d50000'\n      }\"></div>\n      <div style=\"flex:1\">\n        <div style=\"font-weight:bold;font-size:15px;color:#eceff1\">{{ d.name }}</div>\n        <div style=\"font-size:11px;color:#78909c;margin-top:2px\">\n          <span>fw {{ d.firmware }}</span>\n          <span style=\"margin-left:12px\">Last seen: {{ d.lastSeen }}</span>\n        </div>\n      </div>\n      <div :style=\"{fontWeight:'bold', color: d.status === 'Connected' ? '#00c853' : '#d50000'}\">\n        {{ d.status }}\n      </div>\n    </div>\n  </div>\n</template>",
+        "storeOutMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 960,
+        "y": 420,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "hb_check_ver_btn",
+        "type": "ui-button",
+        "z": "0cc8e394107eb034",
+        "group": "hb_ctrl_group",
+        "name": "Check Firmware Version",
+        "label": "Check Firmware Version",
+        "order": 1,
+        "width": "4",
+        "height": "1",
+        "color": "white",
+        "bgcolor": "#00838f",
+        "icon": "mdi-information-outline",
+        "payload": "check",
+        "payloadType": "str",
+        "x": 130,
+        "y": 500,
+        "wires": [
+            [
+                "hb_cmd_fn"
+            ]
+        ]
+    },
+    {
+        "id": "hb_ota_btn",
+        "type": "ui-button",
+        "z": "0cc8e394107eb034",
+        "group": "hb_ctrl_group",
+        "name": "Send OTA Update",
+        "label": "Send OTA Update",
+        "order": 3,
+        "width": "4",
+        "height": "1",
+        "color": "white",
+        "bgcolor": "#e65100",
+        "icon": "mdi-update",
+        "payload": "ota",
+        "payloadType": "str",
+        "x": 110,
+        "y": 560,
+        "wires": [
+            [
+                "hb_cmd_fn"
+            ]
+        ]
+    },
+    {
+        "id": "hb_cmd_fn",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Publish to All Devices",
+        "func": "var uuids = flow.get(\"knownUuids\") || [];\nif (uuids.length === 0) {\n    node.warn(\"No known devices yet — waiting for first heartbeat\");\n    return null;\n}\nuuids.forEach(function(uuid) {\n    node.send({\n        topic: \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\" + uuid + \"/cmd/ota_check\",\n        payload: \"\"\n    });\n});\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 560,
+        "wires": [
+            [
+                "hb_mqtt_out"
+            ]
+        ]
+    },
+    {
+        "id": "hb_mqtt_out",
+        "type": "mqtt out",
+        "z": "0cc8e394107eb034",
+        "name": "Device Command",
+        "topic": "",
+        "qos": "1",
+        "retain": "false",
+        "broker": "mqtt_broker",
+        "x": 650,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "hb_restart_btn",
+        "type": "ui-button",
+        "z": "0cc8e394107eb034",
+        "group": "hb_ctrl_group",
+        "name": "Restart All ESP32s",
+        "label": "Restart All ESP32s",
+        "order": 2,
+        "width": "4",
+        "height": "1",
+        "color": "white",
+        "bgcolor": "#b71c1c",
+        "icon": "mdi-restart",
+        "payload": "restart",
+        "payloadType": "str",
+        "x": 110,
+        "y": 620,
+        "wires": [
+            [
+                "hb_restart_fn"
+            ]
+        ]
+    },
+    {
+        "id": "hb_restart_fn",
+        "type": "function",
+        "z": "0cc8e394107eb034",
+        "name": "Restart All Devices",
+        "func": "var uuids = flow.get(\"knownUuids\") || [];\nif (uuids.length === 0) {\n    node.warn(\"No known devices yet — waiting for first heartbeat\");\n    return null;\n}\nvar msgs = [];\nuuids.forEach(function(uuid) {\n    msgs.push({\n        topic: \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\" + uuid + \"/cmd/restart\",\n        payload: \"\"\n    });\n});\nmsgs.forEach(function(m) { node.send(m); });\nreturn null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 620,
+        "wires": [
+            [
+                "hb_mqtt_out"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_scan_btn",
+        "type": "ui-button",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_scan",
+        "name": "Scan BLE",
+        "label": "Scan BLE (5 s)",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "tooltip": "Trigger a 5-second passive BLE scan on ESP32-Alpha",
+        "color": "white",
+        "bgcolor": "#1565C0",
+        "icon": "bluetooth_searching",
+        "payload": "",
+        "payloadType": "str",
+        "x": 80,
+        "y": 40,
+        "wires": [
+            [
+                "alpha_mqtt_scan_out"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_mqtt_scan_out",
+        "type": "mqtt out",
+        "z": "alpha_ble_flow",
+        "name": "cmd/ble/scan",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/cmd/ble/scan",
+        "qos": "1",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker",
+        "x": 290,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "alpha_mqtt_results_in",
+        "type": "mqtt in",
+        "z": "alpha_ble_flow",
+        "name": "scan_results",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/ble/scan_results",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 290,
+        "y": 100,
+        "wires": [
+            [
+                "alpha_ble_tpl"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_ble_tpl",
+        "type": "ui-template",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_scan",
+        "name": "Beacon Table",
+        "order": 5,
+        "width": "12",
+        "height": "9",
+        "format": "<template>\n  <div style=\"padding:8px;font-size:13px\">\n    <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px\">\n      <label style=\"display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer\">\n        <input type=\"checkbox\" v-model=\"allSelected\" style=\"width:15px;height:15px;cursor:pointer\">\n        Select All ({{ beacons.length }})\n      </label>\n      <button @click=\"trackSelected\"\n              :disabled=\"selected.length === 0\"\n              :style=\"{ opacity: selected.length === 0 ? 0.4 : 1, padding:'4px 16px', background:'#1976D2', color:'#fff', border:'none', borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n        Track Selected ({{ selected.length }}/8)\n      </button>\n    </div>\n    <table style=\"width:100%;border-collapse:collapse\">\n      <thead>\n        <tr style=\"background:#263238;color:#eceff1\">\n          <th style=\"padding:8px;width:32px\"></th>\n          <th style=\"padding:8px;text-align:left\">MAC</th>\n          <th style=\"padding:8px;text-align:left\">Name</th>\n          <th style=\"padding:8px;text-align:right\">RSSI</th>\n          <th style=\"padding:8px;text-align:right\">Distance</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-if=\"beacons.length === 0\">\n          <td colspan=\"5\" style=\"padding:16px;text-align:center;color:#546e7a\">No beacons found — press Scan BLE</td>\n        </tr>\n        <tr v-for=\"(b, i) in beacons\" :key=\"b.mac\" style=\"border-bottom:1px solid #37474f\">\n          <td style=\"padding:8px;text-align:center\">\n            <input type=\"checkbox\" :value=\"b.mac\" v-model=\"selected\" style=\"cursor:pointer;width:15px;height:15px\">\n          </td>\n          <td style=\"padding:8px;font-family:monospace;font-size:12px;color:#80cbc4\">{{ b.mac }}</td>\n          <td style=\"padding:8px\">{{ b.name || \"—\" }}</td>\n          <td style=\"padding:8px;text-align:right\">{{ b.rssi }} dBm</td>\n          <td style=\"padding:8px;text-align:right\">{{ Number(b.dist_m).toFixed(1) }} m</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() {\n    return { selected: [] }\n  },\n  computed: {\n    beacons() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.beacons))\n        ? this.msg.payload.beacons : []\n    },\n    allSelected: {\n      get() {\n        return this.beacons.length > 0 && this.selected.length === this.beacons.length\n      },\n      set(val) {\n        this.selected = val ? this.beacons.map(b => b.mac) : []\n      }\n    }\n  },\n  watch: {\n    beacons(newList) {\n      const macs = new Set(newList.map(b => b.mac))\n      this.selected = this.selected.filter(mac => macs.has(mac))\n    }\n  },\n  methods: {\n    trackSelected() {\n      if (this.selected.length) {\n        this.send({ payload: this.selected })\n      }\n    }\n  }\n}\n</script>",
+        "storeOutMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 480,
+        "y": 40,
+        "wires": [
+            [
+                "alpha_track_fn"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_track_fn",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Build track cmd",
+        "func": "var macs = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nmsg.payload = JSON.stringify({ macs: macs });\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 100,
+        "wires": [
+            [
+                "alpha_mqtt_track_out"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_mqtt_track_out",
+        "type": "mqtt out",
+        "z": "alpha_ble_flow",
+        "name": "cmd/ble/track",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/cmd/ble/track",
+        "qos": "1",
+        "retain": "false",
+        "broker": "mqtt_broker",
+        "x": 790,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "alpha_mqtt_ble_in",
+        "type": "mqtt in",
+        "z": "alpha_ble_flow",
+        "name": "telemetry/ble",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/ble",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 290,
+        "y": 160,
+        "wires": [
+            [
+                "alpha_ble_split"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_ble_split",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Split fields",
+        "func": "var d = msg.payload;\nreturn [\n    { payload: d },\n    { payload: parseFloat(d.dist_m) || 0,\n      topic:  d.mac || \"unknown\",\n      _label: (d.name ? d.name + \" · \" : \"\") + (d.mac || \"unknown\") },\n    null\n];",
+        "outputs": 3,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 160,
+        "wires": [
+            [
+                "alpha_track_agg"
+            ],
+            [
+                "alpha_ema_fn"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "alpha_tracking_text",
+        "type": "ui-template",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_track",
+        "name": "Tracking Status",
+        "order": 1,
+        "width": "12",
+        "height": 2,
+        "format": "<template>\n  <div style=\"padding:6px 12px\">\n    <div v-if=\"!msg || !msg.payload || !msg.payload.tracking\"\n         style=\"display:flex;align-items:center;gap:8px\">\n      <div style=\"width:10px;height:10px;border-radius:50%;background:#546e7a;flex-shrink:0\"></div>\n      <span style=\"color:#78909c;font-size:13px\">Not Tracking</span>\n    </div>\n    <div v-else>\n      <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:4px\">\n        <div style=\"width:10px;height:10px;border-radius:50%;background:#00c853;flex-shrink:0;animation:bltpulse 1.5s ease-in-out infinite\"></div>\n        <span style=\"color:#00c853;font-size:13px;font-weight:bold\">\n          Tracking {{ msg.payload.devices.length }} device{{ msg.payload.devices.length !== 1 ? 's' : '' }}\n        </span>\n      </div>\n      <div v-for=\"(d, i) in msg.payload.devices\" :key=\"i\"\n           style=\"padding:1px 0 1px 18px;font-size:11px;color:#90a4ae;font-family:monospace\">\n        {{ d.name ? d.name + ' · ' : '' }}{{ d.mac }}  —  {{ d.dist_m }} m / {{ d.rssi }} dBm\n      </div>\n    </div>\n  </div>\n  <style scoped>\n    @keyframes bltpulse { 0%,100%{opacity:1} 50%{opacity:0.3} }\n  </style>\n</template>",
+        "storeOutMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 840,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "alpha_stop_btn",
+        "type": "ui-button",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_scan",
+        "name": "Stop Tracking",
+        "label": "Stop Tracking",
+        "order": 3,
+        "width": "3",
+        "height": "1",
+        "color": "white",
+        "bgcolor": "#b71c1c",
+        "icon": "highlight_off",
+        "payload": "",
+        "payloadType": "str",
+        "x": 100,
+        "y": 280,
+        "wires": [
+            [
+                "alpha_clear_ctx"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_mqtt_clear_out",
+        "type": "mqtt out",
+        "z": "alpha_ble_flow",
+        "name": "cmd/ble/clear",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/cmd/ble/clear",
+        "qos": "1",
+        "retain": "false",
+        "broker": "mqtt_broker",
+        "x": 530,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "22fa57f81f7cc921",
+        "type": "mqtt out",
+        "z": "alpha_ble_flow",
+        "name": "cmd/ble/list",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/32925666-155a-4a67-bf50-27c1ffa22b11/cmd/ble/list",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker",
+        "x": 290,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "193257e91b4079a8",
+        "type": "mqtt in",
+        "z": "alpha_ble_flow",
+        "name": "Subscribe to Scan Results",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/ble/scan_results",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 270,
+        "y": 460,
+        "wires": [
+            [
+                "4cd1d40ff40de66e"
+            ]
+        ]
+    },
+    {
+        "id": "4cd1d40ff40de66e",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Format as CSV",
+        "func": "const NL = String.fromCharCode(10);\nconst beacons = (msg.payload && msg.payload.beacons) || msg.payload;\nif (!Array.isArray(beacons)) { node.error('Expected beacons array', msg); return null; }\nconst ts = new Date().toISOString();\nconst lines = [];\nif (!flow.get('csvHeaderWritten')) {\n    flow.set('csvHeaderWritten', true);\n    lines.push('timestamp,mac,name,rssi,dist_m,company_id');\n}\nbeacons.forEach(function(b) {\n    lines.push([ts, b.mac, b.name || '', b.rssi, b.dist_m, b.company_id].join(','));\n});\nmsg.payload = lines.join(NL) + NL;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 500,
+        "y": 460,
+        "wires": [
+            [
+                "5784cecb1a7b47e8"
+            ]
+        ]
+    },
+    {
+        "id": "5784cecb1a7b47e8",
+        "type": "file",
+        "z": "alpha_ble_flow",
+        "name": "Save to CSV",
+        "filename": "C:/Users/drowa/Documents/git/Arduino/NodeFirmware/Logs/ble_beacons.csv",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 710,
+        "y": 460,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "alpha_list_btn",
+        "type": "ui-button",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_scan",
+        "name": "List Previous Scan",
+        "label": "List Previous Scan",
+        "order": 2,
+        "width": "3",
+        "height": "1",
+        "tooltip": "Request last scan results from ESP32",
+        "color": "white",
+        "bgcolor": "#00838f",
+        "icon": "list",
+        "payload": "",
+        "payloadType": "str",
+        "x": 110,
+        "y": 360,
+        "wires": [
+            [
+                "22fa57f81f7cc921"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_dist_chart",
+        "type": "ui-chart",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_track",
+        "name": "Distance Over Time",
+        "label": "Distance (m)",
+        "order": 2,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": null,
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "Distance (m)",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": 1,
+        "removeOlderUnit": "3600",
+        "removeOlderPoints": "50",
+        "colors": [
+            "#0095FF",
+            "#FF0000",
+            "#FF7F0E",
+            "#2CA02C",
+            "#A347E1",
+            "#D62728",
+            "#FF9896",
+            "#9467BD",
+            "#C5B0D5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 12,
+        "height": 4,
+        "className": "",
+        "interpolation": "linear",
+        "x": 790,
+        "y": 260,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "alpha_track_agg",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Accumulate Tracked Devices",
+        "func": "var d = msg.payload;\nif (!d || !d.mac) return null;\nvar devices = flow.get(\"tracked_devices\") || {};\ndevices[d.mac] = { mac: d.mac, name: d.name || \"\", rssi: d.rssi, dist_m: d.dist_m };\nflow.set(\"tracked_devices\", devices);\nmsg.payload = { tracking: true, devices: Object.values(devices) };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 740,
+        "y": 140,
+        "wires": [
+            [
+                "alpha_tracking_text"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_clear_ctx",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Clear Tracked Context",
+        "func": "flow.set(\"tracked_devices\", {});\nnode.send([{ payload: { tracking: false, devices: [] } }, { payload: \"\" }]);\nreturn null;",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 280,
+        "wires": [
+            [
+                "alpha_tracking_text"
+            ],
+            [
+                "alpha_mqtt_clear_out"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_ema_fn",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Kalman Filter Distance",
+        "func": "// 1-D Kalman filter per MAC address\n// Q — process noise: how fast the true distance can change.\n//     Lower = assume device moves slowly, smoother output.\n// R — measurement noise: how noisy a single BLE distance reading is.\n//     Higher = trust measurements less, smoother but slower to react.\nvar Q = 0.1;\nvar R = 2.0;\n\nvar mac = msg.topic;\nif (!mac) return msg;\n\nvar raw    = msg.payload;\nvar states = flow.get(\"kalman_states\") || {};\nvar s      = states[mac] || { x: raw, p: 1.0 };  // seed with first reading\n\n// Predict step\nvar xPred = s.x;\nvar pPred = s.p + Q;\n\n// Update step\nvar K    = pPred / (pPred + R);           // Kalman gain\nvar xNew = xPred + K * (raw - xPred);     // corrected estimate\nvar pNew = (1 - K) * pPred;              // updated error covariance\n\nstates[mac] = { x: xNew, p: pNew };\nflow.set(\"kalman_states\", states);\n\nmsg.payload = Math.round(xNew * 10) / 10;\nif (msg._label) msg.topic = msg._label;   // name · mac as chart series label\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 220,
+        "wires": [
+            [
+                "alpha_dist_chart"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_reset_graph_btn",
+        "type": "ui-button",
+        "z": "alpha_ble_flow",
+        "group": "alpha_ble_grp_scan",
+        "name": "Reset Graph",
+        "label": "Reset Graph",
+        "order": 4,
+        "width": "3",
+        "height": "1",
+        "tooltip": "Clear all data from the distance graph",
+        "color": "white",
+        "bgcolor": "#546e7a",
+        "icon": "refresh",
+        "payload": "",
+        "payloadType": "str",
+        "x": 100,
+        "y": 360,
+        "wires": [
+            [
+                "alpha_reset_graph_fn"
+            ]
+        ]
+    },
+    {
+        "id": "alpha_reset_graph_fn",
+        "type": "function",
+        "z": "alpha_ble_flow",
+        "name": "Reset Chart Action",
+        "func": "flow.set(\"kalman_states\", {});\nmsg.payload = [];\nmsg.action = \"replace\";\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 360,
+        "wires": [
+            [
+                "alpha_dist_chart"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_refresh_btn",
+        "type": "ui-button",
+        "z": "espnow_flow",
+        "group": "espnow_grp_scan",
+        "name": "Refresh Peers",
+        "label": "Refresh Peers",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "tooltip": "Clear the peer list and rediscover from live traffic",
+        "color": "white",
+        "bgcolor": "#1565C0",
+        "icon": "refresh",
+        "payload": "",
+        "payloadType": "str",
+        "x": 100,
+        "y": 80,
+        "wires": [
+            [
+                "espnow_refresh_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_stop_btn",
+        "type": "ui-button",
+        "z": "espnow_flow",
+        "group": "espnow_grp_scan",
+        "name": "Stop Tracking",
+        "label": "Stop Tracking",
+        "order": 2,
+        "width": "3",
+        "height": "1",
+        "color": "white",
+        "bgcolor": "#b71c1c",
+        "icon": "highlight_off",
+        "payload": "",
+        "payloadType": "str",
+        "x": 100,
+        "y": 120,
+        "wires": [
+            [
+                "espnow_stop_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_reset_btn",
+        "type": "ui-button",
+        "z": "espnow_flow",
+        "group": "espnow_grp_scan",
+        "name": "Reset Graph",
+        "label": "Reset Graph",
+        "order": 3,
+        "width": "3",
+        "height": "1",
+        "tooltip": "Clear all data from the distance graph",
+        "color": "white",
+        "bgcolor": "#546e7a",
+        "icon": "delete_sweep",
+        "payload": "",
+        "payloadType": "str",
+        "x": 100,
+        "y": 160,
+        "wires": [
+            [
+                "espnow_reset_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_mqtt_in",
+        "type": "mqtt in",
+        "z": "espnow_flow",
+        "name": "telemetry/espnow",
+        "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/espnow",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "mqtt_broker",
+        "nl": false,
+        "rap": false,
+        "inputs": 0,
+        "x": 80,
+        "y": 220,
+        "wires": [
+            [
+                "espnow_discover_fn",
+                "espnow_filter_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_discover_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Accumulate Discovered",
+        "func": "var peers = (msg.payload && Array.isArray(msg.payload.peers))\n            ? msg.payload.peers : [];\nvar disc = flow.get(\"espnow_discovered\") || {};\nvar prevCount = Object.keys(disc).length;\npeers.forEach(function(p) {\n    if (p.mac) disc[p.mac] = { mac: p.mac, rssi: p.rssi, dist_m: p.dist_m };\n});\nflow.set(\"espnow_discovered\", disc);\n// Only send to peer table when a NEW peer has been discovered.\n// This stops the table from re-rendering every 2 s while the user is\n// selecting checkboxes, which would race with Vue's reactivity.\nvar newCount = Object.keys(disc).length;\nif (newCount === prevCount) return null;\nmsg.payload = { peers: Object.values(disc) };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 330,
+        "y": 20,
+        "wires": [
+            [
+                "espnow_peer_tpl"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_refresh_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Clear Discovered",
+        "func": "flow.set('espnow_discovered', {});\nmsg.payload = { peers: [] };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 80,
+        "wires": [
+            [
+                "espnow_peer_tpl"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_peer_tpl",
+        "type": "ui-template",
+        "z": "espnow_flow",
+        "group": "espnow_grp_scan",
+        "name": "Peer Table",
+        "order": 4,
+        "width": "12",
+        "height": "8",
+        "format": "<template>\n  <div style=\"padding:8px;font-size:13px\">\n    <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px\">\n      <label style=\"display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer\">\n        <input type=\"checkbox\" v-model=\"allSelected\" style=\"width:15px;height:15px;cursor:pointer\">\n        Select All ({{ peers.length }})\n      </label>\n      <button @click=\"trackSelected\"\n              :disabled=\"selected.length === 0\"\n              :style=\"{ opacity: selected.length === 0 ? 0.4 : 1, padding:'4px 16px', background:'#0288d1', color:'#fff', border:'none', borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n        Track Selected ({{ selected.length }}/8)\n      </button>\n    </div>\n    <table style=\"width:100%;border-collapse:collapse\">\n      <thead>\n        <tr style=\"background:#263238;color:#eceff1\">\n          <th style=\"padding:8px;width:32px\"></th>\n          <th style=\"padding:8px;text-align:left\">MAC</th>\n          <th style=\"padding:8px;text-align:right\">RSSI</th>\n          <th style=\"padding:8px;text-align:right\">Distance</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-if=\"peers.length === 0\">\n          <td colspan=\"4\" style=\"padding:16px;text-align:center;color:#546e7a\">\n            No peers found — press Refresh Peers\n          </td>\n        </tr>\n        <tr v-for=\"(p, i) in peers\" :key=\"p.mac\" style=\"border-bottom:1px solid #37474f\">\n          <td style=\"padding:8px;text-align:center\">\n            <input type=\"checkbox\" :value=\"p.mac\" v-model=\"selected\"\n                   style=\"cursor:pointer;width:15px;height:15px\">\n          </td>\n          <td style=\"padding:8px;font-family:monospace;font-size:12px;color:#80cbc4\">{{ p.mac }}</td>\n          <td style=\"padding:8px;text-align:right\">{{ p.rssi }} dBm</td>\n          <td style=\"padding:8px;text-align:right\">{{ Number(p.dist_m).toFixed(1) }} m</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() { return { selected: [] } },\n  computed: {\n    peers() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.peers))\n        ? this.msg.payload.peers : []\n    },\n    allSelected: {\n      get() { return this.peers.length > 0 && this.selected.length === this.peers.length },\n      set(val) { this.selected = val ? this.peers.map(p => p.mac) : [] }\n    }\n  },\n  watch: {\n    peers(newList) {\n      const macs = new Set(newList.map(p => p.mac))\n      this.selected = this.selected.filter(mac => macs.has(mac))\n    }\n  },\n  methods: {\n    trackSelected() {\n      if (this.selected.length) this.send({ payload: this.selected })\n    }\n  }\n}\n</script>",
+        "storeOutMessages": false,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 590,
+        "y": 40,
+        "wires": [
+            [
+                "espnow_set_tracked_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_set_tracked_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Set Tracked MACs",
+        "func": "// [].concat() safely handles plain arrays, proxies, and single strings\nvar macs = [].concat(msg.payload || []).filter(function(m) {\n    return typeof m === \"string\" && m.length > 0;\n});\nflow.set(\"espnow_tracked_macs\", macs);\n\nvar disc = flow.get(\"espnow_discovered\") || {};\nvar devices = macs.map(function(mac) { return disc[mac]; }).filter(Boolean);\n\n// Output 0 → tracking indicator\n// Output 1 → filter fn (seed the chart immediately with current peer data)\nvar seedMsg = (macs.length > 0)\n    ? { payload: { peers: devices } }\n    : null;\n\nnode.send([\n    { payload: { tracking: macs.length > 0, devices: devices } },\n    seedMsg\n]);\nreturn null;",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 810,
+        "y": 60,
+        "wires": [
+            [
+                "espnow_tracking_tpl"
+            ],
+            [
+                "espnow_filter_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_tracking_tpl",
+        "type": "ui-template",
+        "z": "espnow_flow",
+        "group": "espnow_grp_track",
+        "name": "ESP-NOW Status",
+        "order": 1,
+        "width": "12",
+        "height": 2,
+        "format": "<template>\n  <div style=\"padding:6px 12px\">\n    <div v-if=\"!msg || !msg.payload || !msg.payload.tracking\"\n         style=\"display:flex;align-items:center;gap:8px\">\n      <div style=\"width:10px;height:10px;border-radius:50%;background:#546e7a;flex-shrink:0\"></div>\n      <span style=\"color:#78909c;font-size:13px\">Not Tracking</span>\n    </div>\n    <div v-else>\n      <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:4px\">\n        <div style=\"width:10px;height:10px;border-radius:50%;background:#00b0ff;\n                    flex-shrink:0;animation:enpulse 1.5s ease-in-out infinite\"></div>\n        <span style=\"color:#00b0ff;font-size:13px;font-weight:bold\">\n          Tracking {{ msg.payload.devices.length }} peer{{ msg.payload.devices.length !== 1 ? 's' : '' }}\n        </span>\n      </div>\n      <div v-for=\"(d, i) in msg.payload.devices\" :key=\"i\"\n           style=\"padding:1px 0 1px 18px;font-size:11px;color:#90a4ae;font-family:monospace\">\n        {{ d.mac }}&nbsp;&nbsp;—&nbsp;&nbsp;{{ d.dist_m }} m / {{ d.rssi }} dBm\n      </div>\n    </div>\n  </div>\n  <style scoped>\n    @keyframes enpulse { 0%,100%{opacity:1} 50%{opacity:0.3} }\n  </style>\n</template>",
+        "storeOutMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "x": 770,
+        "y": 140,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "espnow_filter_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Filter Tracked Peers",
+        "func": "var tracked = flow.get('espnow_tracked_macs') || [];\nif (tracked.length === 0) return null;\nvar peers = (msg.payload && Array.isArray(msg.payload.peers))\n            ? msg.payload.peers : [];\nvar msgs = [];\npeers.forEach(function(p) {\n    if (tracked.indexOf(p.mac) >= 0) {\n        msgs.push({ payload: parseFloat(p.dist_m) || 0,\n                    topic: p.mac, _label: p.mac });\n    }\n});\nreturn msgs.length > 0 ? [msgs] : null;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 180,
+        "y": 300,
+        "wires": [
+            [
+                "espnow_kalman_fn"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_kalman_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Kalman Filter Distance",
+        "func": "var Q = 0.1;\nvar R = 2.0;\nvar mac = msg.topic;\nif (!mac) return msg;\nvar raw    = msg.payload;\nvar states = flow.get('espnow_kalman_states') || {};\nvar s      = states[mac] || { x: raw, p: 1.0 };\nvar xPred  = s.x;\nvar pPred  = s.p + Q;\nvar K      = pPred / (pPred + R);\nvar xNew   = xPred + K * (raw - xPred);\nvar pNew   = (1 - K) * pPred;\nstates[mac] = { x: xNew, p: pNew };\nflow.set('espnow_kalman_states', states);\nmsg.payload = Math.round(xNew * 10) / 10;\nif (msg._label) msg.topic = msg._label;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 280,
+        "wires": [
+            [
+                "espnow_dist_chart"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_dist_chart",
+        "type": "ui-chart",
+        "z": "espnow_flow",
+        "group": "espnow_grp_track",
+        "name": "ESP-NOW Distance Over Time",
+        "label": "ESP-NOW Distance (m)",
+        "order": 2,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisProperty": null,
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "Distance (m)",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": 1,
+        "removeOlderUnit": "3600",
+        "removeOlderPoints": "50",
+        "colors": [
+            "#00b0ff",
+            "#FF0000",
+            "#FF7F0E",
+            "#2CA02C",
+            "#A347E1",
+            "#D62728",
+            "#FF9896",
+            "#9467BD",
+            "#C5B0D5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 12,
+        "height": 4,
+        "className": "",
+        "interpolation": "linear",
+        "x": 670,
+        "y": 200,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "espnow_stop_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Stop Tracking",
+        "func": "flow.set(\"espnow_tracked_macs\", []);\nnode.send([\n    { payload: { tracking: false, devices: [] } },\n    { payload: [], action: \"replace\" }\n]);\nreturn null;",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 120,
+        "wires": [
+            [
+                "espnow_tracking_tpl"
+            ],
+            [
+                "espnow_dist_chart"
+            ]
+        ]
+    },
+    {
+        "id": "espnow_reset_fn",
+        "type": "function",
+        "z": "espnow_flow",
+        "name": "Reset Chart Action",
+        "func": "flow.set('espnow_kalman_states', {});\nmsg.payload = [];\nmsg.action = 'replace';\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 160,
+        "wires": [
+            [
+                "espnow_dist_chart"
+            ]
+        ]
+    }
+]

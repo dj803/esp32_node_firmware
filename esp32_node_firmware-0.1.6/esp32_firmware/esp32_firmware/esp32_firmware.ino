@@ -69,6 +69,7 @@
 #include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
+#include "espnow_ranging.h"  // MUST come after mqtt_client.h — uses mqttPublish/mqttConnected
 #include "rfid.h"          // MUST come after mqtt_client.h AND ws2812.h
 #ifdef BLE_ENABLED
 #include "ble.h"           // MUST come last — uses mqttPublish from mqtt_client.h
@@ -550,6 +551,11 @@ void loop() {
     // or immediately if an MQTT ota_check command was received.
     // otaLoop() returns quickly if the interval hasn't elapsed.
     otaLoop();
+
+    // ── ESP-NOW ranging ───────────────────────────────────────────────────────
+    // Broadcasts a periodic ranging beacon and publishes peer RSSI/distance to
+    // MQTT topic .../espnow every ESPNOW_MQTT_PUBLISH_MS.
+    espnowRangingLoop();
 
 #ifdef RFID_ENABLED
     rfidLoop();             // Poll for RFID card scans; publishes UID to .../telemetry

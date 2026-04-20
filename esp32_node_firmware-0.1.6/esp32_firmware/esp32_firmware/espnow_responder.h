@@ -9,6 +9,11 @@
 #include "app_config.h"   // gAppConfig (ota_json_url) + AppConfigStore::save()
 #include "led.h"
 
+// Forward declaration — espnow_ranging.h is included AFTER mqtt_client.h in the
+// .ino file (it depends on mqttPublish). The dispatcher calls this function for
+// every received frame so ranging works regardless of message type.
+void espnowRangingObserve(const uint8_t* mac6, int8_t rssi);
+
 // =============================================================================
 // espnow_responder.h  —  Serve credential bundles to bootstrapping siblings
 //
@@ -462,6 +467,15 @@ bool espnowGetSiblingBroker(char* hostOut, size_t hostOutLen, uint16_t* portOut)
 // Combined receive dispatcher (used in OPERATIONAL mode)
 static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
     if (len < 2) return;
+
+    // ── Passive RSSI observation for all frames ───────────────────────────────
+    // espnowRangingObserve() is defined in espnow_ranging.h (included after
+    // mqtt_client.h in the .ino). The forward declaration at the top of this
+    // file lets us call it here without a circular include dependency.
+    // rx_ctrl->rssi is the per-packet RSSI in dBm, available in all ESP-IDF versions.
+    // Cast to int8_t — the field is signed but typed as int in some SDK headers.
+    espnowRangingObserve(recvInfo->src_addr, (int8_t)recvInfo->rx_ctrl->rssi);
+
     switch (data[0]) {
         case ESPNOW_MSG_CREDENTIAL_REQ:
             onEspNowRequest(recvInfo, data, len);
@@ -480,6 +494,10 @@ static void espnowReceiveDispatch(const esp_now_recv_info_t* recvInfo, const uin
             break;
         case ESPNOW_MSG_BROKER_RESP:
             onEspNowBrokerResponse(recvInfo, data, len);
+            break;
+        case ESPNOW_MSG_RANGING_BEACON:
+            // Ranging beacon — RSSI already recorded by espnowRangingObserve() above.
+            // No additional action needed; the 2-byte payload carries no data.
             break;
 #ifdef SIBLING_PRIMARY_SELECTION
         case ESPNOW_MSG_HEALTH_QUERY:
