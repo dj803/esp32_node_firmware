@@ -462,7 +462,7 @@ static void onMqttConnect(bool sessionPresent) {
     // QoS 2 = "exactly once" delivery (used for credential rotation to prevent double-apply)
     _mqttClient.subscribe(mqttTopic("cmd").c_str(),               1);   // General commands
     _mqttClient.subscribe(mqttTopic("cmd/cred_rotate").c_str(),   2);   // Device-specific rotation
-    _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),     1);
+    _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),     0);   // QoS 0 — OTA reboots before PUBACK; re-delivery would trigger redundant check
     _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(),   1);   // Start HTTP settings portal on LAN IP
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
     _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
