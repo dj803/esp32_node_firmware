@@ -432,6 +432,11 @@ static void onMqttMessage(char* topic, char* payload,
             if (count > 0) bleSetTrackedMacs(macPtrs, count);
         }
 #endif
+    } else if (t == mqttTopic("cmd/restart")) {
+        Serial.println("[MQTT] Restart command received — restarting in 100 ms");
+        mqttPublishStatus("restarting");
+        delay(100);
+        ESP.restart();
     }
 }
 
@@ -468,6 +473,7 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/ble/clear").c_str(),     1);   // BLE: clear tracked beacon
     _mqttClient.subscribe(mqttTopic("cmd/ble/list").c_str(),      1);   // BLE: re-publish last results
 #endif
+    _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),      1);   // Remote restart
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
