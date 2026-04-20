@@ -51,6 +51,23 @@ static uint32_t _lastOtaCheck = 0;     // millis() timestamp of last check
 static bool     _otaForced    = false; // True when MQTT has requested an immediate check
 
 
+// ── semverIsNewer ─────────────────────────────────────────────────────────────
+// Returns true if `candidate` is strictly newer than `installed`.
+// Parses MAJOR.MINOR.PATCH numerically so "0.2.15" > "0.2.7" correctly.
+// ESP32OTAPull uses String::compareTo() which is lexicographic and breaks on
+// double-digit patch/minor numbers — we bypass it by always passing "0.0.0"
+// as the installed version and doing our own comparison here.
+static bool semverIsNewer(const char* installed, const char* candidate) {
+    int iMaj = 0, iMin = 0, iPat = 0;
+    int cMaj = 0, cMin = 0, cPat = 0;
+    sscanf(installed,  "%d.%d.%d", &iMaj, &iMin, &iPat);
+    sscanf(candidate,  "%d.%d.%d", &cMaj, &cMin, &cPat);
+    if (cMaj != iMaj) return cMaj > iMaj;
+    if (cMin != iMin) return cMin > iMin;
+    return cPat > iPat;
+}
+
+
 // ── otaCheckNow ───────────────────────────────────────────────────────────────
 // The main OTA entry point. Fetches the JSON filter file, compares the version,
 // and flashes the new firmware if a newer version is available.
@@ -74,15 +91,28 @@ void otaCheckNow() {
     });
 
     // ── Pass 1: check only — do not flash yet ────────────────────────────────
-    // DONT_DO_UPDATE lets us learn the candidate version string via GetVersion()
-    // so we can publish the ota_downloading MQTT event before the flash write
-    // blocks the main task for ~30–60 seconds.
+    // We pass "0.0.0" as the installed version so the library always fetches
+    // the JSON and returns UPDATE_AVAILABLE (its lexicographic comparator breaks
+    // on double-digit patch numbers, e.g. "0.2.7" > "0.2.15"). We then apply
+    // our own numeric semver comparison via semverIsNewer().
     int ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
-                                    FIRMWARE_VERSION,
+                                    "0.0.0",
                                     ESP32OTAPull::DONT_DO_UPDATE);
 
+    if (ret == ESP32OTAPull::UPDATE_AVAILABLE) {
+        // JSON fetched — now apply our own semver check
+        String candidateVer = ota.GetVersion();
+        if (!semverIsNewer(FIRMWARE_VERSION, candidateVer.c_str())) {
+            responderSetHealthFlag(2, true);
+            Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
+                          candidateVer.c_str());
+            return;
+        }
+        // Fall through — update is genuinely available
+    }
+
     if (ret == ESP32OTAPull::NO_UPDATE_AVAILABLE) {
-        // JSON fetched successfully — GitHub is reachable
+        // JSON fetched successfully — GitHub is reachable (no profile matched)
         responderSetHealthFlag(2, true);
         Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
                       ota.GetVersion().c_str());
@@ -159,7 +189,7 @@ void otaCheckNow() {
     ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
     { LedEvent e{}; e.type = LedEventType::OTA_START; ws2812PostEvent(e); }
     ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
-                                FIRMWARE_VERSION,
+                                "0.0.0",
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);
 
     if (ret == ESP32OTAPull::UPDATE_OK) {
