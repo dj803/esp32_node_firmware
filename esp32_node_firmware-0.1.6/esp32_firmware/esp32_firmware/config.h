@@ -337,9 +337,10 @@
 #define BLE_SCAN_DURATION_S        5      // Seconds per on-demand full scan (cmd/ble/scan)
 #define BLE_TRACK_SCAN_DURATION_S  2      // Seconds per repeated tracking scan
 #define BLE_MAX_BEACONS           32      // Max beacon entries in discovered list
+#define BLE_MAX_TRACKED            8      // Max simultaneously tracked beacons
 #define BLE_DEFAULT_TX_POWER     -59      // dBm at 1 m when iBeacon data is absent
 #define BLE_PATH_LOSS_N          2.0f     // Path-loss exponent (2.0 = free space)
 #define BLE_MQTT_PUBLISH_MS    2000UL     // Publish tracked beacon RSSI to MQTT every 2 s
 #define BLE_SERIAL_PRINT_MS   10000UL     // Serial print tracked beacon every 10 s
-#define BLE_NVS_NAMESPACE     "esp32ble"  // NVS namespace — persists tracked MAC
-#define BLE_NVS_KEY_TRACKED   "tracked_mac"
+#define BLE_NVS_NAMESPACE     "esp32ble"  // NVS namespace — persists tracked MACs
+#define BLE_NVS_KEY_TRACKED   "tracked_mac"  // CSV of up to BLE_MAX_TRACKED MACs

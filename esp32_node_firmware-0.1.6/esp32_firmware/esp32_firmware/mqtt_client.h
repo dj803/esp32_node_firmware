@@ -35,7 +35,7 @@ void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 // ble.h is included AFTER mqtt_client.h in the main sketch.
 #ifdef BLE_ENABLED
 void bleTriggerScan();
-void bleSetTrackedMac(const char* mac);
+void bleSetTrackedMacs(const char** macs, uint8_t count);
 void bleClearTracked();
 void blePublishList();
 #endif
@@ -413,8 +413,23 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd/ble/track")) {
         JsonDocument doc;
         if (deserializeJson(doc, payload, len) == DeserializationError::Ok) {
-            const char* mac = doc["mac"];
-            if (mac && strlen(mac) == 17) bleSetTrackedMac(mac);
+            const char* macPtrs[BLE_MAX_TRACKED];
+            uint8_t count = 0;
+            JsonArray macsArr = doc["macs"].as<JsonArray>();
+            if (macsArr) {
+                // {"macs": ["AA:BB:...", "CC:DD:..."]}
+                for (JsonVariant v : macsArr) {
+                    const char* m = v.as<const char*>();
+                    if (m && strlen(m) == 17 && count < BLE_MAX_TRACKED)
+                        macPtrs[count++] = m;
+                }
+            } else {
+                // Backward compat: {"mac": "AA:BB:..."}
+                const char* m = doc["mac"];
+                if (m && strlen(m) == 17)
+                    macPtrs[count++] = m;
+            }
+            if (count > 0) bleSetTrackedMacs(macPtrs, count);
         }
 #endif
     }

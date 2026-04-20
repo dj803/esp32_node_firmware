@@ -67,12 +67,13 @@ struct BleBeacon {
 static BleBeacon         _bleBeacons[BLE_MAX_BEACONS];
 static uint8_t           _bleBeaconCount     = 0;
 
-// Tracked beacon — persisted in NVS
-static char              _bleTrackedMac[18]  = {0};  // empty = none
-static int8_t            _bleTrackedRssi     = 0;
-static float             _bleTrackedDistM    = 0.0f;
-static char              _bleTrackedName[32] = {0};
-static uint32_t          _bleTrackedSeenMs   = 0;    // millis() of last sighting; 0 = never
+// Tracked beacons — up to BLE_MAX_TRACKED, persisted in NVS as CSV
+static uint8_t           _bleTrackedCount               = 0;
+static char              _bleTrackedMac[BLE_MAX_TRACKED][18]  = {};
+static int8_t            _bleTrackedRssi[BLE_MAX_TRACKED]     = {};
+static float             _bleTrackedDistM[BLE_MAX_TRACKED]    = {};
+static char              _bleTrackedName[BLE_MAX_TRACKED][32] = {};
+static uint32_t          _bleTrackedSeenMs[BLE_MAX_TRACKED]   = {};  // 0 = never seen
 
 // Scan control flags — written from BLE stack task, read from loop task
 static volatile bool     _bleScanInProgress  = false;
@@ -83,7 +84,8 @@ static volatile bool     _bleScanRequested   = false;
 static volatile bool     _bleClearPending    = false;
 static volatile bool     _bleListPending     = false;
 static volatile bool     _bleTrackPending    = false;
-static char              _blePendingMac[18]  = {0};
+static char              _blePendingMacs[BLE_MAX_TRACKED][18] = {};
+static uint8_t           _blePendingMacCount = 0;
 
 // Timers
 static uint32_t          _bleMqttPublishMs   = 0;
@@ -104,16 +106,34 @@ static float _bleCalcDist(int8_t rssi, int8_t txPower) {
 static void _bleNvsLoad() {
     Preferences p;
     p.begin(BLE_NVS_NAMESPACE, /*readOnly=*/true);
-    String mac = p.getString(BLE_NVS_KEY_TRACKED, "");
+    String csv = p.getString(BLE_NVS_KEY_TRACKED, "");
     p.end();
-    if (mac.length() == 17)
-        mac.toCharArray(_bleTrackedMac, sizeof(_bleTrackedMac));
+    _bleTrackedCount = 0;
+    if (csv.length() == 0) return;
+    // Parse comma-separated list of MACs
+    int start = 0;
+    while (start < (int)csv.length() && _bleTrackedCount < BLE_MAX_TRACKED) {
+        int comma = csv.indexOf(',', start);
+        String mac = (comma < 0) ? csv.substring(start) : csv.substring(start, comma);
+        mac.trim();
+        if (mac.length() == 17) {
+            mac.toCharArray(_bleTrackedMac[_bleTrackedCount], 18);
+            _bleTrackedCount++;
+        }
+        if (comma < 0) break;
+        start = comma + 1;
+    }
 }
 
-static void _bleNvsSave(const char* mac) {
+static void _bleNvsSave() {
+    String csv = "";
+    for (uint8_t i = 0; i < _bleTrackedCount; i++) {
+        if (i > 0) csv += ",";
+        csv += _bleTrackedMac[i];
+    }
     Preferences p;
     p.begin(BLE_NVS_NAMESPACE, /*readOnly=*/false);
-    p.putString(BLE_NVS_KEY_TRACKED, mac);
+    p.putString(BLE_NVS_KEY_TRACKED, csv);
     p.end();
 }
 
@@ -174,17 +194,19 @@ class _BleScanCb : public NimBLEScanCallbacks {
 
         float distM = _bleCalcDist(rssi, txPower);
 
-        // ── Always update tracked beacon cache, even when the list is full ────
+        // ── Update all tracked beacon caches, even when the list is full ────
         // BUG FIX: previously this was inside the count-guard, so once 32 unique
         // MACs filled _bleBeacons[], the tracked beacon's seen-time never updated
         // and tracking silently stopped until reset.
-        if (_bleTrackedMac[0] != '\0'
-            && strcasecmp(mac_str.c_str(), _bleTrackedMac) == 0) {
-            _bleTrackedRssi  = rssi;
-            _bleTrackedDistM = distM;
-            strncpy(_bleTrackedName, name, sizeof(_bleTrackedName) - 1);
-            _bleTrackedName[sizeof(_bleTrackedName) - 1] = '\0';
-            _bleTrackedSeenMs = millis();
+        for (uint8_t ti = 0; ti < _bleTrackedCount; ti++) {
+            if (_bleTrackedMac[ti][0] != '\0'
+                && strcasecmp(mac_str.c_str(), _bleTrackedMac[ti]) == 0) {
+                _bleTrackedRssi[ti]  = rssi;
+                _bleTrackedDistM[ti] = distM;
+                strncpy(_bleTrackedName[ti], name, sizeof(_bleTrackedName[ti]) - 1);
+                _bleTrackedName[ti][sizeof(_bleTrackedName[ti]) - 1] = '\0';
+                _bleTrackedSeenMs[ti] = millis();
+            }
         }
 
         // ── Append to beacon list (best-effort, silently drops when full) ─────
@@ -282,19 +304,22 @@ static void _blePublishResults() {
 }
 
 static void _blePublishTracked() {
-    // Publish tracked beacon to telemetry/ble — skip if never seen or stale (> 10 s)
-    if (_bleTrackedMac[0] == '\0' || _bleTrackedSeenMs == 0) return;
-    if (millis() - _bleTrackedSeenMs > 10000UL) return;
+    // Publish one MQTT message per tracked beacon — skip stale (> 10 s) or unseen
+    uint32_t now = millis();
+    for (uint8_t i = 0; i < _bleTrackedCount; i++) {
+        if (_bleTrackedMac[i][0] == '\0' || _bleTrackedSeenMs[i] == 0) continue;
+        if (now - _bleTrackedSeenMs[i] > 10000UL) continue;
 
-    JsonDocument doc;
-    doc["mac"]    = _bleTrackedMac;
-    doc["rssi"]   = _bleTrackedRssi;
-    doc["dist_m"] = serialized(String(_bleTrackedDistM, 1));
-    doc["name"]   = _bleTrackedName;
+        JsonDocument doc;
+        doc["mac"]    = _bleTrackedMac[i];
+        doc["rssi"]   = _bleTrackedRssi[i];
+        doc["dist_m"] = serialized(String(_bleTrackedDistM[i], 1));
+        doc["name"]   = _bleTrackedName[i];
 
-    String payload;
-    serializeJson(doc, payload);
-    mqttPublish("ble", payload);
+        String payload;
+        serializeJson(doc, payload);
+        mqttPublish("ble", payload);
+    }
 }
 
 
@@ -306,9 +331,13 @@ inline void bleTriggerScan() {
     _bleScanRequested = true;
 }
 
-inline void bleSetTrackedMac(const char* mac) {
-    strncpy(_blePendingMac, mac, 17);
-    _blePendingMac[17] = '\0';
+inline void bleSetTrackedMacs(const char** macs, uint8_t count) {
+    uint8_t n = (count < BLE_MAX_TRACKED) ? count : BLE_MAX_TRACKED;
+    for (uint8_t i = 0; i < n; i++) {
+        strncpy(_blePendingMacs[i], macs[i], 17);
+        _blePendingMacs[i][17] = '\0';
+    }
+    _blePendingMacCount = n;
     _bleTrackPending = true;
 }
 
@@ -341,10 +370,13 @@ inline void bleInit() {
     pScan->setInterval(100);      // ms
     pScan->setWindow(99);         // ms
 
-    if (_bleTrackedMac[0] != '\0')
-        Serial.printf("[BLE] scanner ready (NimBLE) — tracking %s\n", _bleTrackedMac);
-    else
+    if (_bleTrackedCount > 0) {
+        Serial.printf("[BLE] scanner ready (NimBLE) — tracking %u beacon(s)\n", _bleTrackedCount);
+        for (uint8_t i = 0; i < _bleTrackedCount; i++)
+            Serial.printf("[BLE]   %s\n", _bleTrackedMac[i]);
+    } else {
         Serial.println("[BLE] scanner ready (NimBLE) — no beacon tracked");
+    }
 }
 
 
@@ -357,18 +389,22 @@ inline void bleLoop() {
     // ── Consume deferred MQTT commands (written by lwIP task) ─────────────────
     if (_bleTrackPending) {
         _bleTrackPending = false;
-        strncpy(_bleTrackedMac, _blePendingMac, 17);
-        _bleTrackedMac[17] = '\0';
-        _bleTrackedSeenMs  = 0;   // reset stale guard for new target
-        _bleNvsSave(_bleTrackedMac);
-        Serial.printf("[BLE] now tracking %s\n", _bleTrackedMac);
+        _bleTrackedCount = _blePendingMacCount;
+        for (uint8_t i = 0; i < _bleTrackedCount; i++) {
+            strncpy(_bleTrackedMac[i], _blePendingMacs[i], 17);
+            _bleTrackedMac[i][17] = '\0';
+            _bleTrackedSeenMs[i]  = 0;
+            Serial.printf("[BLE] now tracking %s\n", _bleTrackedMac[i]);
+        }
+        _bleNvsSave();
     }
 
     if (_bleClearPending) {
-        _bleClearPending       = false;
-        _bleTrackedMac[0]      = '\0';
-        _bleTrackedSeenMs      = 0;
-        _bleLastTrackScanMs    = 0;
+        _bleClearPending    = false;
+        _bleTrackedCount    = 0;
+        memset(_bleTrackedMac,     0, sizeof(_bleTrackedMac));
+        memset(_bleTrackedSeenMs,  0, sizeof(_bleTrackedSeenMs));
+        _bleLastTrackScanMs = 0;
         _bleNvsClear();
         Serial.println("[BLE] tracking cleared");
     }
@@ -386,7 +422,7 @@ inline void bleLoop() {
     }
 
     // ── Repeated tracking scan — fires every BLE_MQTT_PUBLISH_MS when tracking ─
-    bool trackingActive = (_bleTrackedMac[0] != '\0');
+    bool trackingActive = (_bleTrackedCount > 0);
     if (trackingActive && !_bleScanInProgress
         && (now - _bleLastTrackScanMs >= BLE_MQTT_PUBLISH_MS)) {
         _bleLastTrackScanMs = now;
@@ -396,6 +432,8 @@ inline void bleLoop() {
     // ── Handle scan completion ────────────────────────────────────────────────
     if (_bleScanDone) {
         _bleScanDone = false;
+        _bleLastTrackScanMs = now;  // defer next tracking scan — prevents it firing
+                                    // immediately after a full 5 s scan completes
         _blePublishResults();   // always update Node-RED beacon list
     }
 
@@ -408,12 +446,14 @@ inline void bleLoop() {
     // ── Serial print every 10 s ───────────────────────────────────────────────
     if (trackingActive && (now - _bleSerialPrintMs >= BLE_SERIAL_PRINT_MS)) {
         _bleSerialPrintMs = now;
-        if (_bleTrackedSeenMs > 0 && (now - _bleTrackedSeenMs) < 10000UL) {
-            Serial.printf("[BLE] %s  RSSI=%d dBm  dist=%.1f m  name=%s\n",
-                          _bleTrackedMac, _bleTrackedRssi,
-                          _bleTrackedDistM, _bleTrackedName);
-        } else {
-            Serial.printf("[BLE] %s  — not seen in last 10 s\n", _bleTrackedMac);
+        for (uint8_t i = 0; i < _bleTrackedCount; i++) {
+            if (_bleTrackedSeenMs[i] > 0 && (now - _bleTrackedSeenMs[i]) < 10000UL) {
+                Serial.printf("[BLE] %s  RSSI=%d dBm  dist=%.1f m  name=%s\n",
+                              _bleTrackedMac[i], _bleTrackedRssi[i],
+                              _bleTrackedDistM[i], _bleTrackedName[i]);
+            } else {
+                Serial.printf("[BLE] %s  — not seen in last 10 s\n", _bleTrackedMac[i]);
+            }
         }
     }
 }
