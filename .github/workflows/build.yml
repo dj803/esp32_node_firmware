@@ -118,10 +118,13 @@ jobs:
         # NimBLE is intentionally NOT installed here — the esp32:esp32@3.1.1
         # core already bundles NimBLE-Arduino; adding it separately would
         # produce a duplicate-symbol conflict.
+        # MFRC522v2 registry entries are unstable — clone from GitHub instead.
         run: |
           arduino-cli lib update-index
-          arduino-cli lib install "ArduinoJson@7" "MFRC522v2"
+          arduino-cli lib install "ArduinoJson@7"
           mkdir -p ~/Arduino/libraries
+          git clone --depth 1 https://github.com/OSSLibraries/Arduino_MFRC522v2.git \
+            ~/Arduino/libraries/MFRC522v2
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
             ~/Arduino/libraries/AsyncMqttClient
           git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
