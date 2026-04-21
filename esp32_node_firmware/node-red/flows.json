@@ -1991,6 +1991,29 @@
     "wires": []
   },
   {
+    "id": "ver_inject",
+    "type": "inject",
+    "z": "0cc8e394107eb034",
+    "name": "Trigger version badges",
+    "props": [{"p": "payload"}],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.3,
+    "topic": "",
+    "payload": "true",
+    "payloadType": "bool",
+    "x": 160,
+    "y": 700,
+    "wires": [
+      [
+        "hb_ver_tpl",
+        "espnow_ver_tpl",
+        "ble_ver_tpl"
+      ]
+    ]
+  },
+  {
     "id": "hb_ver_group",
     "type": "ui-group",
     "name": "Flow Version",
@@ -2010,8 +2033,8 @@
     "width": "12",
     "height": 1,
     "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
-    "storeOutMessages": false,
-    "resendOnRefresh": false,
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
     "templateScope": "local",
     "x": 600,
     "y": 700,
@@ -2037,8 +2060,8 @@
     "width": "12",
     "height": 1,
     "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
-    "storeOutMessages": false,
-    "resendOnRefresh": false,
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
     "templateScope": "local",
     "x": 600,
     "y": 220,
@@ -2064,8 +2087,8 @@
     "width": "12",
     "height": 1,
     "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
-    "storeOutMessages": false,
-    "resendOnRefresh": false,
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
     "templateScope": "local",
     "x": 600,
     "y": 460,
