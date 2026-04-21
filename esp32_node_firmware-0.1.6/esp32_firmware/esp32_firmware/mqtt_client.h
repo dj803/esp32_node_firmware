@@ -61,12 +61,21 @@ void blePublishList();
 // =============================================================================
 
 // ── Module-level state ────────────────────────────────────────────────────────
-static AsyncMqttClient  _mqttClient;                      // The MQTT client instance
-static TimerHandle_t    _mqttReconnectTimer = nullptr;    // FreeRTOS timer for reconnect delay
-static uint32_t         _mqttReconnectDelay = 1000;       // Current reconnect delay (ms); grows on failure
-static int              _mqttReconnectCount = 0;          // Consecutive failure count; reset on connect
-static bool             _mqttNeedsRediscovery = false;    // Set at MQTT_REDISCOVERY_THRESHOLD; cleared by loop()
-static uint32_t         _mqttConnectStartMs = 0;          // millis() when connect() was last called; 0 = idle
+// CONCURRENCY AUDIT (mqtt_client.h):
+//   onMqttDisconnect / onMqttConnect run in the async_tcp task (Core 0 at high priority).
+//   mqttNeedsRediscovery() / mqttIsHung() / mqttHeartbeat() are called from loop() (Core 0,
+//   normal priority). Because both contexts run on Core 0, there is no true dual-core race,
+//   but the compiler may still cache values across the task-switch boundary.
+//   _mqttNeedsRediscovery is marked volatile so the compiler re-reads it on every check in
+//   loop() rather than hoisting it into a register that the disconnect callback cannot update.
+
+static AsyncMqttClient  _mqttClient;                         // The MQTT client instance
+static TimerHandle_t    _mqttReconnectTimer = nullptr;       // FreeRTOS timer for reconnect delay
+static uint32_t         _mqttReconnectDelay = 1000;          // Current reconnect delay (ms); grows on failure
+static int              _mqttReconnectCount = 0;             // Consecutive failure count; reset on connect
+static volatile bool    _mqttNeedsRediscovery = false;       // Set in disconnect callback; cleared by loop()
+static uint32_t         _mqttConnectStartMs = 0;             // millis() when connect() was last called; 0 = idle
+static uint32_t         _mqttRestartAtMs    = 0;             // Non-zero: restart device when millis() >= this value
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
 static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid
 static String           _mqttHost;                        // kept alive so setServer()'s raw ptr stays valid
@@ -79,20 +88,41 @@ static CredentialBundle _mqttBundle;                      // Copy of credentials
 // means the topic hierarchy can be changed via the settings portal without reflashing.
 // _deviceId is the device UUID, set once in mqttBegin() and never changes.
 
+// Sanitise one MQTT topic segment read from NVS.
+// MQTT wildcards ('/', '+', '#') in a segment would silently create an invalid or
+// wildcard topic path — e.g. a stored site value of "JHB/Dev" would split the topic
+// mid-hierarchy. Null bytes and control chars are also replaced.
+// Replace each offending character with '_' in-place.
+static String mqttSanitizeSegment(const char* seg) {
+    String s(seg);
+    for (unsigned int i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '/' || c == '+' || c == '#' || c == '\0' || (uint8_t)c < 0x20) {
+            s[i] = '_';
+        }
+    }
+    return s;
+}
+
 // Build a device-specific topic:  Enterprise/Site/Area/Line/Cell/DeviceType/DeviceId/prefix
 static String mqttTopic(const char* prefix) {
     // All six hierarchy segments come from gAppConfig (NVS-backed, portal-editable).
+    // Each segment is sanitised to strip MQTT wildcards before concatenation.
     // The DeviceId segment is the persistent UUID — never changes for this device.
-    return String(gAppConfig.mqtt_enterprise) + "/" + gAppConfig.mqtt_site    + "/" +
-           gAppConfig.mqtt_area               + "/" + gAppConfig.mqtt_line    + "/" +
-           gAppConfig.mqtt_cell               + "/" + gAppConfig.mqtt_device_type + "/" +
-           _deviceId                          + "/" + prefix;
+    return mqttSanitizeSegment(gAppConfig.mqtt_enterprise) + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_site)       + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_area)       + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_line)       + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_cell)       + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_device_type) + "/" +
+           _deviceId                                        + "/" + prefix;
 }
 
 // Build the site-wide broadcast rotation topic: Enterprise/Site/broadcast/cred_rotate
 // All nodes subscribe to this so a single publish can rotate credentials on every device.
 static String mqttBroadcastRotateTopic() {
-    return String(gAppConfig.mqtt_enterprise) + "/" + gAppConfig.mqtt_site + "/broadcast/cred_rotate";
+    return mqttSanitizeSegment(gAppConfig.mqtt_enterprise) + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_site) + "/broadcast/cred_rotate";
 }
 
 
@@ -348,11 +378,13 @@ static void handleCredRotation(const char* payload, size_t len) {
         return;
     }
 
-    // Announce success before restarting so Node-RED can confirm the rotation
-    Serial.println("[MQTT] Credentials rotated successfully — restarting");
+    // Announce success. Schedule a deferred restart so the MQTT publish has
+    // time to be sent without blocking inside the message callback.
+    // delay() here would stall AsyncMqttClient's keepalive loop and may cause
+    // it to drop the connection before the PUBACK is received.
+    Serial.println("[MQTT] Credentials rotated successfully — restarting in 600 ms");
     mqttPublishStatus("cred_rotated");
-    delay(500);         // Allow the MQTT publish to be sent before the connection drops
-    ESP.restart();      // Restart to connect with the new credentials
+    _mqttRestartAtMs = millis() + 600;   // mqttHeartbeat() drives the deferred restart
 }
 
 
@@ -412,7 +444,10 @@ static void onMqttMessage(char* topic, char* payload,
         blePublishList();
     } else if (t == mqttTopic("cmd/ble/track")) {
         JsonDocument doc;
-        if (deserializeJson(doc, payload, len) == DeserializationError::Ok) {
+        DeserializationError jsonErr = deserializeJson(doc, payload, len);
+        if (jsonErr != DeserializationError::Ok) {
+            Serial.printf("[MQTT] cmd/ble/track: JSON parse error — %s\n", jsonErr.c_str());
+        } else {
             const char* macPtrs[BLE_MAX_TRACKED];
             uint8_t count = 0;
             JsonArray macsArr = doc["macs"].as<JsonArray>();
@@ -433,10 +468,12 @@ static void onMqttMessage(char* topic, char* payload,
         }
 #endif
     } else if (t == mqttTopic("cmd/restart")) {
-        Serial.println("[MQTT] Restart command received — restarting in 100 ms");
+        // Deferred restart — publish status then let mqttHeartbeat() fire
+        // ESP.restart() after 300 ms so the MQTT publish drains without
+        // blocking inside this callback.
+        Serial.println("[MQTT] Restart command received — restarting in 300 ms");
         mqttPublishStatus("restarting");
-        delay(100);
-        ESP.restart();
+        _mqttRestartAtMs = millis() + 300;
     }
 }
 
@@ -571,6 +608,15 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     _mqttHost = String(broker.host);        // module-level — outlives this function
     uint16_t port = broker.port;           // TCP port (typically 1883)
 
+    // ── Broker address validation ─────────────────────────────────────────────
+    // Guard against an empty hostname (e.g. stored URL was never set or failed to
+    // parse). Connecting with an empty host silently hangs the async TCP layer.
+    if (_mqttHost.isEmpty() || port == 0) {
+        Serial.printf("[MQTT] mqttBegin aborted — invalid broker address (host='%s' port=%d)\n",
+                      _mqttHost.c_str(), port);
+        return;
+    }
+
     // Log which step found the broker for serial monitor / Node-RED diagnostics
     const char* methodStr =
         broker.method == DiscoveryMethod::MDNS     ? "mDNS"      :
@@ -651,15 +697,15 @@ void mqttReinit(const BrokerResult& broker) {
     if (xTimerIsTimerActive(_mqttReconnectTimer) == pdTRUE) {
         xTimerStop(_mqttReconnectTimer, 0);
     }
-    delay(100);
-    if (WiFi.isConnected()) {
-        _mqttConnectStartMs = millis();   // Start watchdog for the reinit connect attempt
-        _mqttClient.connect();
-    } else {
-        Serial.println("[MQTT] WiFi not ready at mqttReinit — deferring via reconnect timer");
-        xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(500), 0);
-        xTimerStart(_mqttReconnectTimer, 0);
-    }
+    // Use the reconnect timer for the brief post-disconnect gap instead of
+    // delay(100). delay() in a loop() context blocks the ESP32 main loop
+    // needlessly; the timer fires asynchronously in the FreeRTOS scheduler.
+    // 150 ms is enough for async_tcp to fully close the previous connection
+    // before a new connect() is issued. Both WiFi-ready and WiFi-not-ready
+    // paths now flow through the same mqttReconnectTimerCb guard, which
+    // already checks WiFi.isConnected() before calling connect().
+    xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(150), 0);
+    xTimerStart(_mqttReconnectTimer, 0);
 }
 
 
@@ -669,6 +715,16 @@ void mqttReinit(const BrokerResult& broker) {
 // hasn't elapsed yet, so it is cheap to call every loop iteration.
 static uint32_t _lastHeartbeat = 0;
 void mqttHeartbeat() {
+    // ── Deferred restart ──────────────────────────────────────────────────────
+    // Credential rotation and cmd/restart set _mqttRestartAtMs instead of
+    // calling delay()+ESP.restart() inline, so AsyncMqttClient's keepalive
+    // loop is not blocked and the outgoing MQTT publish has time to drain.
+    if (_mqttRestartAtMs > 0 && millis() >= _mqttRestartAtMs) {
+        _mqttRestartAtMs = 0;
+        Serial.println("[MQTT] Deferred restart firing");
+        ESP.restart();
+    }
+
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         mqttPublishStatus("heartbeat");          // Sends {"mac":..., "event":"heartbeat", ...}
         _lastHeartbeat += HEARTBEAT_INTERVAL_MS; // Advance by fixed interval to prevent drift

@@ -1,0 +1,186 @@
+ESP32 Node Firmware — Improvement Plan
+========================================
+Generated: 2026-04-21
+
+
+CONTEXT
+-------
+The firmware (v0.2.17) has grown organically across 16 header-only modules. It works
+well but has accumulated latent bugs that only surface in the field: race conditions on
+reconnect, buffer overruns from malicious provisioning POSTs, and topic injection from
+unsanitised NVS strings. This plan addresses those issues in priority order, with
+safety-critical fixes first.
+
+Each phase is designed to ship as its own tagged release.
+
+
+PHASE 1 — Safety & Input Validation  (CRITICAL)
+-------------------------------------------------
+1.1  ap_portal.h lines 201-235
+     PROBLEM: String::toCharArray() into fixed buffers with no length check on web-form
+              fields. A long SSID (>32 chars) silently truncates without null-terminating,
+              corrupting the adjacent field in CredentialBundle.
+     FIX:     Validate field .length() against destination size before copy.
+              Return HTTP 400 if any field exceeds its buffer limit.
+
+1.2  mqtt_client.h lines 83-89  (mqttTopic / mqttBroadcastRotateTopic)
+     PROBLEM: Topic hierarchy segments (enterprise, site, area, line, cell, device_type)
+              are read from NVS and concatenated into MQTT topic strings without
+              sanitisation. A stored value containing '/', '+', or '#' produces an
+              invalid or wildcard topic that could match unintended subscriptions.
+     FIX:     Add sanitizeTopicSegment() — replace MQTT wildcard chars and control
+              characters with '_'. Apply on every NVS read in mqttTopic().
+
+1.3  mqtt_client.h / ota.h  — URL validation
+     PROBLEM: MQTT broker URL and OTA JSON URL are not validated for scheme or non-empty
+              hostname before use. A blank or malformed URL causes a silent connection
+              failure with no diagnostic.
+     FIX:     Scheme check (mqtt:// or mqtts:// for broker; https:// for OTA) + hostname
+              non-empty guard. Log a clear error and skip connect on failure.
+
+1.4  ap_portal.h line 252  — undocumented delay
+     PROBLEM: delay(2000) after config save is unexplained.
+     FIX:     Add comment: "Allow browser to receive HTTP response before STA mode switch."
+              Delay itself is correct and intentional — keep it.
+
+
+PHASE 2 — Concurrency Correctness
+-----------------------------------
+Audit every static variable written in a callback/ISR context and read in loop().
+Add 'volatile' for single-byte flags; use portENTER_CRITICAL or a FreeRTOS queue
+for multi-byte/compound state.
+
+Known candidates:
+  mqtt_client.h   : _mqttNeedsRediscovery, _siblingBrokerHost
+                    (written in MQTT disconnect callback, read in loop())
+  espnow_responder: rate-limit table entries
+                    (written in ESP-NOW RX callback, read in loop())
+  rfid.h          : _rfidLastUid
+                    (written in IRQ callback, read in loop())
+  ws2812.h        : _ledActiveBrightness
+                    (written from MQTT message callback, read in animation tick)
+
+Deliverable: audit comment block at top of each affected module.
+
+
+PHASE 3 — Non-Blocking Callbacks
+----------------------------------
+  mqtt_client.h line 354:  delay(500) inside handleCredRotation()
+  mqtt_client.h line 438:  delay(100) inside cmd/restart handler
+
+Both stall the AsyncMqttClient keepalive loop. MQTT may drop the connection before the
+restart fires, causing a spurious disconnect event.
+
+FIX: Replace with a deferred-action flag (e.g. _pendingRestart, _pendingRotateRestart)
+     checked and actioned in mqttHeartbeat() / main loop().
+
+
+PHASE 4 — Error Handling Gaps
+-------------------------------
+  espnow_ranging.h line 101:
+      esp_now_send() return value ignored. On failure (peer not registered, channel
+      mismatch) the beacon silently drops. Log on failure to help diagnose ranging issues.
+
+  mqtt_client.h line 415:
+      JSON deserialise fallback is silent. Log err.c_str() so malformed MQTT payloads
+      show up in the serial monitor.
+
+  ota.h:
+      OTA pull failures should log the HTTP status code and reason string, not just
+      "failed".
+
+
+PHASE 5 — Deduplication & Shared Abstractions
+-----------------------------------------------
+Duplication found:                        Extract to:
+-----------------------------------------------------------------------
+LRU peer tracking logic                   peer_tracker.h
+  ble.h lines 73-77                         PeerTracker<N> template with:
+  espnow_ranging.h lines 45-48               observe(mac6, rssi)
+  (~60 lines of duplicated LRU code)         expire(nowMs, staleMs)
+                                             forEach(callback)
+
+MAC -> "XX:XX:XX:XX:XX:XX" string         mac_utils.h
+  espnow_ranging.h line 64                  macToString(mac6, out18)
+  device_id.h line 110
+
+JsonDocument -> String -> mqttPublish()   mqtt_client.h
+  (10+ call sites across modules)           mqttPublishJson(prefix, doc)
+
+Log-distance path loss formula            ranging_math.h
+  ble.h (n=2.0)                             rssiToDistance(rssi, txPower, n)
+  espnow_ranging.h (n=2.5)                  (pure function — no dependencies)
+
+
+PHASE 6 — Module Boundaries
+-----------------------------
+  - Move forward declarations (espnowRangingObserve, otaCheckNow, ws2812PostEvent, etc.)
+    into dedicated *_fwd.h headers so include order in the .ino becomes irrelevant.
+  - Replace module-local _responderActive, _settingsServerRunning, _rfidReady flags
+    with queries on the top-level currentState enum — single source of truth.
+
+
+PHASE 7 — Build & Release Hygiene
+-----------------------------------
+  Version drift guard:
+    CI currently patches FIRMWARE_VERSION in config.h to match the tag. This masks drift
+    rather than catching it. Add a CI assertion step that fails the build if config.h
+    already contains a different non-dev version string.
+
+  NVS wear reduction:
+    settings_manager.h credential rotation — compare-before-write to skip NVS commits
+    when the value hasn't changed (reduces flash wear on flapping networks).
+
+  PlatformIO migration (optional):
+    Codebase already compiles clean under -Wall -Werror. Migrating from Arduino-CLI
+    to PlatformIO enables real unit tests, dependency pinning, and faster CI.
+
+
+PHASE 8 — Testability
+----------------------
+  Extract pure functions to a test/ directory with a minimal Unity or doctest harness
+  runnable on the host (no hardware required):
+    - ranging_math.h::rssiToDistance   (verify known RSSI/distance pairs)
+    - mac_utils.h::macToString         (verify format for all-zero, all-FF, typical)
+    - sanitizeTopicSegment()           (verify wildcard chars are stripped)
+
+  Wire into CI as a separate build job.
+
+
+CRITICAL FILES
+--------------
+  esp32_firmware/esp32_firmware/ap_portal.h       Phase 1
+  esp32_firmware/esp32_firmware/mqtt_client.h     Phase 1, 2, 3, 4, 5
+  esp32_firmware/esp32_firmware/ota.h             Phase 1, 4
+  esp32_firmware/esp32_firmware/espnow_responder.h Phase 2
+  esp32_firmware/esp32_firmware/espnow_ranging.h  Phase 4, 5
+  esp32_firmware/esp32_firmware/ble.h             Phase 5
+  esp32_firmware/esp32_firmware/rfid.h            Phase 2
+  esp32_firmware/esp32_firmware/ws2812.h          Phase 2
+  esp32_firmware/esp32_firmware/device_id.h       Phase 5
+  esp32_firmware/esp32_firmware/settings_manager.h Phase 7
+  esp32_firmware/esp32_firmware/config.h          Phase 7
+  .github/workflows/build.yml                     Phase 7
+  NEW: peer_tracker.h, mac_utils.h, ranging_math.h, *_fwd.h
+
+
+SUGGESTED RELEASE CADENCE
+--------------------------
+  v0.3.0  Phase 1 + 2 + 3   Safety + concurrency (behaviour may shift under load)
+  v0.3.1  Phase 4 + 7       Logging + version-drift guard
+  v0.4.0  Phase 5 + 6       Refactor (regression risk — merits own release)
+  v0.4.1  Phase 8           Tests (no runtime impact)
+
+
+VERIFICATION
+------------
+Phase 1:  Fuzz /save with 512-char SSID via curl — expect HTTP 400, not reboot.
+          Publish retained config with '+' in hierarchy — confirm sanitised topic in serial.
+Phase 2:  Stress: rapid MQTT reconnect + continuous ESP-NOW + RFID scans for 1 hour.
+          Watch for stuck callbacks, duplicate discovery messages, missed tag reads.
+Phase 3:  Heavy inbound MQTT command rate — no keepalive disconnects.
+Phase 4:  Force OTA 404 + malformed MQTT JSON — confirm both produce serial diagnostics.
+Phase 5:  PeerTracker used by BLE + ESP-NOW — behaviour unchanged on bench.
+          Run host tests on rssiToDistance() with known RSSI/distance pairs.
+Phase 7:  Push tag with mismatched config.h version — CI must fail the build.
+Phase 8:  Unit test suite green in CI on every push.

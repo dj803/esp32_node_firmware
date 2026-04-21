@@ -73,6 +73,21 @@ static bool semverIsNewer(const char* installed, const char* candidate) {
 // and flashes the new firmware if a newer version is available.
 // Called periodically from otaLoop() and on demand from the MQTT handler.
 void otaCheckNow() {
+    // ── OTA URL validation ────────────────────────────────────────────────────
+    // Reject obviously broken URLs before handing them to ESP32-OTA-Pull.
+    // A blank URL or one that doesn't start with http(s):// will produce a
+    // cryptic HTTP error code with no indication of root cause.
+    const char* otaUrl = gAppConfig.ota_json_url;
+    bool validScheme = (strncmp(otaUrl, "https://", 8) == 0 ||
+                        strncmp(otaUrl, "http://",  7) == 0);
+    if (!validScheme || strlen(otaUrl) < 10) {
+        Serial.printf("[OTA] Skipping check — invalid OTA JSON URL: '%s'\n", otaUrl);
+        mqttPublishStatus("ota_failed",
+            "\"error\":\"invalid ota_json_url (missing scheme or empty)\","
+            "\"current_version\":\"" FIRMWARE_VERSION "\"");
+        return;
+    }
+
     Serial.println("[OTA] Checking for new firmware... (running: " FIRMWARE_VERSION ")");
     mqttPublishStatus("ota_checking",
                       "\"current_version\":\"" FIRMWARE_VERSION "\"");

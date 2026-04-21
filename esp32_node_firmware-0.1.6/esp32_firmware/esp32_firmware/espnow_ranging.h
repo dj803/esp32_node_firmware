@@ -98,7 +98,12 @@ static void _enrSendBeacon() {
     peer.encrypt = false;
     if (!esp_now_is_peer_exist(broadcast)) esp_now_add_peer(&peer);
 
-    esp_now_send(broadcast, buf, sizeof(buf));
+    esp_err_t err = esp_now_send(broadcast, buf, sizeof(buf));
+    if (err != ESP_OK) {
+        // Common causes: peer not added yet (ESP_ERR_ESPNOW_NOT_FOUND),
+        // radio busy (ESP_ERR_ESPNOW_NO_MEM), or Wi-Fi not yet started.
+        Serial.printf("[ESP-NOW Ranging] Beacon send failed: %s\n", esp_err_to_name(err));
+    }
 }
 
 

@@ -196,6 +196,30 @@ static void apHandleSave() {
         return;
     }
 
+    // ── Field length validation ───────────────────────────────────────────────
+    // Reject oversized fields before copying into fixed-size buffers.
+    // String::toCharArray() silently truncates without null-terminating when the
+    // source exceeds the destination size, which corrupts adjacent struct fields.
+    // Limits are (buffer_size - 1) to always leave room for the null terminator.
+    CredentialBundle _tmp;   // Use sizeof() on actual struct fields for accuracy
+    if (ssid.length()                               > sizeof(_tmp.wifi_ssid)       - 1 ||
+        _apServer.arg("wifi_password").length()     > sizeof(_tmp.wifi_password)   - 1 ||
+        murl.length()                               > sizeof(_tmp.mqtt_broker_url) - 1 ||
+        _apServer.arg("mqtt_username").length()     > sizeof(_tmp.mqtt_username)   - 1 ||
+        _apServer.arg("mqtt_password").length()     > sizeof(_tmp.mqtt_password)   - 1 ||
+        otaJsonUrl.length()                         > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
+        _apServer.arg("mq_enterprise").length()     > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_site").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_area").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_line").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_cell").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_devtype").length()        > APP_CFG_MQTT_SEG_LEN         - 1) {
+        _apServer.send(400, "text/plain",
+            "Error: one or more fields exceed the maximum allowed length.");
+        Serial.println("[AP Portal] POST /save rejected — field too long");
+        return;
+    }
+
     // ── Save credentials ──────────────────────────────────────────────────────
     CredentialBundle b;
     ssid.toCharArray(b.wifi_ssid,       sizeof(b.wifi_ssid));
@@ -249,6 +273,8 @@ static void apHandleSave() {
 
     _apServer.send(200, "text/plain", "All settings saved. Restarting...");
     Serial.println("[AP Portal] Settings saved — restarting in 2 s");
+    // 2 s delay: gives the browser enough time to receive the HTTP response
+    // before the AP interface disappears (STA mode switch cuts off the AP).
     delay(2000);
     ESP.restart();
 }
@@ -359,6 +385,25 @@ static void settingsHandlePost() {
     if (otaJsonUrl.isEmpty()) {
         _apServer.send(400, "text/plain",
             "Error: ota_json_url is required.");
+        return;
+    }
+
+    // ── Field length validation ───────────────────────────────────────────────
+    // Reject oversized values before copying into fixed-size struct buffers.
+    CredentialBundle _btmp;
+    if (otaJsonUrl.length()                         > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
+        _apServer.arg("mq_enterprise").length()     > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_site").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_area").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_line").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_cell").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mq_devtype").length()        > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        _apServer.arg("mqtt_broker_url").length()   > sizeof(_btmp.mqtt_broker_url) - 1 ||
+        _apServer.arg("mqtt_username").length()     > sizeof(_btmp.mqtt_username)   - 1 ||
+        _apServer.arg("mqtt_password").length()     > sizeof(_btmp.mqtt_password)   - 1) {
+        _apServer.send(400, "text/plain",
+            "Error: one or more fields exceed the maximum allowed length.");
+        Serial.println("[Settings] POST /settings rejected — field too long");
         return;
     }
 

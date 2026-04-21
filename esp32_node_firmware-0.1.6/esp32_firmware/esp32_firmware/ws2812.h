@@ -83,6 +83,26 @@ enum class LedState : uint8_t {
 
 
 // ── Module-level state (all static — single translation unit) ─────────────────
+//
+// CONCURRENCY AUDIT:
+//   _ws2812Task (Core 1) writes:  _ledState, _ledPreviousState, _ledRfidEndMs,
+//                                  _ledMqttColor, _ledMqttAnimName,
+//                                  _ledActiveBrightness, _ledActiveCount,
+//                                  _ledStateR/G/B
+//   Main context (Core 0) reads:  _ledActiveBrightness, _ledActiveCount,
+//                                  _ledStateR/G/B  via ws2812PublishState()
+//
+//   Access is mediated by the FreeRTOS LED event queue: events are enqueued
+//   from Core 0 and dequeued + applied in Core 1's task. State variables that
+//   are only read from Core 0 after a queue flush are safe.
+//
+//   _ledActiveBrightness, _ledActiveCount, _ledStateR/G/B: these are read
+//   from Core 0 in ws2812PublishState(). Marking them volatile prevents the
+//   compiler from caching stale Core 1 writes in a Core 0 register.
+//   For single-byte values on Xtensa LX6 this is sufficient; for coordinated
+//   multi-field reads (R+G+B as a colour snapshot) a portENTER_CRITICAL guard
+//   around ws2812PublishState() would be stronger but is omitted here for
+//   simplicity — the worst case is a one-tick-old colour in an MQTT publish.
 
 static QueueHandle_t _ledEventQueue    = nullptr;
 static CRGB          _leds[LED_MAX_NUM_LEDS];        // pre-allocated, never heap
@@ -97,11 +117,13 @@ static CRGB          _ledMqttColor     = CRGB::Black;
 static char          _ledMqttAnimName[16] = "solid";
 
 // Runtime-adjustable strip parameters (persisted to NVS)
-static uint8_t       _ledActiveBrightness = LED_MAX_BRIGHTNESS;
-static uint8_t       _ledActiveCount      = LED_DEFAULT_COUNT;
+// volatile: written in _ws2812Task (Core 1), read in ws2812PublishState() (Core 0)
+static volatile uint8_t _ledActiveBrightness = LED_MAX_BRIGHTNESS;
+static volatile uint8_t _ledActiveCount      = LED_DEFAULT_COUNT;
 
 // Current state info for ws2812PublishState()
-static uint8_t       _ledStateR = 0, _ledStateG = 0, _ledStateB = 0;
+// volatile: written in _ws2812Task (Core 1), read in ws2812PublishState() (Core 0)
+static volatile uint8_t _ledStateR = 0, _ledStateG = 0, _ledStateB = 0;
 
 
 // ── Forward declarations ──────────────────────────────────────────────────────
