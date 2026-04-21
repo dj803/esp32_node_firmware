@@ -121,7 +121,10 @@ jobs:
         # MFRC522v2 registry entries are unstable — clone from GitHub instead.
         run: |
           arduino-cli lib update-index
-          arduino-cli lib install "ArduinoJson@7" "FastLED"
+          # FastLED pinned to 3.6.0 — 3.10.x fails arduino-esp32 3.x platform
+          # detection with "This platform isn't recognized by FastLED... yet"
+          # error from led_sysdefs.h. Matches platformio.ini pin.
+          arduino-cli lib install "ArduinoJson@7" "FastLED@3.6.0"
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/OSSLibraries/Arduino_MFRC522v2.git \
             ~/Arduino/libraries/MFRC522v2
