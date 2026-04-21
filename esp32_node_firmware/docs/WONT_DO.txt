@@ -20,3 +20,21 @@ as missing work.
 
    If the threat model changes (e.g. deployment in a hostile RF environment
    or on a contested wireless spectrum), revisit.
+
+────────────────────────────────────────────────────────────────────────────────
+
+2. Node-RED Dashboard httpNodeAuth  (was audit item #19 in DEFERRED)
+   File:    ~/.node-red/settings.js  line 125 (commented-out template)
+   Decided: 2026-04-21
+
+   Rationale: Node-RED runs on a developer laptop on a private home LAN.
+   The dashboard is not accessible from outside the local network, making
+   mandatory authentication an unnecessary friction during development.
+   The settings.js template is already in place — if the threat model
+   changes (laptop used on a shared/public network), the operator can
+   enable it in under two minutes:
+     node -e "console.log(require('bcryptjs').hashSync('PASS', 8))"
+     → uncomment line 125, substitute the hash, restart Node-RED.
+
+   Do not auto-enable: the password choice is operator-specific and
+   cannot be committed to the repo without exposing credentials.

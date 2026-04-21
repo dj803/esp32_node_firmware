@@ -597,6 +597,127 @@ New files: include/logging.h, include/fwevent.h
 
 
 ────────────────────────────────────────────────────────────────────────────────
+17. Node-RED Workstream C — Error handling + observability (2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+Files: node-red/flows.json (Heartbeats, Alpha BLE Scanner, ESP-NOW Tracking tabs)
+
+[Catch nodes — all three tabs]
+  One "catch" node added per tab (hb_catch, ble_catch, espnow_catch), each
+  wired to a dedicated "Error Output" debug node. scope: null + uncaught: false
+  catches ALL node errors on the tab and surfaces them in the Debug sidebar.
+  Previously: zero catch nodes across 82 nodes — any exception silently broke
+  the downstream flow with no visible indication.
+
+[try/catch wrappers — all function nodes]
+  All 24 function nodes wrapped in try { ... } catch(e) { node.error(..., msg); }
+  so exceptions route to the catch node rather than being swallowed.
+  Affected nodes per tab:
+    Heartbeats (10 nodes): Detect Heartbeat & Timeout ×4, UUID Logger,
+      Aggregate Device Status, Publish to All Devices, Restart All Devices,
+      Prepare Claude Alert, Set topic_base.
+    Alpha BLE Scanner (7 nodes): Split fields, Build track cmd, Format as CSV,
+      Accumulate Tracked Devices, Clear Tracked Context, Kalman Filter Distance,
+      Reset Chart Action.
+    ESP-NOW Tracking (7 nodes): Accumulate Discovered, Clear Discovered,
+      Set Tracked MACs, Filter Tracked Peers, Kalman Filter Distance,
+      Stop Tracking, Reset Chart Action.
+
+[topic_base flow context variable — Heartbeats tab]
+  A one-shot inject → function node (hb_init_inject → hb_init_fn) runs on
+  startup and sets flow.set('topic_base', 'Enigma/JHBDev/Office/Line/Cell/
+  ESP32NodeBox/'). The "Publish to All Devices" and "Restart All Devices"
+  function nodes now read this variable with a hardcoded fallback, so the
+  topic prefix is editable in one place rather than two.
+
+[Subflows — shipped same session as catch nodes (item 16)]
+  Two reusable subflows added. Deployed via Node-RED REST POST /flows.
+
+  sf_heartbeat_timeout ("Detect Heartbeat & Timeout"):
+    Replaces a137257f399b451c (Bravo), ba3c27eaab91295c (Alpha),
+    7911dadbfe093c62 (Charlie) — three identical function nodes.
+    Inner sf_hb_fn function node has finalize cleanup for the context.timeout.
+    Each subflow instance has its own node context so timeouts are isolated.
+
+  sf_kalman_filter ("Kalman Filter Distance"):
+    Replaces alpha_ema_fn (BLE tab) and espnow_kalman_fn (ESP-NOW tab).
+    Parameterised via env var STATES_KEY (default: "kalman_states").
+    BLE instance:    STATES_KEY = "kalman_states"
+    ESP-NOW instance: STATES_KEY = "espnow_kalman_states"
+    The existing Reset Graph function nodes (alpha_reset_graph_fn,
+    espnow_reset_fn) directly clear those flow context keys — unchanged.
+
+[Deferred — httpNodeAuth (item 19)]
+  settings.js already has the httpNodeAuth example commented out at line 125.
+  To enable: generate a bcrypt hash with
+    node -e "console.log(require('bcryptjs').hashSync('YOUR_PASS', 8))"
+  then uncomment and replace the hash. Deferred because password choice
+  requires user input.
+
+
+────────────────────────────────────────────────────────────────────────────────
+18. Node-RED Workstream C — Tab reorganisation + Projects mode (2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+[Item 18 — Tab reorganisation]
+  "Heartbeats" tab renamed to "Device Status". UUID-logging chain removed from
+  that tab (UUID Logger function + esp32_uuids.txt/csv file nodes + debug node).
+  New "Device Logging" tab added with its own MQTT +/status subscription and a
+  dedicated "UUID Logger" function node. The new function:
+    - Filters to heartbeat/boot events only
+    - Extracts UUID from topic segment [6]
+    - Uses flow context key logKnownUuids (separate from knownUuids used by the
+      Publish/Restart All Devices command functions)
+    - Writes sorted UUID list to both .txt and .csv
+  Catch node added to the new tab (log_catch → log_catch_debug).
+  Result: 4 tabs (Device Status, Alpha BLE Scanner, ESP-NOW Tracking, Device
+  Logging), 101 nodes total.
+
+[Item 19 — httpNodeAuth → WONT_DO.txt]
+  Decision recorded in docs/WONT_DO.txt item 2. Dashboard remains open on the
+  local LAN (dev machine). Instructions for enabling it are in WONT_DO.txt.
+
+[Item 15 — Node-RED Projects mode]
+  settings.js editorTheme.projects.enabled: false → true.
+  Node-RED process restarted (plain node process, PID changed from 12448).
+  Project created via POST /localhost:1880/projects:
+    name: "esp32-node-firmware", branch: main
+  Full flows deployed via POST /flows → saved to
+    ~/.node-red/projects/esp32-node-firmware/flows.json
+  Git commits in project:
+    887774b Create project
+    b5d0a0f Add complete Node-RED flows (101 nodes, 4 tabs)
+  Credentials are NOT encrypted (credentialSecret left empty) — acceptable for
+  a local dev setup where flows_cred.json contains no sensitive credentials.
+
+
+────────────────────────────────────────────────────────────────────────────────
+19. Node-RED hotfix — UUID Logger SyntaxError (2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+[Device Logging tab] log_uuid_fn function — literal newline in join separator
+
+  Symptom: Node-RED reported on startup:
+    [error] [function:UUID Logger] SyntaxError: Invalid or unexpected token (body:line 12)
+
+  Root cause: JSON-encoding of the newline separator in the known.join() call.
+  When the function body was written to flows.json, the '\n' string escape
+  survived Claude's tool-call JSON encoding as a literal 0x0A byte inside the
+  JSON string value. Node.js received a real newline character mid-string-literal,
+  which is invalid JavaScript syntax.
+
+  Inspection (Python repr) confirmed:
+    line 12: "    msg.payload = known.join('"
+    line 13: "');"   ← separator and closing quote on a new source line
+
+  Fix: replaced '\n' with String.fromCharCode(10), which requires no backslash
+  escaping and produces the same newline character at runtime:
+    msg.payload = known.join(String.fromCharCode(10));
+
+  Deployed via POST /flows; git commit 753bc40 in the Node-RED project.
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

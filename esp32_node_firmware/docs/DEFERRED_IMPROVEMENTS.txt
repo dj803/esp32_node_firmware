@@ -112,33 +112,38 @@ FIRMWARE — CORRECTNESS
 NODE-RED
 ────────────────────────────────────────────────────────────────────────────────
 
-15. Migrate to Node-RED Projects mode (MEDIUM)
-    Problem: flows.json is a 62 KB flat blob, auto-reformatted on save;
-             credentials stored in plaintext in flows_cred.json; git diffs
-             are unreadable.
-    Fix:   Enable Projects mode; split flows into modules; separate creds.
+15. (shipped 2026-04-21) Migrate to Node-RED Projects mode
+    settings.js: editorTheme.projects.enabled changed false → true (line 440).
+    Node-RED restarted; project "esp32-node-firmware" created via REST API
+    (POST /projects). ~/.node-red/projects/esp32-node-firmware/ git-initialised
+    with flows.json and flows_cred.json. Initial commit made automatically by
+    Node-RED on project creation.
 
-16. Extract repeated patterns to subflows (MEDIUM)
-    Problem: "MQTT in → JSON parse → table update" pattern repeats ~4 times
-             (Heartbeats, BLE, ESP-NOW); "peer selection → filter → chart"
-             repeats in BLE and ESP-NOW.
-    Fix:   Promote each to a subflow with parameter inputs.
+16. (shipped 2026-04-21) Extract repeated patterns to subflows
+    node-red/flows.json: two subflows added.
+    sf_heartbeat_timeout: replaces the three identical single-device "Detect
+      Heartbeat & Timeout" function nodes (Alpha/Bravo/Charlie). Each instance
+      keeps its own node context, so timeouts are correctly isolated per device.
+    sf_kalman_filter: replaces alpha_ema_fn (BLE) and espnow_kalman_fn (ESP-NOW).
+      Parameterised via STATES_KEY env var — BLE instance uses "kalman_states",
+      ESP-NOW instance uses "espnow_kalman_states". The existing Reset Graph
+      function nodes continue to clear those same flow context keys unchanged.
 
-17. Add catch nodes / error handling (MEDIUM)
-    Problem: Zero catch nodes across all 3 tabs; 24 function nodes have no
-             try/catch. JSON parse failure or broker drop silently breaks
-             downstream UI.
-    Fix:   One catch node per tab → debug + status template;
-           wrap critical function nodes in try/catch with sensible fallback.
+17. (shipped 2026-04-21) Add catch nodes / error handling
+    node-red/flows.json: one catch node per tab (hb_catch, ble_catch,
+    espnow_catch) → debug node. All 24 function nodes wrapped in try/catch
+    with node.error(). topic_base flow context variable added to Heartbeats
+    tab (hb_init_inject → hb_init_fn) so "Publish to All Devices" and
+    "Restart All Devices" read the prefix from one place.
 
-18. Tab reorganisation (LOW)
-    Problem: 3 tabs, 70 nodes. Heartbeats tab conflates status monitoring,
-             file logging, and device registry — candidates for split.
+18. (shipped 2026-04-21) Tab reorganisation
+    Heartbeats tab renamed "Device Status". UUID logging chain (UUID Logger
+    function + esp32_uuids.txt + esp32_uuids.csv file nodes + debug) moved
+    to new "Device Logging" tab with its own MQTT +/status subscription and
+    a dedicated uuid-extractor function (uses logKnownUuids flow context key
+    to avoid collision with the knownUuids key read by cmd/restart functions).
 
-19. Dashboard 2.0 authentication (LOW)
-    Problem: Dashboard is open to the LAN. Fine for dev; risky if exposed to
-             a wider network.
-    Fix:   httpNodeAuth in settings.js with strong credentials.
+19. (moved to WONT_DO.txt — decision not to enable httpNodeAuth on dev machine)
 
 ────────────────────────────────────────────────────────────────────────────────
 TOOLING / CI
@@ -155,9 +160,8 @@ See SUGGESTED_IMPROVEMENTS.txt for these items plus the Node.js 24 upgrade
 PRIORITISATION GUIDANCE
 ────────────────────────────────────────────────────────────────────────────────
 
-When revisiting this list: items 15, 16, 17 compound over time — each release
-spent without them makes the next refactor more expensive. Items 18, 19
-are paper cuts; tackle opportunistically.
+All Node-RED audit items have now shipped (15–18) or been resolved (19).
 All firmware audit items have now shipped (1–14) or been resolved (2, 3).
-Items 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
-Items 2, 20, 21, 22 have been moved out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.
+Items 15, 16, 17, 18 shipped 2026-04-21.
+Items 2, 19, 20, 21, 22 moved to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.
+This backlog is now fully closed.
