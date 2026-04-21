@@ -158,11 +158,17 @@ jobs:
         # build.extra_flags would clobber the arduino-esp32 platform's own
         # -DESP32 / -DARDUINO_ARCH_ESP32 / -DF_CPU defines, which would break
         # FastLED's platform auto-detection ("This platform isn't recognized").
+        #
+        # min_spiffs partition scheme + 1.9 MB max app size matches v0.3.02.
+        # Without them the default partition table is too small for the binary.
+        # PlatformIO already uses min_spiffs.csv via board_build.partitions.
         run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
             --output-dir ./build \
             --warnings default \
+            --build-property "build.partitions=min_spiffs" \
+            --build-property "upload.maximum_size=1966080" \
             --build-property "compiler.cpp.extra_flags=-DFIRMWARE_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"" \
             esp32_firmware/esp32_firmware
 
