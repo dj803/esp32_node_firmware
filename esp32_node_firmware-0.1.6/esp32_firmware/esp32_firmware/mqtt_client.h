@@ -172,6 +172,18 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
 }
 
 
+// Serialise a JsonDocument and publish it to <prefix>.
+// Eliminates the repeated JsonDocument → String → mqttPublish() boilerplate
+// that exists at 10+ call sites across ble.h, espnow_ranging.h, and rfid.h.
+static void mqttPublishJson(const char* prefix, JsonDocument& doc,
+                            uint8_t qos = 0, bool retain = false) {
+    if (!_mqttClient.connected()) return;
+    String payload;
+    serializeJson(doc, payload);
+    mqttPublish(prefix, payload, qos, retain);
+}
+
+
 // ── LED state publish helper ───────────────────────────────────────────────────
 // Called by ws2812PublishState() (defined in ws2812.h) to publish current strip
 // state to .../status/led as a retained QoS 1 message.

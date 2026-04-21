@@ -49,6 +49,7 @@
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
 #include "config.h"
+#include "ranging_math.h"   // rssiToDistance() — shared with espnow_ranging.h
 
 
 // ── Beacon record ─────────────────────────────────────────────────────────────
@@ -96,9 +97,10 @@ static uint32_t          _bleLastTrackScanMs = 0;
 static SemaphoreHandle_t _bleMutex           = nullptr;
 
 
-// ── Distance formula ──────────────────────────────────────────────────────────
+// _bleCalcDist — thin wrapper around the shared rssiToDistance() from ranging_math.h.
+// BLE uses BLE_PATH_LOSS_N (2.0) while ESP-NOW uses ESPNOW_PATH_LOSS_N (2.5).
 static float _bleCalcDist(int8_t rssi, int8_t txPower) {
-    return powf(10.0f, (float)(txPower - rssi) / (10.0f * BLE_PATH_LOSS_N));
+    return rssiToDistance(rssi, txPower, BLE_PATH_LOSS_N);
 }
 
 
@@ -298,9 +300,7 @@ static void _blePublishResults() {
         xSemaphoreGive(_bleMutex);
     }
 
-    String payload;
-    serializeJson(doc, payload);
-    mqttPublish("ble/scan_results", payload);
+    mqttPublishJson("ble/scan_results", doc);
 }
 
 static void _blePublishTracked() {
@@ -316,9 +316,7 @@ static void _blePublishTracked() {
         doc["dist_m"] = serialized(String(_bleTrackedDistM[i], 1));
         doc["name"]   = _bleTrackedName[i];
 
-        String payload;
-        serializeJson(doc, payload);
-        mqttPublish("ble", payload);
+        mqttPublishJson("ble", doc);
     }
 }
 

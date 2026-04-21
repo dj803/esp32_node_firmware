@@ -67,6 +67,29 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building version: ${VERSION}"
 
+      # ── 6b. Version-drift guard (tag builds only) ────────────────────────────
+      # Fail the build if config.h already contains a different non-dev version.
+      # This catches the case where a developer manually bumped FIRMWARE_VERSION
+      # in config.h to something that does not match the tag they are pushing —
+      # e.g. tag v0.4.0 pushed while config.h still says "0.3.0".
+      # The CI patcher (step 7) will overwrite the value anyway, but this guard
+      # surfaces the mismatch as a visible build failure rather than silently
+      # producing a binary whose source and release tag disagree.
+      - name: Version-drift guard
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          SOURCE_VERSION=$(grep -oP '(?<=#define FIRMWARE_VERSION\s{1,20}")[^"]+' \
+            esp32_firmware/esp32_firmware/config.h)
+          echo "Tag version   : ${TAG_VERSION}"
+          echo "Source version: ${SOURCE_VERSION}"
+          if [[ "${SOURCE_VERSION}" != "${TAG_VERSION}" && "${SOURCE_VERSION}" != "0.0.0-dev" ]]; then
+            echo "::error::Version drift detected — config.h says '${SOURCE_VERSION}' but tag is 'v${TAG_VERSION}'"
+            echo "::error::Either update FIRMWARE_VERSION in config.h before tagging, or use 0.0.0-dev to opt out of this check."
+            exit 1
+          fi
+          echo "Version check passed."
+
       # ── 7. Patch FIRMWARE_VERSION in config.h ────────────────────────────────
       # Ensures the compiled binary reports the same version as the git tag.
       - name: Patch firmware version in config.h
