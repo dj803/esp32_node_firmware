@@ -115,19 +115,17 @@ jobs:
           arduino-cli core install esp32:esp32@3.1.1
 
       - name: Install Arduino libraries
-        # NimBLE is intentionally NOT installed here — the esp32:esp32@3.1.1
-        # core already bundles NimBLE-Arduino; adding it separately would
-        # produce a duplicate-symbol conflict.
-        # MFRC522v2 registry entries are unstable — clone from GitHub instead.
+        # Library install matches what v0.3.02's CI used successfully:
+        #   - RFID_MFRC522v2 (not "MFRC522v2") is the actual registry entry name
+        #   - NimBLE-Arduino DOES need to be installed — arduino-esp32 core 3.1.1
+        #     does NOT bundle it (that was an earlier incorrect assumption)
+        #   - FastLED at whatever version the registry serves — 3.10.x works fine
+        #     with arduino-esp32 3.1.1 (the earlier failure was caused by
+        #     build.extra_flags clobbering the platform's own ESP32 defines)
         run: |
           arduino-cli lib update-index
-          # FastLED pinned to 3.6.0 — 3.10.x fails arduino-esp32 3.x platform
-          # detection with "This platform isn't recognized by FastLED... yet"
-          # error from led_sysdefs.h. Matches platformio.ini pin.
-          arduino-cli lib install "ArduinoJson@7" "FastLED@3.6.0"
+          arduino-cli lib install "ArduinoJson@7" "RFID_MFRC522v2" "FastLED" "NimBLE-Arduino"
           mkdir -p ~/Arduino/libraries
-          git clone --depth 1 https://github.com/OSSLibraries/Arduino_MFRC522v2.git \
-            ~/Arduino/libraries/MFRC522v2
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
             ~/Arduino/libraries/AsyncMqttClient
           git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
@@ -156,12 +154,16 @@ jobs:
           cp include/*.h esp32_firmware/esp32_firmware/
 
       - name: Compile sketch
+        # Use compiler.cpp.extra_flags (appends) NOT build.extra_flags (replaces).
+        # build.extra_flags would clobber the arduino-esp32 platform's own
+        # -DESP32 / -DARDUINO_ARCH_ESP32 / -DF_CPU defines, which would break
+        # FastLED's platform auto-detection ("This platform isn't recognized").
         run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
             --output-dir ./build \
             --warnings default \
-            --build-property "build.extra_flags=-DFIRMWARE_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"" \
+            --build-property "compiler.cpp.extra_flags=-DFIRMWARE_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"" \
             esp32_firmware/esp32_firmware
 
       - name: Rename output binary
