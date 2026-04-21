@@ -50,7 +50,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: pip
+          # No cache: pip — we have no requirements.txt, so cache lookup fails the job.
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio
@@ -115,8 +115,12 @@ jobs:
           arduino-cli core install esp32:esp32@3.1.1
 
       - name: Install Arduino libraries
+        # NimBLE is intentionally NOT installed here — the esp32:esp32@3.1.1
+        # core already bundles NimBLE-Arduino; adding it separately would
+        # produce a duplicate-symbol conflict.
         run: |
-          arduino-cli lib install "ArduinoJson@7" "MFRC522v2" "NimBLE-Arduino"
+          arduino-cli lib update-index
+          arduino-cli lib install "ArduinoJson@7" "MFRC522v2"
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
             ~/Arduino/libraries/AsyncMqttClient
