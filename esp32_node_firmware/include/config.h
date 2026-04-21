@@ -36,9 +36,9 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.07-dev"
+#define FIRMWARE_VERSION           "0.3.08-dev"
 #endif
-#define FIRMWARE_BUILD_TIMESTAMP   1745265600ULL   // 2026-04-21 20:40:00 UTC
+#define FIRMWARE_BUILD_TIMESTAMP   1745272800ULL   // 2026-04-21 22:40:00 UTC
 
 
 // -----------------------------------------------------------------------------
@@ -370,6 +370,40 @@
 #define BLE_SERIAL_PRINT_MS   10000UL     // Serial print tracked beacon every 10 s
 #define BLE_NVS_NAMESPACE     "esp32ble"  // NVS namespace — persists tracked MACs
 #define BLE_NVS_KEY_TRACKED   "tracked_mac"  // CSV of up to BLE_MAX_TRACKED MACs
+
+
+// -----------------------------------------------------------------------------
+// NVS namespace registry (v0.3.08)
+//
+// Single authoritative list of every NVS namespace in the firmware.
+// The #define constants above are the actual strings — kept for backward
+// compatibility so all existing call-sites compile unchanged.
+//
+// Add new namespaces here first (new enum value + nvsNsName() case), then add
+// the corresponding #define above.
+//
+// Note: ESP-IDF NVS namespace names are limited to 15 characters.
+// -----------------------------------------------------------------------------
+enum class NvsNs : uint8_t {
+    CREDENTIALS  = 0,   // NVS_NAMESPACE              ("esp32cred")
+    DEVICE_ID    = 1,   // DEVICE_ID_NVS_NAMESPACE    ("esp32id")
+    BROKER_CACHE = 2,   // BROKER_CACHE_NVS_NAMESPACE ("esp32disc")
+    LED          = 3,   // LED_STRIP_NVS_NAMESPACE    ("esp32led")
+    RFID         = 4,   // RFID_NVS_NAMESPACE         ("esp32rfid")
+    BLE          = 5,   // BLE_NVS_NAMESPACE          ("esp32ble")
+};
+
+inline const char* nvsNsName(NvsNs ns) {
+    switch (ns) {
+        case NvsNs::CREDENTIALS:  return NVS_NAMESPACE;
+        case NvsNs::DEVICE_ID:    return DEVICE_ID_NVS_NAMESPACE;
+        case NvsNs::BROKER_CACHE: return BROKER_CACHE_NVS_NAMESPACE;
+        case NvsNs::LED:          return LED_STRIP_NVS_NAMESPACE;
+        case NvsNs::RFID:         return RFID_NVS_NAMESPACE;
+        case NvsNs::BLE:          return BLE_NVS_NAMESPACE;
+        default:                  return "unknown";
+    }
+}
 
 
 // -----------------------------------------------------------------------------

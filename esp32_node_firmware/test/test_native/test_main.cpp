@@ -26,6 +26,7 @@
 #include "mac_utils.h"
 #include "peer_tracker.h"
 #include "fwevent.h"   // FwEvent enum + fwEventName() — dependency-free, compiles on host
+#include "semver.h"    // semverIsNewer() — extracted from ota.h for host testing
 
 // ── Stub out millis() — used inside PeerTracker via setNow() but the test
 //    drives the clock manually, so the real implementation is not needed.
@@ -359,6 +360,86 @@ void test_fwevent_unknown_value_returns_string() {
 
 
 // =============================================================================
+// semver.h tests (v0.3.08)
+//
+// semverIsNewer() parses MAJOR.MINOR.PATCH numerically.  The critical case is
+// patch numbers >= 10: "0.2.15" must be newer than "0.2.7" even though '1' < '7'
+// lexicographically.  This caught a real bug in ESP32OTAPull's String::compareTo.
+// =============================================================================
+
+void test_semver_newer_major() {
+    TEST_ASSERT_TRUE( semverIsNewer("0.2.15", "1.0.0"));
+    TEST_ASSERT_FALSE(semverIsNewer("1.0.0",  "0.2.15"));
+}
+
+void test_semver_newer_minor() {
+    TEST_ASSERT_TRUE( semverIsNewer("0.2.15", "0.3.0"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.3.0",  "0.2.15"));
+}
+
+void test_semver_newer_patch_numeric_not_lexicographic() {
+    // "0.2.7" < "0.2.15" numerically, but "15" < "7" lexicographically.
+    // Confirm we parse numerically.
+    TEST_ASSERT_TRUE( semverIsNewer("0.2.7",  "0.2.15"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.2.15", "0.2.7"));
+}
+
+void test_semver_equal_versions_not_newer() {
+    TEST_ASSERT_FALSE(semverIsNewer("0.3.07", "0.3.07"));
+    TEST_ASSERT_FALSE(semverIsNewer("1.0.0",  "1.0.0"));
+}
+
+void test_semver_leading_zeros_in_patch() {
+    // "0.3.00" and "0.3.0" are semantically identical — neither is newer.
+    TEST_ASSERT_FALSE(semverIsNewer("0.3.00", "0.3.0"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.3.0",  "0.3.00"));
+}
+
+void test_semver_double_digit_minor() {
+    TEST_ASSERT_TRUE( semverIsNewer("0.9.5", "0.10.0"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.10.0", "0.9.5"));
+}
+
+
+// =============================================================================
+// topic_sanitizer — additional pathological segment tests (v0.3.08)
+//
+// These extend the existing five sanitizer tests with inputs that caused
+// silent breakage in the pre-sanitiser codebase: embedded slashes in segment
+// values split the topic mid-hierarchy; wildcards subscribe to unintended trees.
+// =============================================================================
+
+void test_topic_sanitizer_multiple_slashes() {
+    // A segment stored as "JHB/Dev/Floor2" has two slashes — all must be replaced.
+    char seg[64];
+    strcpy(seg, "JHB/Dev/Floor2");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("JHB_Dev_Floor2", seg);
+}
+
+void test_topic_sanitizer_leading_slash() {
+    char seg[64];
+    strcpy(seg, "/Leading");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("_Leading", seg);
+}
+
+void test_topic_sanitizer_only_wildcards() {
+    char seg[8];
+    strcpy(seg, "#/+");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("___", seg);
+}
+
+void test_topic_sanitizer_mixed_wildcards_and_text() {
+    char seg[64];
+    strcpy(seg, "site+area#zone");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("site_area_zone", seg);
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -409,6 +490,20 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_fwevent_boot_is_retained_string);
     RUN_TEST(test_fwevent_all_known_values);
     RUN_TEST(test_fwevent_unknown_value_returns_string);
+
+    // semver — numeric version comparison
+    RUN_TEST(test_semver_newer_major);
+    RUN_TEST(test_semver_newer_minor);
+    RUN_TEST(test_semver_newer_patch_numeric_not_lexicographic);
+    RUN_TEST(test_semver_equal_versions_not_newer);
+    RUN_TEST(test_semver_leading_zeros_in_patch);
+    RUN_TEST(test_semver_double_digit_minor);
+
+    // topic_sanitizer — pathological segment values
+    RUN_TEST(test_topic_sanitizer_multiple_slashes);
+    RUN_TEST(test_topic_sanitizer_leading_slash);
+    RUN_TEST(test_topic_sanitizer_only_wildcards);
+    RUN_TEST(test_topic_sanitizer_mixed_wildcards_and_text);
 
     return UNITY_END();
 }

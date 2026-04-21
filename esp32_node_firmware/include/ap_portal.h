@@ -122,14 +122,25 @@ static void apHandleLocate() {
 // and the active OTA JSON URL. Useful for Node-RED dashboards and
 // for confirming which physical device you are connected to.
 static void apHandleStatus() {
-    String json = String("{\"device_id\":\"")  + DeviceId::get()   + "\""
-                + ",\"mac\":\""                + DeviceId::getMac() + "\""
-                + ",\"firmware_version\":\"" FIRMWARE_VERSION "\""
-                + ",\"firmware_ts\":"          + String((uint32_t)FIRMWARE_BUILD_TIMESTAMP)
-                + ",\"ip\":\""                 + WiFi.localIP().toString() + "\""
-                + ",\"ota_json_url\":\""       + gAppConfig.ota_json_url  + "\""
-                + "}";
-    _apServer.send(200, "application/json", json);
+    // Use a stack buffer rather than String concatenation to avoid repeated heap
+    // allocation on every /status poll.  Field size budget:
+    //   device_id (40) + mac (18) + version (16) + ts (11) + ip (16)
+    //   + ota_json_url (APP_CFG_OTA_JSON_URL_LEN=256) + JSON keys/punct (~90)
+    //   = ~447 bytes.  Use 512 for headroom.
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"device_id\":\"%s\","
+        "\"mac\":\"%s\","
+        "\"firmware_version\":\"" FIRMWARE_VERSION "\","
+        "\"firmware_ts\":%u,"
+        "\"ip\":\"%s\","
+        "\"ota_json_url\":\"%s\"}",
+        DeviceId::get().c_str(),
+        DeviceId::getMac().c_str(),
+        (unsigned int)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
+        WiFi.localIP().toString().c_str(),
+        gAppConfig.ota_json_url);
+    _apServer.send(200, "application/json", buf);
 }
 
 

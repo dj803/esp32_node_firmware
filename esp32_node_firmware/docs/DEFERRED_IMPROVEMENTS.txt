@@ -84,28 +84,30 @@ FIRMWARE — CORRECTNESS
              encrypt/ECDH cycles on every request. DoS vector.
     Fix:   Per-MAC token bucket in responder — drop requests above N/minute.
 
-11. Wire-format versioning for ESP-NOW payloads (MEDIUM)
-    Files: espnow_bootstrap.h (WireBundle), espnow_responder.h (SiblingHealth)
-    Problem: Struct-memcpy over ESP-NOW with no version byte. Any new field is
-             a breaking fleet-wide change.
-    Fix:   Add `uint8_t wire_version` as first byte of every ESP-NOW struct;
-           bump and migrate deliberately.
+11. (shipped in v0.3.08) Wire-format versioning for ESP-NOW WireBundle
+    include/espnow_bootstrap.h: ESPNOW_WIRE_VERSION constant (=1) + uint8_t
+    wire_version as first field of WireBundle (size 175→176 bytes). bundleToWire()
+    sets wire_version=1; both receive paths check wire_version and LOG_W+reject
+    frames with unrecognised values. SiblingHealth left unchanged (SIBLING_PRIMARY_
+    SELECTION is disabled; SiblingHealth already carries protocol_version internally).
 
-12. Heap churn in request handlers (LOW)
-    File:  ap_portal.h:94-100 (apHandleStatus JSON via String concatenation)
-    Problem: Repeated String allocation/concat on every /status request.
-    Fix:   Use snprintf into a stack buffer.
+12. (shipped in v0.3.08) Heap churn in apHandleStatus
+    include/ap_portal.h: apHandleStatus() now uses a 512-byte stack buffer and
+    snprintf() instead of String concatenation.
 
-13. NVS namespace registry (LOW)
-    Files: config.h defines 5 namespaces scattered across modules
-    Problem: No single list; easy to accidentally reuse a name.
-    Fix:   Consolidate into a single `enum class NvsNs` with name-lookup.
+13. (shipped in v0.3.08) NVS namespace registry
+    include/config.h: enum class NvsNs : uint8_t (CREDENTIALS, DEVICE_ID,
+    BROKER_CACHE, LED, RFID, BLE) + inline nvsNsName(NvsNs) lookup added after
+    the last #define. All six existing #define constants kept unchanged as
+    backward-compatible aliases.
 
-14. Expanded unit test coverage (LOW)
-    File:  test/test_native/test_main.cpp (after PlatformIO migration)
-    Gaps:  semverIsNewer() edge cases (0.2.15 vs 0.2.7 numeric vs
-           lexicographic); credential bundle round-trip; topic path assembly
-           with pathological segment values.
+14. (shipped in v0.3.08) Expanded unit test coverage
+    include/semver.h: semverIsNewer() extracted from ota.h to a standalone
+    dependency-free header; ota.h now includes semver.h.
+    test/test_native/test_main.cpp: 6 semver tests (numeric patch comparison,
+    double-digit minor, leading zeros, equal, major/minor ordering) + 4 additional
+    pathological topic sanitizer tests (multiple slashes, leading slash, only
+    wildcards, mixed). Total: 40 tests (was 30).
 
 ────────────────────────────────────────────────────────────────────────────────
 NODE-RED
@@ -154,8 +156,9 @@ See SUGGESTED_IMPROVEMENTS.txt for these items plus the Node.js 24 upgrade
 PRIORITISATION GUIDANCE
 ────────────────────────────────────────────────────────────────────────────────
 
-When revisiting this list: items 1, 4, 5, 9, 10 are the ones most likely to
-cause field incidents. Items 7, 8, 15, 16, 17 compound over time — each release
-spent without them makes the next refactor more expensive. Items 12, 13, 18, 19
-are paper cuts; tackle opportunistically. Items 2, 20, 21, 22 have been moved
-out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.
+When revisiting this list: items 4, 5, 9, 10 are the ones most likely to
+cause field incidents. Items 15, 16, 17 compound over time — each release
+spent without them makes the next refactor more expensive. Items 18, 19
+are paper cuts; tackle opportunistically.
+Items 1, 6, 7, 8, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
+Items 2, 20, 21, 22 have been moved out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.

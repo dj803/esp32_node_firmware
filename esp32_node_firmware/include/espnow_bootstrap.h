@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include "config.h"
+#include "logging.h"
 #include "credentials.h"
 #include "crypto.h"
 #include "app_config.h"   // gAppConfig + AppConfigStore::save() for OTA URL adoption
@@ -46,11 +47,18 @@
 
 static const uint8_t ESPNOW_BROADCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
-// ── WireBundle: compact on-wire representation (175 bytes) ───────────────────
+// ── WireBundle: compact on-wire representation (176 bytes) ───────────────────
 // Field limits chosen so that the encrypted response fits inside 250 bytes.
 // Tighter than CredentialBundle but sufficient for real-world values.
+//
+// Wire format versioning (v0.3.08+):
+//   wire_version must equal ESPNOW_WIRE_VERSION (1). Receivers reject frames
+//   with any other value. Version 0 is reserved to identify pre-v0.3.08
+//   senders (which will fail the size check — they send 175 bytes, not 176).
+#define ESPNOW_WIRE_VERSION  1   // Increment whenever the WireBundle layout changes
 #pragma pack(push, 1)
 struct WireBundle {
+    uint8_t  wire_version;       // Must equal ESPNOW_WIRE_VERSION — first byte for fast reject
     char     wifi_ssid[33];      // 32 chars + null
     char     wifi_password[33];  // 32 chars + null
     char     mqtt_broker_url[50];// e.g. mqtt://192.168.1.100:1883 (26 chars typical)
@@ -62,7 +70,7 @@ struct WireBundle {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(WireBundle) == 175, "WireBundle size changed — check ESP-NOW fit");
+static_assert(sizeof(WireBundle) == 176, "WireBundle size changed — check ESP-NOW fit");
 
 #ifdef SIBLING_PRIMARY_SELECTION
 // ── SiblingHealth: health advertisement for primary selection ─────────────────
@@ -106,6 +114,7 @@ static volatile bool    _healthCollecting = false;
 // Convert CredentialBundle → WireBundle (truncate oversized fields)
 static void bundleToWire(const CredentialBundle& b, WireBundle& w) {
     memset(&w, 0, sizeof(w));
+    w.wire_version = ESPNOW_WIRE_VERSION;
     strncpy(w.wifi_ssid,       b.wifi_ssid,       sizeof(w.wifi_ssid)       - 1);
     strncpy(w.wifi_password,   b.wifi_password,   sizeof(w.wifi_password)   - 1);
     strncpy(w.mqtt_broker_url, b.mqtt_broker_url, sizeof(w.mqtt_broker_url) - 1);
@@ -360,6 +369,14 @@ bool espnowBootstrap(CredentialBundle& out) {
     memcpy(&wire, plaintext, sizeof(WireBundle));
     memset(plaintext, 0, sizeof(plaintext));
 
+    if (wire.wire_version != ESPNOW_WIRE_VERSION) {
+        LOG_W("ESP-NOW", "Unknown WireBundle version %d (expected %d) — rejecting",
+              wire.wire_version, ESPNOW_WIRE_VERSION);
+        memset(&wire, 0, sizeof(wire));
+        esp_now_deinit();
+        return false;
+    }
+
     wireToBundle(wire, out);
     memset(&wire, 0, sizeof(wire));
 
@@ -584,6 +601,14 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     WireBundle wire;
     memcpy(&wire, plaintext, sizeof(WireBundle));
     memset(plaintext, 0, sizeof(plaintext));
+
+    if (wire.wire_version != ESPNOW_WIRE_VERSION) {
+        LOG_W("ESP-NOW", "Unknown WireBundle version %d (expected %d) — rejecting",
+              wire.wire_version, ESPNOW_WIRE_VERSION);
+        memset(&wire, 0, sizeof(wire));
+        esp_now_deinit();
+        return false;
+    }
 
     wireToBundle(wire, out);
     memset(&wire, 0, sizeof(wire));

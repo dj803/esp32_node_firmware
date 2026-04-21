@@ -444,6 +444,43 @@ New files: include/logging.h, include/fwevent.h
 
 
 ────────────────────────────────────────────────────────────────────────────────
+13. v0.3.08 — Wire-format versioning, snprintf, NVS namespace registry, tests
+────────────────────────────────────────────────────────────────────────────────
+
+[espnow_bootstrap.h] WireBundle wire_version field (DEFERRED item 11)
+  WireBundle gained a uint8_t wire_version as its first byte (struct size 175→176).
+  ESPNOW_WIRE_VERSION constant = 1. bundleToWire() sets wire_version = 1.
+  Both receive paths (espnowBootstrap and espnowBootstrapWithPrimarySelection)
+  check wire.wire_version after decryption and LOG_W + reject frames with any
+  value other than 1. Old senders (pre-v0.3.08) send 175-byte plaintext which
+  fails the size check first — they are rejected with "Bundle size mismatch".
+  logging.h included in espnow_bootstrap.h for the new LOG_W calls.
+
+[ap_portal.h] apHandleStatus snprintf (DEFERRED item 12)
+  apHandleStatus() replaced String concatenation (6 heap allocs per call) with
+  a single 512-byte stack buffer + snprintf(). No behaviour change — field values
+  and JSON structure identical.
+
+[config.h] NvsNs enum registry (DEFERRED item 13)
+  enum class NvsNs : uint8_t added after the BLE namespace #define, with values
+  CREDENTIALS(0), DEVICE_ID(1), BROKER_CACHE(2), LED(3), RFID(4), BLE(5).
+  inline nvsNsName(NvsNs) returns the string from the existing #define so
+  all six existing macro call-sites compile unchanged.
+
+[include/semver.h] New dependency-free header (DEFERRED item 14)
+  semverIsNewer() extracted from ota.h into include/semver.h which only
+  #includes <stdio.h>. ota.h now #includes "semver.h". The function is
+  unchanged — refactor only.
+
+[test_main.cpp] 10 new Unity tests (40 total) (DEFERRED item 14)
+  6 semver tests: major/minor ordering, double-digit minor (0.9.x < 0.10.x),
+  numeric patch comparison (0.2.7 < 0.2.15), leading zeros (0.3.00 == 0.3.0),
+  equal versions.
+  4 topic sanitizer pathological cases: multiple slashes in one segment,
+  leading slash, segment consisting only of wildcards, mixed wildcard + text.
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

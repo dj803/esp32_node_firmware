@@ -6,6 +6,7 @@
 #include "config.h"
 #include "logging.h"
 #include "fwevent.h"
+#include "semver.h"   // semverIsNewer() — extracted to allow host-side unit testing
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 #include "led.h"
 
@@ -52,22 +53,6 @@
 static uint32_t _lastOtaCheck = 0;     // millis() timestamp of last check
 static bool     _otaForced    = false; // True when MQTT has requested an immediate check
 
-
-// ── semverIsNewer ─────────────────────────────────────────────────────────────
-// Returns true if `candidate` is strictly newer than `installed`.
-// Parses MAJOR.MINOR.PATCH numerically so "0.2.15" > "0.2.7" correctly.
-// ESP32OTAPull uses String::compareTo() which is lexicographic and breaks on
-// double-digit patch/minor numbers — we bypass it by always passing "0.0.0"
-// as the installed version and doing our own comparison here.
-static bool semverIsNewer(const char* installed, const char* candidate) {
-    int iMaj = 0, iMin = 0, iPat = 0;
-    int cMaj = 0, cMin = 0, cPat = 0;
-    sscanf(installed,  "%d.%d.%d", &iMaj, &iMin, &iPat);
-    sscanf(candidate,  "%d.%d.%d", &cMaj, &cMin, &cPat);
-    if (cMaj != iMaj) return cMaj > iMaj;
-    if (cMin != iMin) return cMin > iMin;
-    return cPat > iPat;
-}
 
 
 // ── otaCheckNow ───────────────────────────────────────────────────────────────
