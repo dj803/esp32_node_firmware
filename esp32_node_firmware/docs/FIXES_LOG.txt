@@ -554,6 +554,49 @@ New files: include/logging.h, include/fwevent.h
 
 
 ────────────────────────────────────────────────────────────────────────────────
+16. v0.3.11 — HTTPS for provisioning portals
+────────────────────────────────────────────────────────────────────────────────
+
+[ap_portal.h] Complete WebServer → ESP-IDF httpd_ssl transport replacement (DEFERRED item 3)
+  #include <WebServer.h> and static WebServer _apServer(80) removed.
+  Replaced with #include <esp_https_server.h> and static httpd_handle_t
+  _httpsServer. Both portal modes (AP and Settings) now serve HTTPS on port 443.
+
+  TLS credential management:
+  — Self-signed RSA-2048 cert generated once at first boot via mbedTLS (~10 s).
+  — CN = device UUID. IP SubjectAltName = 192.168.4.1 embedded so Chrome shows
+    the "proceed anyway" option when connecting to the AP portal by IP.
+  — Cert + private key stored in NVS namespace "esp32portal" (PEM strings).
+    Subsequent boots load from NVS instantly (< 1 ms).
+  — If cert generation fails, portal falls back to plain HTTP on port 80 so
+    provisioning is never bricked.
+
+  Handler API change:
+  — All six handlers changed from void handler() to esp_err_t handler(httpd_req_t*).
+  — POST body parsed manually via new readPostBody(req) + getFormArg(name, out, len)
+    helpers replacing the automatic WebServer::arg() form parsing.
+  — Responses sent via httpd_resp_set_type(), httpd_resp_set_hdr(), httpd_resp_send().
+  — Set-Cookie CSRF header now via httpd_resp_set_hdr (was WebServer::sendHeader).
+  — Error status codes (403, 400, 500) set via httpd_resp_set_status().
+
+  apPortalStart() changes:
+  — Calls loadOrGenerateTlsCreds() before starting the server.
+  — httpd_ssl_start() replaces _apServer.begin().
+  — The while(true) loop now calls delay(100) only; httpd runs in its own task.
+
+  settingsServerStart() changes:
+  — Calls loadOrGenerateTlsCreds() (fast NVS load after AP mode ran first).
+  — httpd_ssl_start() replaces _apServer.begin().
+  — settingsServerTick() is now a no-op returning the running flag; httpd
+    handles connections asynchronously without polling.
+  — settingsServerStop() calls httpd_ssl_stop().
+
+[mqtt_client.h] MQTT cmd/config_mode status URL updated
+  "settings_url" field in the CONFIG_MODE_ACTIVE status message now publishes
+  https:// instead of http:// so Node-RED dashboard links are correct.
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

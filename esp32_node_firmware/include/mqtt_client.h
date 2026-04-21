@@ -443,7 +443,7 @@ static void onMqttMessage(char* topic, char* payload,
         // GitHub and MQTT settings without entering AP mode.
         LOG_I("MQTT", "Config mode triggered - starting settings portal");
         mqttPublishStatus(FwEvent::CONFIG_MODE_ACTIVE,
-            (String("\"settings_url\":\"http://") + WiFi.localIP().toString() + "/settings\"").c_str());
+            (String("\"settings_url\":\"https://") + WiFi.localIP().toString() + "/settings\"").c_str());
         settingsServerStart();
     } else if (t == mqttTopic("cmd/led")) {
         // WS2812B LED strip control

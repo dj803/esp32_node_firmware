@@ -3,7 +3,14 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <WebServer.h>
+#include <esp_https_server.h>          // replaces WebServer.h
+#include <Preferences.h>               // Arduino NVS wrapper — TLS credential persistence
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/oid.h>
 #include "config.h"
 #include "logging.h"
 #include "credentials.h"
@@ -11,18 +18,18 @@
 #include "device_id.h"
 
 // =============================================================================
-// ap_portal.h  —  Configuration portals
+// ap_portal.h  —  Configuration portals (HTTPS)
 //
-// TWO PORTAL MODES — same WebServer, different contexts:
+// TWO PORTAL MODES — same HTTPS server, different handler sets:
 //
 // ┌─────────────────────────────────────────────────────────────────────────┐
 // │ MODE 1: AP Mode (apPortalStart)                                          │
 // │  Entered when no credentials exist or all retries fail.                  │
 // │  Device creates a Wi-Fi access point "ESP32-Config-xxxxxxxxxxxx".        │
-// │  Admin connects to that AP and browses to 192.168.4.1.                   │
+// │  Admin connects to that AP and browses to https://192.168.4.1/           │
 // │                                                                           │
 // │  GET  /           Full setup form — Wi-Fi, MQTT, OTA URL, rotation key   │
-// │  POST /save       Saves all fields, restarts                             │
+// │  POST /save       Saves all fields, restarts                              │
 // │  GET  /status     JSON device info                                        │
 // └─────────────────────────────────────────────────────────────────────────┘
 //
@@ -30,26 +37,199 @@
 // │ MODE 2: Settings Mode (settingsServerStart / settingsServerStop)         │
 // │  Available when already connected to Wi-Fi (OPERATIONAL state).          │
 // │  Triggered by an MQTT command on .../cmd/config_mode.                    │
-// │  Device starts a temporary HTTP server on its STA IP (same network       │
-// │  as the admin's browser — no need to switch Wi-Fi networks).             │
+// │  Device starts a temporary HTTPS server on its STA IP.                   │
 // │                                                                           │
 // │  GET  /settings   Settings-only form — OTA URL + MQTT hierarchy          │
 // │  POST /settings   Saves OTA URL + MQTT settings, does NOT restart        │
 // │  GET  /status     JSON device info                                        │
 // └─────────────────────────────────────────────────────────────────────────┘
 //
-// SECURITY: Both portals are plain HTTP (no TLS). Security relies on
-// physical/network proximity. AP mode requires connecting to the device's
-// own Wi-Fi network. Settings mode requires being on the same LAN.
+// SECURITY: Both portals use HTTPS with a self-signed RSA-2048 certificate.
+//   The cert is generated on first boot (~10 s), stored in NVS "esp32portal",
+//   and loaded on every subsequent boot. CN = device UUID.  The AP portal IP
+//   (192.168.4.1) is embedded as an IP SubjectAltName so Chrome can display
+//   the "proceed anyway" option even for self-signed certs.
+//   Accepted UX cost: browsers will show an "untrusted certificate" warning.
+//   Click Advanced → Proceed (Chrome) or Advanced → Accept Risk (Firefox).
 //
 // OTA JSON URL:
-// The OTA JSON URL is entered through these portals — never hardcoded in
-// config.h or committed to the repository. The full setup form (Mode 1)
-// requires it before it will save. The settings form (Mode 2) can update
-// it independently at any time without re-entering Wi-Fi credentials.
+// The OTA JSON URL is entered through these portals — never hardcoded.
+// The full setup form (Mode 1) requires it before saving. The settings form
+// (Mode 2) can update it independently at any time.
 // =============================================================================
 
-static WebServer _apServer(80);   // Shared server instance for both modes
+
+// ── HTTPS server handle ────────────────────────────────────────────────────────
+static httpd_handle_t _httpsServer = nullptr;
+
+
+// ── TLS credential storage ─────────────────────────────────────────────────────
+// Self-signed RSA-2048 certificate + private key in PEM format.
+// Generated once at first-boot (via loadOrGenerateTlsCreds), cached in NVS.
+// Both buffers must remain valid for the lifetime of the HTTPS server.
+#define PORTAL_TLS_NVS_NAMESPACE  "esp32portal"
+#define PORTAL_TLS_CERT_KEY       "tls_cert"
+#define PORTAL_TLS_PKEY_KEY       "tls_pkey"
+#define PORTAL_TLS_CERT_MAXLEN    2048   // PEM cert ≈ 900 bytes; 2 KB is safe
+#define PORTAL_TLS_PKEY_MAXLEN    2048   // PEM RSA-2048 key ≈ 1700 bytes; 2 KB is safe
+
+static char _tlsCertPem[PORTAL_TLS_CERT_MAXLEN];
+static char _tlsKeyPem [PORTAL_TLS_PKEY_MAXLEN];
+
+
+// Loads TLS credentials from NVS. Returns true on success.
+static bool _loadTlsCreds() {
+    Preferences prefs;
+    prefs.begin(PORTAL_TLS_NVS_NAMESPACE, true);   // read-only
+    bool hasCert = prefs.isKey(PORTAL_TLS_CERT_KEY);
+    bool hasKey  = prefs.isKey(PORTAL_TLS_PKEY_KEY);
+    if (!hasCert || !hasKey) { prefs.end(); return false; }
+
+    String cert = prefs.getString(PORTAL_TLS_CERT_KEY, "");
+    String key  = prefs.getString(PORTAL_TLS_PKEY_KEY,  "");
+    prefs.end();
+
+    if (cert.length() < 20 || key.length() < 20) return false;
+    cert.toCharArray(_tlsCertPem, PORTAL_TLS_CERT_MAXLEN);
+    key.toCharArray(_tlsKeyPem,   PORTAL_TLS_PKEY_MAXLEN);
+    return true;
+}
+
+// Saves current _tlsCertPem / _tlsKeyPem to NVS.
+static void _saveTlsCreds() {
+    Preferences prefs;
+    prefs.begin(PORTAL_TLS_NVS_NAMESPACE, false);
+    bool ok = prefs.putString(PORTAL_TLS_CERT_KEY, _tlsCertPem) > 0
+           && prefs.putString(PORTAL_TLS_PKEY_KEY,  _tlsKeyPem)  > 0;
+    prefs.end();
+    if (ok) {
+        LOG_I("AP Portal", "TLS credentials saved to NVS");
+    } else {
+        LOG_W("AP Portal", "Could not save TLS creds to NVS — will regenerate next boot");
+    }
+}
+
+// Generates a self-signed RSA-2048 certificate and private key.
+// CN = device UUID; IP SAN = 192.168.4.1 (AP portal fixed address).
+// Writes results to _tlsCertPem and _tlsKeyPem.
+// Returns true on success. Takes ~10 s on first call.
+static bool _generateTlsCreds() {
+    mbedtls_pk_context       pk;
+    mbedtls_x509write_cert   crt;
+    mbedtls_entropy_context  entropy;
+    mbedtls_ctr_drbg_context rng;
+
+    mbedtls_pk_init(&pk);
+    mbedtls_x509write_crt_init(&crt);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&rng);
+
+    bool ok = false;
+    int  ret;
+
+    LOG_I("AP Portal", "Generating RSA-2048 self-signed cert (~10 s)...");
+
+    const char* pers = "esp32_portal_cert";
+    ret = mbedtls_ctr_drbg_seed(&rng, mbedtls_entropy_func, &entropy,
+                                 (const unsigned char*)pers, strlen(pers));
+    if (ret) { LOG_E("AP Portal", "ctr_drbg_seed: -0x%04X", -ret); goto cleanup; }
+
+    ret = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+    if (ret) { LOG_E("AP Portal", "pk_setup: -0x%04X", -ret); goto cleanup; }
+
+    ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk),
+                              mbedtls_ctr_drbg_random, &rng, 2048, 65537);
+    if (ret) { LOG_E("AP Portal", "rsa_gen_key: -0x%04X", -ret); goto cleanup; }
+    LOG_I("AP Portal", "RSA-2048 key generated");
+
+    // Set subject / issuer (self-signed: same for both)
+    mbedtls_x509write_crt_set_subject_key(&crt, &pk);
+    mbedtls_x509write_crt_set_issuer_key(&crt, &pk);
+
+    {
+        char cn[96];
+        snprintf(cn, sizeof(cn), "CN=%s,O=ESP32,C=US", DeviceId::get().c_str());
+        if ((ret = mbedtls_x509write_crt_set_subject_name(&crt, cn)) ||
+            (ret = mbedtls_x509write_crt_set_issuer_name(&crt,  cn))) {
+            LOG_E("AP Portal", "set subject/issuer: -0x%04X", -ret);
+            goto cleanup;
+        }
+    }
+
+    mbedtls_x509write_crt_set_version(&crt, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&crt, MBEDTLS_MD_SHA256);
+
+    {
+        unsigned char serial[4] = {0, 0, 0, 1};
+        ret = mbedtls_x509write_crt_set_serial_raw(&crt, serial, sizeof(serial));
+        if (ret) { LOG_E("AP Portal", "set_serial: -0x%04X", -ret); goto cleanup; }
+    }
+
+    ret = mbedtls_x509write_crt_set_validity(&crt, "20240101000000", "20340101000000");
+    if (ret) { LOG_E("AP Portal", "set_validity: -0x%04X", -ret); goto cleanup; }
+
+    ret = mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1);
+    if (ret) { LOG_E("AP Portal", "set_basic_constraints: -0x%04X", -ret); goto cleanup; }
+
+    // Add IP SubjectAltName: 192.168.4.1 (the fixed AP portal address).
+    // DER encoding of GeneralNames sequence: SEQUENCE { [7] { 0xc0 0xa8 0x04 0x01 } }
+    {
+        static const unsigned char sanVal[] = {
+            0x30, 0x06,               // SEQUENCE, 6 bytes
+            0x87, 0x04,               // [7] iPAddress, 4 bytes
+            0xc0, 0xa8, 0x04, 0x01   // 192.168.4.1
+        };
+        ret = mbedtls_x509write_crt_set_extension(
+            &crt,
+            MBEDTLS_OID_SUBJECT_ALT_NAME,
+            MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME),
+            0,   // non-critical
+            sanVal, sizeof(sanVal));
+        if (ret) { LOG_E("AP Portal", "set SAN: -0x%04X", -ret); goto cleanup; }
+    }
+
+    // Write PEM certificate
+    memset(_tlsCertPem, 0, sizeof(_tlsCertPem));
+    ret = mbedtls_x509write_crt_pem(&crt, (unsigned char*)_tlsCertPem,
+                                    sizeof(_tlsCertPem),
+                                    mbedtls_ctr_drbg_random, &rng);
+    if (ret) { LOG_E("AP Portal", "write_crt_pem: -0x%04X", -ret); goto cleanup; }
+
+    // Write PEM private key
+    memset(_tlsKeyPem, 0, sizeof(_tlsKeyPem));
+    ret = mbedtls_pk_write_key_pem(&pk, (unsigned char*)_tlsKeyPem,
+                                   sizeof(_tlsKeyPem));
+    if (ret) { LOG_E("AP Portal", "write_key_pem: -0x%04X", -ret); goto cleanup; }
+
+    LOG_I("AP Portal", "Cert generated (cert %u B, key %u B)",
+          (unsigned)strlen(_tlsCertPem), (unsigned)strlen(_tlsKeyPem));
+    ok = true;
+
+cleanup:
+    mbedtls_pk_free(&pk);
+    mbedtls_x509write_crt_free(&crt);
+    mbedtls_entropy_free(&entropy);
+    mbedtls_ctr_drbg_free(&rng);
+    return ok;
+}
+
+// Loads TLS credentials from NVS or generates them on first boot.
+// Returns true when _tlsCertPem / _tlsKeyPem are valid and ready.
+// Called from apPortalStart() and settingsServerStart().
+static bool loadOrGenerateTlsCreds() {
+    if (_loadTlsCreds()) {
+        LOG_I("AP Portal", "TLS credentials loaded from NVS (%u + %u chars)",
+              (unsigned)strlen(_tlsCertPem), (unsigned)strlen(_tlsKeyPem));
+        return true;
+    }
+    LOG_I("AP Portal", "No TLS creds in NVS — generating (first boot)");
+    if (!_generateTlsCreds()) {
+        LOG_E("AP Portal", "TLS credential generation failed — portal will start on HTTP");
+        return false;
+    }
+    _saveTlsCreds();
+    return true;
+}
 
 
 // ── CSRF token storage ─────────────────────────────────────────────────────────
@@ -58,8 +238,7 @@ static WebServer _apServer(80);   // Shared server instance for both modes
 // submitted field value matches the last generated token.
 //
 // 128-bit token (32 lowercase hex chars) via esp_random() — unguessable on a
-// per-session basis. Token is one-shot: the next GET replaces it, so an old
-// captured token is invalid after the admin reloads the page.
+// per-session basis. Token is one-shot: the next GET replaces it.
 //
 // SameSite=Strict cookie set on GET prevents the browser from attaching the
 // cookie on any cross-origin POST, blocking drive-by CSRF from malicious pages
@@ -82,6 +261,89 @@ static void generateCsrfToken(char* out) {
 }
 
 
+// ── POST body reader + URL-form arg parser ─────────────────────────────────────
+// readPostBody() reads the entire POST body into _portalPostBody.
+// getFormArg() extracts a named field from the URL-encoded body.
+// formArg() is a convenience wrapper that returns an Arduino String.
+
+#define PORTAL_MAX_BODY  3072   // plenty for all form fields at max length
+
+static char _portalPostBody[PORTAL_MAX_BODY];
+
+static bool readPostBody(httpd_req_t* req) {
+    _portalPostBody[0] = '\0';
+    int contentLen = (int)req->content_len;
+    if (contentLen <= 0)           return true;      // GET request — no body
+    if (contentLen >= PORTAL_MAX_BODY) {
+        LOG_W("AP Portal", "POST body too large (%d bytes)", contentLen);
+        return false;
+    }
+    int rx = httpd_req_recv(req, _portalPostBody, (size_t)contentLen);
+    if (rx != contentLen) {
+        LOG_W("AP Portal", "POST body recv partial (%d / %d)", rx, contentLen);
+        _portalPostBody[0] = '\0';
+        return false;
+    }
+    _portalPostBody[contentLen] = '\0';
+    return true;
+}
+
+// Decode a single %-encoded byte pair (e.g. '%2F' → '/').
+static char _pctDecode(char hi, char lo) {
+    auto hv = [](char c) -> uint8_t {
+        if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+        if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+        if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
+        return 0;
+    };
+    return (char)((hv(hi) << 4) | hv(lo));
+}
+
+// Extract a named field from _portalPostBody and URL-decode it into out[].
+// Writes at most (outLen-1) decoded chars; always null-terminates.
+static void getFormArg(const char* name, char* out, size_t outLen) {
+    out[0] = '\0';
+    if (outLen == 0) return;
+    size_t nameLen = strlen(name);
+    const char* p   = _portalPostBody;
+    const char* end = p + strlen(p);
+
+    while (p < end) {
+        const char* eq  = (const char*)memchr(p, '=', (size_t)(end - p));
+        if (!eq) break;
+        const char* amp = (const char*)memchr(eq + 1, '&', (size_t)(end - (eq + 1)));
+        const char* valEnd = amp ? amp : end;
+
+        if ((size_t)(eq - p) == nameLen && memcmp(p, name, nameLen) == 0) {
+            const char* v   = eq + 1;
+            size_t      idx = 0;
+            while (v < valEnd && idx < outLen - 1) {
+                if (*v == '%' && v + 2 < valEnd) {
+                    out[idx++] = _pctDecode(v[1], v[2]);
+                    v += 3;
+                } else if (*v == '+') {
+                    out[idx++] = ' ';
+                    v++;
+                } else {
+                    out[idx++] = *v++;
+                }
+            }
+            out[idx] = '\0';
+            return;
+        }
+        p = amp ? amp + 1 : end;
+    }
+}
+
+// Convenience: returns a named form field as an Arduino String.
+// Allocates on the heap — use only in request handlers, not tight loops.
+static String formArg(const char* name) {
+    char buf[512];
+    getFormArg(name, buf, sizeof(buf));
+    return String(buf);
+}
+
+
 // ── Shared utility ─────────────────────────────────────────────────────────────
 static String getDeviceId() {
     String uuid = DeviceId::get();
@@ -95,9 +357,7 @@ static String getDeviceId() {
     return uuid;
 }
 
-// Shared CSS and page header — used by both forms to keep HTML size down
-// Shared CSS injected into both HTML forms.
-// Kept as a const char[] (not String) to stay in flash rather than RAM.
+// Shared CSS injected into both HTML forms. Kept in flash (const char[]).
 static const char PAGE_STYLE[] =
     "body{font-family:Arial,sans-serif;max-width:520px;margin:40px auto;padding:0 16px}"
     "input{width:100%;box-sizing:border-box;padding:8px;margin:4px 0 12px;"
@@ -110,23 +370,18 @@ static const char PAGE_STYLE[] =
     ".locate{background:#E07B39}";
 
 
-// ── Locate — HTTP handler: flash LED 10 times so device can be found physically ─
-static void apHandleLocate() {
+// ── Locate — POST /locate: flash LED so the device can be found physically ──────
+static esp_err_t apHandleLocate(httpd_req_t* req) {
     ledFlashLocate();
-    _apServer.send(200, "text/plain", "ok");
+    httpd_resp_send(req, "ok", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
 
-// ── GET /status — shared by both modes ─────────────────────────────────────────
-// Returns a JSON snapshot of device identity, firmware version, LAN IP,
-// and the active OTA JSON URL. Useful for Node-RED dashboards and
-// for confirming which physical device you are connected to.
-static void apHandleStatus() {
-    // Use a stack buffer rather than String concatenation to avoid repeated heap
-    // allocation on every /status poll.  Field size budget:
-    //   device_id (40) + mac (18) + version (16) + ts (11) + ip (16)
-    //   + ota_json_url (APP_CFG_OTA_JSON_URL_LEN=256) + JSON keys/punct (~90)
-    //   = ~447 bytes.  Use 512 for headroom.
+// ── GET /status — shared by both portal modes ──────────────────────────────────
+// Returns a JSON snapshot: device ID, MAC, firmware version, timestamp, IP,
+// OTA JSON URL. Useful for Node-RED dashboards and physical device identification.
+static esp_err_t apHandleStatus(httpd_req_t* req) {
     char buf[512];
     snprintf(buf, sizeof(buf),
         "{\"device_id\":\"%s\","
@@ -140,7 +395,9 @@ static void apHandleStatus() {
         (unsigned int)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
         WiFi.localIP().toString().c_str(),
         gAppConfig.ota_json_url);
-    _apServer.send(200, "application/json", buf);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
 }
 
 
@@ -148,16 +405,8 @@ static void apHandleStatus() {
 // MODE 1 — AP Mode portal (full setup form)
 // =============================================================================
 
-// ── GET / — Full setup form (AP mode only) ───────────────────────────────────────
-// Serves all configuration fields in one page:
-//   Section 1: Wi-Fi SSID + password
-//   Section 2: MQTT broker URL, username, password
-//   Section 3: OTA JSON URL (required — stable GitHub Pages URL for firmware updates)
-//   Section 4: MQTT ISA-95 topic hierarchy (pre-filled with current gAppConfig values)
-//   Section 5: Rotation key (optional AES key for MQTT credential rotation)
-// OTA JSON URL is pre-filled with gAppConfig value (from NVS or config.h default)
-// so that returning admins see what is currently configured.
-static void apHandleRoot() {
+// ── GET / — Full setup form (AP mode only) ────────────────────────────────────
+static esp_err_t apHandleRoot(httpd_req_t* req) {
     generateCsrfToken(_csrfTokenAp);   // Fresh token on every GET
 
     String html = String("<!DOCTYPE html><html><head>"
@@ -222,74 +471,87 @@ static void apHandleRoot() {
         "<button type='submit'>Save &amp; Restart</button>"
         "</form>"
         "</body></html>";
-    _apServer.sendHeader("Set-Cookie",
-        String("csrf=") + _csrfTokenAp + "; SameSite=Strict; HttpOnly");
-    _apServer.send(200, "text/html", html);
+
+    // Set CSRF cookie for defence-in-depth (SameSite=Strict blocks cross-origin POST)
+    char cookieBuf[72];
+    snprintf(cookieBuf, sizeof(cookieBuf),
+             "csrf=%s; SameSite=Strict; HttpOnly", _csrfTokenAp);
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Set-Cookie", cookieBuf);
+    httpd_resp_send(req, html.c_str(), (ssize_t)html.length());
+    return ESP_OK;
 }
 
 
 // ── POST /save — Full setup, save all fields, restart ─────────────────────────
-static void apHandleSave() {
+static esp_err_t apHandleSave(httpd_req_t* req) {
+    if (!readPostBody(req)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: could not read request body.", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
     // ── CSRF check ────────────────────────────────────────────────────────────
-    // Reject requests that don't carry the token embedded in the GET form.
-    // Protects against cross-site scripts silently pushing new credentials.
-    String csrfArg = _apServer.arg("csrf");
+    String csrfArg = formArg("csrf");
     if (_csrfTokenAp[0] == '\0' || csrfArg.isEmpty() ||
         csrfArg != String(_csrfTokenAp)) {
-        LOG_W("AP Portal", "POST /save rejected - CSRF check failed");
-        _apServer.send(403, "text/plain",
-            "Error: CSRF check failed. Reload the setup page and try again.");
-        return;
+        LOG_W("AP Portal", "POST /save rejected — CSRF check failed");
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req,
+            "Error: CSRF check failed. Reload the setup page and try again.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
     // Invalidate the token — each token is single-use.
     _csrfTokenAp[0] = '\0';
 
-    String ssid       = _apServer.arg("wifi_ssid");
-    String murl       = _apServer.arg("mqtt_broker_url");
-    String otaJsonUrl = _apServer.arg("ota_json_url");
+    String ssid       = formArg("wifi_ssid");
+    String murl       = formArg("mqtt_broker_url");
+    String otaJsonUrl = formArg("ota_json_url");
 
-    // All three fields are required — reject early with a clear message.
-    // OTA JSON URL is required here (not optional) to prevent the device
-    // being saved with the placeholder URL that would cause OTA to fail.
     if (ssid.isEmpty() || murl.isEmpty() || otaJsonUrl.isEmpty()) {
-        _apServer.send(400, "text/plain",
-            "Error: wifi_ssid, mqtt_broker_url and ota_json_url are required.");
-        return;
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req,
+            "Error: wifi_ssid, mqtt_broker_url and ota_json_url are required.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     // ── Field length validation ───────────────────────────────────────────────
-    // Reject oversized fields before copying into fixed-size buffers.
-    // String::toCharArray() silently truncates without null-terminating when the
-    // source exceeds the destination size, which corrupts adjacent struct fields.
-    // Limits are (buffer_size - 1) to always leave room for the null terminator.
-    CredentialBundle _tmp;   // Use sizeof() on actual struct fields for accuracy
-    if (ssid.length()                               > sizeof(_tmp.wifi_ssid)       - 1 ||
-        _apServer.arg("wifi_password").length()     > sizeof(_tmp.wifi_password)   - 1 ||
-        murl.length()                               > sizeof(_tmp.mqtt_broker_url) - 1 ||
-        _apServer.arg("mqtt_username").length()     > sizeof(_tmp.mqtt_username)   - 1 ||
-        _apServer.arg("mqtt_password").length()     > sizeof(_tmp.mqtt_password)   - 1 ||
-        otaJsonUrl.length()                         > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
-        _apServer.arg("mq_enterprise").length()     > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_site").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_area").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_line").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_cell").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_devtype").length()        > APP_CFG_MQTT_SEG_LEN         - 1) {
-        _apServer.send(400, "text/plain",
-            "Error: one or more fields exceed the maximum allowed length.");
-        LOG_W("AP Portal", "POST /save rejected - field too long");
-        return;
+    CredentialBundle _tmp;
+    if (ssid.length()                     > sizeof(_tmp.wifi_ssid)       - 1 ||
+        formArg("wifi_password").length() > sizeof(_tmp.wifi_password)   - 1 ||
+        murl.length()                     > sizeof(_tmp.mqtt_broker_url) - 1 ||
+        formArg("mqtt_username").length() > sizeof(_tmp.mqtt_username)   - 1 ||
+        formArg("mqtt_password").length() > sizeof(_tmp.mqtt_password)   - 1 ||
+        otaJsonUrl.length()               > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
+        formArg("mq_enterprise").length() > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_site").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_area").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_line").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_cell").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_devtype").length()    > APP_CFG_MQTT_SEG_LEN         - 1) {
+        LOG_W("AP Portal", "POST /save rejected — field too long");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req,
+            "Error: one or more fields exceed the maximum allowed length.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     // ── Save credentials ──────────────────────────────────────────────────────
     CredentialBundle b;
-    ssid.toCharArray(b.wifi_ssid,       sizeof(b.wifi_ssid));
-    _apServer.arg("wifi_password") .toCharArray(b.wifi_password,   sizeof(b.wifi_password));
-    murl.toCharArray(b.mqtt_broker_url, sizeof(b.mqtt_broker_url));
-    _apServer.arg("mqtt_username") .toCharArray(b.mqtt_username,   sizeof(b.mqtt_username));
-    _apServer.arg("mqtt_password") .toCharArray(b.mqtt_password,   sizeof(b.mqtt_password));
+    ssid.toCharArray(b.wifi_ssid,        sizeof(b.wifi_ssid));
+    formArg("wifi_password") .toCharArray(b.wifi_password,   sizeof(b.wifi_password));
+    murl.toCharArray(b.mqtt_broker_url,  sizeof(b.mqtt_broker_url));
+    formArg("mqtt_username") .toCharArray(b.mqtt_username,   sizeof(b.mqtt_username));
+    formArg("mqtt_password") .toCharArray(b.mqtt_password,   sizeof(b.mqtt_password));
 
-    String rotHex = _apServer.arg("rotation_key");
+    String rotHex = formArg("rotation_key");
     if (rotHex.length() == 32) {
         for (int i = 0; i < 16; i++) {
             char hex[3] = { rotHex[i*2], rotHex[i*2+1], 0 };
@@ -300,26 +562,26 @@ static void apHandleSave() {
     b.source    = CredSource::ADMIN;
 
     if (!CredentialStore::save(b)) {
-        _apServer.send(500, "text/plain", "Error: failed to save credentials to NVS.");
-        return;
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: failed to save credentials to NVS.",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
-    // Clear any stale-credentials flag from a previous loop() failure so that
-    // the next boot uses these fresh admin credentials directly (WIFI_CONNECT)
-    // rather than forcing an unnecessary sibling re-verify (BOOTSTRAP_REQUEST).
+    // Clear stale-credentials flag so the next boot goes straight to WIFI_CONNECT.
     CredentialStore::setCredStale(false);
 
     // ── Save app config (OTA JSON URL + MQTT hierarchy) ──────────────────────
     AppConfig cfg;
     otaJsonUrl.toCharArray(cfg.ota_json_url,    sizeof(cfg.ota_json_url));
-    _apServer.arg("mq_enterprise").toCharArray(cfg.mqtt_enterprise,  sizeof(cfg.mqtt_enterprise));
-    _apServer.arg("mq_site")      .toCharArray(cfg.mqtt_site,        sizeof(cfg.mqtt_site));
-    _apServer.arg("mq_area")      .toCharArray(cfg.mqtt_area,        sizeof(cfg.mqtt_area));
-    _apServer.arg("mq_line")      .toCharArray(cfg.mqtt_line,        sizeof(cfg.mqtt_line));
-    _apServer.arg("mq_cell")      .toCharArray(cfg.mqtt_cell,        sizeof(cfg.mqtt_cell));
-    _apServer.arg("mq_devtype")   .toCharArray(cfg.mqtt_device_type, sizeof(cfg.mqtt_device_type));
+    formArg("mq_enterprise").toCharArray(cfg.mqtt_enterprise,  sizeof(cfg.mqtt_enterprise));
+    formArg("mq_site")      .toCharArray(cfg.mqtt_site,        sizeof(cfg.mqtt_site));
+    formArg("mq_area")      .toCharArray(cfg.mqtt_area,        sizeof(cfg.mqtt_area));
+    formArg("mq_line")      .toCharArray(cfg.mqtt_line,        sizeof(cfg.mqtt_line));
+    formArg("mq_cell")      .toCharArray(cfg.mqtt_cell,        sizeof(cfg.mqtt_cell));
+    formArg("mq_devtype")   .toCharArray(cfg.mqtt_device_type, sizeof(cfg.mqtt_device_type));
 
-    // Fill any blank MQTT fields with current defaults so nothing breaks
     if (strlen(cfg.mqtt_enterprise) == 0) strncpy(cfg.mqtt_enterprise, MQTT_ENTERPRISE, sizeof(cfg.mqtt_enterprise)-1);
     if (strlen(cfg.mqtt_site)       == 0) strncpy(cfg.mqtt_site,       MQTT_SITE,       sizeof(cfg.mqtt_site)-1);
     if (strlen(cfg.mqtt_area)       == 0) strncpy(cfg.mqtt_area,       MQTT_AREA,       sizeof(cfg.mqtt_area)-1);
@@ -328,22 +590,28 @@ static void apHandleSave() {
     if (strlen(cfg.mqtt_device_type)== 0) strncpy(cfg.mqtt_device_type,MQTT_DEVICE_TYPE,sizeof(cfg.mqtt_device_type)-1);
 
     if (!AppConfigStore::save(cfg)) {
-        _apServer.send(500, "text/plain", "Error: failed to save app config to NVS.");
-        return;
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: failed to save app config to NVS.",
+                        HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
-    _apServer.send(200, "text/plain", "All settings saved. Restarting...");
-    LOG_I("AP Portal", "Settings saved - restarting in 2 s");
-    // 2 s delay: gives the browser enough time to receive the HTTP response
-    // before the AP interface disappears (STA mode switch cuts off the AP).
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "All settings saved. Restarting...", HTTPD_RESP_USE_STRLEN);
+    LOG_I("AP Portal", "Settings saved — restarting in 2 s");
+    // 2 s gives the browser time to receive the response before the AP disappears.
     delay(2000);
     ESP.restart();
+    return ESP_OK;   // unreachable — kept to satisfy compiler
 }
 
 
 // ── apPortalStart — AP mode, blocks forever ────────────────────────────────────
+// Starts HTTPS on port 443, registers AP-mode URI handlers, and blocks in a
+// simple loop. The httpd server runs in its own FreeRTOS task.
 void apPortalStart() {
-    String deviceId = getDeviceId();
+    String deviceId  = getDeviceId();
     String uuidSuffix = deviceId.length() >= 12
                         ? deviceId.substring(deviceId.length() - 12)
                         : deviceId;
@@ -353,44 +621,71 @@ void apPortalStart() {
     WiFi.softAP(ssid.c_str(), AP_PASSWORD);
     LOG_I("AP Portal", "SSID: %s  IP: %s", ssid.c_str(), AP_LOCAL_IP);
 
-    _apServer.on("/",       HTTP_GET,  apHandleRoot);
-    _apServer.on("/save",   HTTP_POST, apHandleSave);
-    _apServer.on("/locate", HTTP_POST, apHandleLocate);
-    _apServer.on("/status", HTTP_GET,  apHandleStatus);
-    _apServer.begin();
+    // Load or generate TLS credentials
+    bool tlsOk = loadOrGenerateTlsCreds();
 
-    LOG_I("AP Portal", "Waiting for admin - browse to 192.168.4.1");
-    while (true) {
-        _apServer.handleClient();
-        delay(10);
+    // Build server config
+    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+    conf.httpd.stack_size    = 8192;   // TLS handshake needs extra stack
+    conf.httpd.max_open_sockets = 3;   // Enough for a single admin session
+
+    if (tlsOk) {
+        conf.servercert     = (const uint8_t*)_tlsCertPem;
+        conf.servercert_len = strlen(_tlsCertPem) + 1;   // +1 includes null for PEM
+        conf.prvtkey_pem    = (const uint8_t*)_tlsKeyPem;
+        conf.prvtkey_len    = strlen(_tlsKeyPem) + 1;
+        conf.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
+        conf.port_secure    = 443;
+    } else {
+        // Cert generation failed — fall back to plain HTTP so provisioning still works
+        LOG_W("AP Portal", "Falling back to plain HTTP on port 80 (TLS unavailable)");
+        conf.transport_mode  = HTTPD_SSL_TRANSPORT_INSECURE;
+        conf.port_insecure   = 80;
     }
+
+    if (httpd_ssl_start(&_httpsServer, &conf) != ESP_OK) {
+        LOG_E("AP Portal", "httpd_ssl_start failed — stuck in AP mode with no portal");
+        while (true) delay(1000);   // Halt; device restart is the only recovery
+    }
+
+    // Register AP mode URI handlers
+    static const httpd_uri_t uriRoot   = { "/",       HTTP_GET,  apHandleRoot,   nullptr };
+    static const httpd_uri_t uriSave   = { "/save",   HTTP_POST, apHandleSave,   nullptr };
+    static const httpd_uri_t uriLocate = { "/locate", HTTP_POST, apHandleLocate, nullptr };
+    static const httpd_uri_t uriStatus = { "/status", HTTP_GET,  apHandleStatus, nullptr };
+    httpd_register_uri_handler(_httpsServer, &uriRoot);
+    httpd_register_uri_handler(_httpsServer, &uriSave);
+    httpd_register_uri_handler(_httpsServer, &uriLocate);
+    httpd_register_uri_handler(_httpsServer, &uriStatus);
+
+    const char* scheme = tlsOk ? "https" : "http";
+    LOG_I("AP Portal", "Waiting for admin — browse to %s://192.168.4.1/", scheme);
+
+    // The httpd task handles connections. Block here so setup() never returns
+    // to a firmware that isn't provisioned yet.
+    while (true) delay(100);
 }
 
 
 // =============================================================================
 // MODE 2 — Settings server (runs over existing STA Wi-Fi connection)
 // Triggered by MQTT cmd/config_mode. Admin browses to the device's LAN IP.
-// Does NOT restart after save — MQTT hierarchy updates take effect immediately;
-// GitHub settings take effect on next OTA check.
+// Does NOT restart after save — MQTT hierarchy updates take effect immediately.
 // =============================================================================
 
 // _settingsServerRunning is module-internal — never read from outside ap_portal.h.
-// Use the accessor below for any external query.
+// Use settingsServerIsRunning() for any external query.
 static bool _settingsServerRunning = false;
 
-// Returns true while the settings HTTP portal is serving requests.
+// Returns true while the settings HTTPS portal is serving requests.
 inline bool settingsServerIsRunning() { return _settingsServerRunning; }
 
-// ── GET /settings — Settings-only form (STA mode) ───────────────────────────────
-// Served over the existing Wi-Fi STA connection (device LAN IP, port 80).
-// Shows a form pre-filled with the current gAppConfig values so the admin
-// can see what is set and only change what needs updating.
-// Does NOT show Wi-Fi credentials — those are only changed in AP mode or
-// via MQTT credential rotation.
-static void settingsHandleGet() {
+
+// ── GET /settings — Settings-only form (STA mode) ────────────────────────────
+static esp_err_t settingsHandleGet(httpd_req_t* req) {
     generateCsrfToken(_csrfTokenSettings);   // Fresh token on every GET
 
-    String ip = WiFi.localIP().toString();
+    String ip   = WiFi.localIP().toString();
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -443,65 +738,81 @@ static void settingsHandleGet() {
           "Locate This Device"
         "</button>"
         "</body></html>";
-    _apServer.sendHeader("Set-Cookie",
-        String("csrf=") + _csrfTokenSettings + "; SameSite=Strict; HttpOnly");
-    _apServer.send(200, "text/html", html);
+
+    char cookieBuf[72];
+    snprintf(cookieBuf, sizeof(cookieBuf),
+             "csrf=%s; SameSite=Strict; HttpOnly", _csrfTokenSettings);
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Set-Cookie", cookieBuf);
+    httpd_resp_send(req, html.c_str(), (ssize_t)html.length());
+    return ESP_OK;
 }
 
 
 // ── POST /settings — Save OTA URL + MQTT settings, no restart ─────────────────
-static void settingsHandlePost() {
+static esp_err_t settingsHandlePost(httpd_req_t* req) {
+    if (!readPostBody(req)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: could not read request body.", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
     // ── CSRF check ────────────────────────────────────────────────────────────
-    String csrfArg = _apServer.arg("csrf");
+    String csrfArg = formArg("csrf");
     if (_csrfTokenSettings[0] == '\0' || csrfArg.isEmpty() ||
         csrfArg != String(_csrfTokenSettings)) {
-        LOG_W("Settings", "POST /settings rejected - CSRF check failed");
-        _apServer.send(403, "text/plain",
-            "Error: CSRF check failed. Reload the settings page and try again.");
-        return;
+        LOG_W("Settings", "POST /settings rejected — CSRF check failed");
+        httpd_resp_set_status(req, "403 Forbidden");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req,
+            "Error: CSRF check failed. Reload the settings page and try again.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
-    // Invalidate the token — each token is single-use.
-    _csrfTokenSettings[0] = '\0';
+    _csrfTokenSettings[0] = '\0';   // single-use
 
-    String otaJsonUrl = _apServer.arg("ota_json_url");
-
+    String otaJsonUrl = formArg("ota_json_url");
     if (otaJsonUrl.isEmpty()) {
-        _apServer.send(400, "text/plain",
-            "Error: ota_json_url is required.");
-        return;
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: ota_json_url is required.", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     // ── Field length validation ───────────────────────────────────────────────
-    // Reject oversized values before copying into fixed-size struct buffers.
     CredentialBundle _btmp;
-    if (otaJsonUrl.length()                         > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
-        _apServer.arg("mq_enterprise").length()     > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_site").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_area").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_line").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_cell").length()           > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mq_devtype").length()        > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        _apServer.arg("mqtt_broker_url").length()   > sizeof(_btmp.mqtt_broker_url) - 1 ||
-        _apServer.arg("mqtt_username").length()     > sizeof(_btmp.mqtt_username)   - 1 ||
-        _apServer.arg("mqtt_password").length()     > sizeof(_btmp.mqtt_password)   - 1) {
-        _apServer.send(400, "text/plain",
-            "Error: one or more fields exceed the maximum allowed length.");
-        LOG_W("Settings", "POST /settings rejected - field too long");
-        return;
+    if (otaJsonUrl.length()               > APP_CFG_OTA_JSON_URL_LEN     - 1 ||
+        formArg("mq_enterprise").length() > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_site").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_area").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_line").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_cell").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mq_devtype").length()    > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("mqtt_broker_url").length() > sizeof(_btmp.mqtt_broker_url) - 1 ||
+        formArg("mqtt_username").length() > sizeof(_btmp.mqtt_username)   - 1 ||
+        formArg("mqtt_password").length() > sizeof(_btmp.mqtt_password)   - 1) {
+        LOG_W("Settings", "POST /settings rejected — field too long");
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req,
+            "Error: one or more fields exceed the maximum allowed length.",
+            HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
-    // Build updated AppConfig — start from current values then overlay changes
+    // Build updated AppConfig — overlay changes on top of current values
     AppConfig cfg;
     memcpy(&cfg, &gAppConfig, sizeof(AppConfig));
 
     otaJsonUrl.toCharArray(cfg.ota_json_url, sizeof(cfg.ota_json_url));
 
-    String mq_ent  = _apServer.arg("mq_enterprise");
-    String mq_site = _apServer.arg("mq_site");
-    String mq_area = _apServer.arg("mq_area");
-    String mq_line = _apServer.arg("mq_line");
-    String mq_cell = _apServer.arg("mq_cell");
-    String mq_dev  = _apServer.arg("mq_devtype");
+    String mq_ent  = formArg("mq_enterprise");
+    String mq_site = formArg("mq_site");
+    String mq_area = formArg("mq_area");
+    String mq_line = formArg("mq_line");
+    String mq_cell = formArg("mq_cell");
+    String mq_dev  = formArg("mq_devtype");
 
     if (mq_ent.length()  > 0) mq_ent.toCharArray(cfg.mqtt_enterprise,   sizeof(cfg.mqtt_enterprise));
     if (mq_site.length() > 0) mq_site.toCharArray(cfg.mqtt_site,        sizeof(cfg.mqtt_site));
@@ -510,18 +821,13 @@ static void settingsHandlePost() {
     if (mq_cell.length() > 0) mq_cell.toCharArray(cfg.mqtt_cell,        sizeof(cfg.mqtt_cell));
     if (mq_dev.length()  > 0) mq_dev.toCharArray(cfg.mqtt_device_type,  sizeof(cfg.mqtt_device_type));
 
-    // MQTT broker URL / username / password are optional on this form.
-    // Blank fields mean "keep the current value" — the admin does not need to
-    // re-enter the password just to change the topic hierarchy or GitHub repo.
-    // If any of the three MQTT fields are non-blank, load the current bundle,
-    // overlay the new values, and save it back to NVS.
-    String newMurl = _apServer.arg("mqtt_broker_url");
-    String newMusr = _apServer.arg("mqtt_username");
-    String newMpwd = _apServer.arg("mqtt_password");
+    // MQTT credentials: blank fields mean "keep the current value"
+    String newMurl = formArg("mqtt_broker_url");
+    String newMusr = formArg("mqtt_username");
+    String newMpwd = formArg("mqtt_password");
     bool mqttChanged = false;
 
     if (!newMurl.isEmpty() || !newMusr.isEmpty() || !newMpwd.isEmpty()) {
-        // Load current cred bundle, overlay new values, save back
         CredentialBundle b;
         CredentialStore::load(b);
         if (!newMurl.isEmpty()) newMurl.toCharArray(b.mqtt_broker_url, sizeof(b.mqtt_broker_url));
@@ -533,8 +839,10 @@ static void settingsHandlePost() {
     }
 
     if (!AppConfigStore::save(cfg)) {
-        _apServer.send(500, "text/plain", "Error: failed to save settings to NVS.");
-        return;
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Error: failed to save settings to NVS.", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     String msg = String("<div class='ok'>Settings saved.<br>")
@@ -542,10 +850,9 @@ static void settingsHandlePost() {
                + "MQTT hierarchy: " + cfg.mqtt_enterprise + "/" + cfg.mqtt_site
                + "/" + cfg.mqtt_area + "/" + cfg.mqtt_line + "/" + cfg.mqtt_cell
                + "/" + cfg.mqtt_device_type;
-    if (mqttChanged) msg += "<br>MQTT broker credentials updated — restart required to reconnect.";
+    if (mqttChanged) msg += "<br>MQTT broker credentials updated — restart required.";
     msg += "</div>";
 
-    // Serve a confirmation page with the saved values
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -553,58 +860,83 @@ static void settingsHandlePost() {
         "<style>") + PAGE_STYLE + "</style></head><body>"
         "<h2>Settings Saved</h2>" + msg +
         "<br><a href='/settings'>Back to settings</a></body></html>";
-    _apServer.send(200, "text/html", html);
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, html.c_str(), (ssize_t)html.length());
 
     LOG_I("Settings", "App config updated via settings portal");
+    return ESP_OK;
 }
 
 
-// ── settingsServerStart — start HTTP settings portal on the LAN interface ────────
-// Called from the MQTT onMqttMessage handler when a cmd/config_mode message
-// is received on the device's command topic.
+// ── settingsServerStart — start HTTPS settings portal on the LAN interface ──────
+// Called from the MQTT onMqttMessage handler when a cmd/config_mode message is
+// received. The device stays fully connected to Wi-Fi and MQTT — the HTTPS
+// server runs alongside them on the same STA interface, port 443.
 //
-// The device stays fully connected to Wi-Fi and MQTT — the settings server
-// runs alongside them on the same STA interface, port 80.
+// Admin browses to https://<device-LAN-IP>/settings from any device on the same
+// network. The browser will show an "untrusted certificate" warning (self-signed);
+// click Advanced → Proceed to continue.
 //
-// The admin browses to http://<device-LAN-IP>/settings from any device on
-// the same network. No need to disconnect from the LAN or join the AP SSID.
-// The device publishes a "config_mode_active" status message to MQTT containing
-// the clickable settings_url so Node-RED can surface a link in a dashboard.
+// NOTE: On first call on a device that has never been in AP mode, cert generation
+// takes ~10 s. Subsequent calls load the cert from NVS instantly.
 void settingsServerStart() {
     if (_settingsServerRunning) return;   // Already running
 
-    _apServer.on("/settings", HTTP_GET,  settingsHandleGet);
-    _apServer.on("/settings", HTTP_POST, settingsHandlePost);
-    _apServer.on("/locate",   HTTP_POST, apHandleLocate);
-    _apServer.on("/status",   HTTP_GET,  apHandleStatus);
-    _apServer.begin();
-    _settingsServerRunning = true;
+    bool tlsOk = loadOrGenerateTlsCreds();
 
-    LOG_I("Settings", "Portal started - browse to http://%s/settings",
-          WiFi.localIP().toString().c_str());
+    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+    conf.httpd.stack_size    = 8192;
+    conf.httpd.max_open_sockets = 3;
+
+    if (tlsOk) {
+        conf.servercert     = (const uint8_t*)_tlsCertPem;
+        conf.servercert_len = strlen(_tlsCertPem) + 1;
+        conf.prvtkey_pem    = (const uint8_t*)_tlsKeyPem;
+        conf.prvtkey_len    = strlen(_tlsKeyPem) + 1;
+        conf.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
+        conf.port_secure    = 443;
+    } else {
+        LOG_W("Settings", "Falling back to plain HTTP on port 80 (TLS unavailable)");
+        conf.transport_mode  = HTTPD_SSL_TRANSPORT_INSECURE;
+        conf.port_insecure   = 80;
+    }
+
+    if (httpd_ssl_start(&_httpsServer, &conf) != ESP_OK) {
+        LOG_E("Settings", "httpd_ssl_start failed — settings portal unavailable");
+        return;
+    }
+
+    // Register Settings mode URI handlers
+    static const httpd_uri_t uriGet    = { "/settings", HTTP_GET,  settingsHandleGet,  nullptr };
+    static const httpd_uri_t uriPost   = { "/settings", HTTP_POST, settingsHandlePost, nullptr };
+    static const httpd_uri_t uriLocate = { "/locate",   HTTP_POST, apHandleLocate,     nullptr };
+    static const httpd_uri_t uriStatus = { "/status",   HTTP_GET,  apHandleStatus,     nullptr };
+    httpd_register_uri_handler(_httpsServer, &uriGet);
+    httpd_register_uri_handler(_httpsServer, &uriPost);
+    httpd_register_uri_handler(_httpsServer, &uriLocate);
+    httpd_register_uri_handler(_httpsServer, &uriStatus);
+
+    _settingsServerRunning = true;
+    const char* scheme = tlsOk ? "https" : "http";
+    LOG_I("Settings", "Portal started — browse to %s://%s/settings",
+          scheme, WiFi.localIP().toString().c_str());
 }
 
 
-// ── settingsServerTick — drive the settings server HTTP event loop ────────────────
-// Must be called on every loop() iteration.
-// When the settings portal is active, calls WebServer::handleClient() to
-// process any pending HTTP connections. Returns true while active, false when
-// the portal has not been started (or after settingsServerStop() is called).
-// The call is a no-op when inactive, so it is cheap to call unconditionally.
+// ── settingsServerTick — no-op; httpd runs in its own FreeRTOS task ──────────────
+// Kept for API compatibility with callers in main.cpp.
+// In the previous WebServer implementation, this drove the event loop.
+// The ESP-IDF httpd handles connections asynchronously — no polling needed.
 bool settingsServerTick() {
-    if (!_settingsServerRunning) return false;
-    _apServer.handleClient();
-    return true;
+    return _settingsServerRunning;
 }
 
 
 // ── settingsServerStop — shut down the settings portal ─────────────────────────
-// Stops the WebServer and clears the running flag. Call this if you want to
-// free port 80 after configuration is complete. Currently not called
-// automatically — the portal stays active until the device restarts.
 void settingsServerStop() {
     if (!_settingsServerRunning) return;
-    _apServer.stop();
+    httpd_ssl_stop(_httpsServer);
+    _httpsServer         = nullptr;
     _settingsServerRunning = false;
     LOG_I("Settings", "Settings portal stopped");
 }
