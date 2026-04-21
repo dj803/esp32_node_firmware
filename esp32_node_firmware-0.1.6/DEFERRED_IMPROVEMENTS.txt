@@ -1,0 +1,179 @@
+ESP32 Node Firmware + Node-RED — Deferred Improvements
+======================================================
+Generated: 2026-04-21
+
+These items were surfaced by the v0.3.03 planning audit but intentionally left
+out of the current release window. Keep this file as the backlog; revisit before
+the next major version bump.
+
+────────────────────────────────────────────────────────────────────────────────
+FIRMWARE — SECURITY
+────────────────────────────────────────────────────────────────────────────────
+
+1. CSRF tokens on HTTP portals (CRITICAL)
+   Files: include/ap_portal.h lines 185-254 (POST /save), 356-431 (POST /settings)
+   Problem: Both AP-mode and settings portals accept POSTs with no origin check
+            or CSRF token. Any script on the LAN (or compromised device) can
+            silently push new credentials / OTA URL.
+   Fix:    On GET, generate a random token, embed in a hidden form field, and
+           set it as a SameSite=Strict cookie. On POST, verify the two match.
+
+2. AP password hardcoded as "password" (CRITICAL)
+   File:   include/config.h line 127
+   Problem: Trivially guessable; documented in source. Anyone within Wi-Fi
+            range of an ESP32 in AP mode can connect.
+   Fix:    Derive from MAC — e.g. "ESP32-" + last 6 hex chars — or generate
+           random per-boot and print to serial during AP-mode entry.
+
+3. HTTPS for provisioning portals (MEDIUM)
+   Problem: Plain HTTP portals allow eavesdropping of entered credentials on
+            shared LAN.
+   Fix:    Use ESP-IDF's httpsd component with a self-signed cert; accept the
+           UX cost of browser warnings.
+
+────────────────────────────────────────────────────────────────────────────────
+FIRMWARE — PERFORMANCE / BOOT TIME
+────────────────────────────────────────────────────────────────────────────────
+
+4. Non-blocking ESP-NOW channel scan (HIGH)
+   File:   include/espnow_bootstrap.h lines 289, 304, 388, 461, 540, 607
+   Problem: Blocking `while (!_response && millis() < deadline) delay(10)` on
+            every channel. Full 1-13 sweep ≈ 6.5 s worst case, blocking setup().
+   Fix:    Convert to a state-machine / FreeRTOS-task pattern driven from loop().
+
+5. Non-blocking broker port scan (HIGH)
+   File:   include/broker_discovery.h line 348
+   Problem: Synchronous TCP connect per host, 75 ms timeout × 254 hosts ≈ 19 s
+            worst case. Blocks setup().
+   Fix:    Use AsyncTCP (already in lib_deps) for parallel connects with a
+            collector callback; early-exit at PORTSCAN_MAX_RESULTS.
+
+6. Remaining blocking delay()s in setup / loop (MEDIUM)
+   Files:  src/main.cpp (formerly esp32_firmware.ino) lines 157 (500),
+            284 (2000), 325 (2000), 361 (2000), 390 (1000), 499 (3000)
+           include/ap_portal.h lines 252 (2000), 278 (10 in infinite loop)
+   Problem: Any blocking delay adds to worst-case time-to-OPERATIONAL.
+   Fix:    Replace the 2 s retry pauses with a countdown non-blocking pattern.
+
+────────────────────────────────────────────────────────────────────────────────
+FIRMWARE — OBSERVABILITY
+────────────────────────────────────────────────────────────────────────────────
+
+7. Structured logging (MEDIUM)
+   Scope:  176+ Serial.printf / Serial.println call sites across 20+ headers
+   Problem: No log levels; always-on verbose output; buffer overruns on slow
+            terminals; cannot quiet noisy modules in the field.
+   Fix:    Introduce LOG_D / LOG_I / LOG_W / LOG_E macros in a new
+           include/logging.h, compile-time filtered by LOG_LEVEL define,
+           with module tags (e.g. LOG_I("MQTT", "connected %s:%d", host, port)).
+
+8. Structured event codes (MEDIUM)
+   Files:  mqtt_client.h:118+, ota.h:77+, and every mqttPublishStatus() caller
+   Problem: Event names are free-form strings ("cred_rotated", "ota_checking",
+            "config_mode_active"). Typos silently become new states; Node-RED
+            fragile to renames.
+   Fix:    Define `enum class FwEvent : uint8_t { BOOT, HEARTBEAT, ... }` +
+           `mqttPublishStatus(FwEvent)`; keep current string mapping in one
+           table so Node-RED contracts are preserved.
+
+────────────────────────────────────────────────────────────────────────────────
+FIRMWARE — CORRECTNESS
+────────────────────────────────────────────────────────────────────────────────
+
+9. Consolidate module-local state flags (HIGH)
+   Files:  ap_portal.h:291 (_settingsServerRunning),
+           espnow_responder.h:27 (_responderActive),
+           rfid.h:59 (_rfidReady)
+   Problem: These flags can drift out of sync with top-level currentState.
+   Fix:    Either promote each to a bit in a central RuntimeState bitmask, OR
+           document that each is purely internal and expose only via accessor
+           functions so misuse is impossible.
+
+10. Per-peer rate limiting for ESP-NOW responder (HIGH)
+    File:  espnow_responder.h (no rate table present today)
+    Problem: A misbehaving sibling can flood credential requests, forcing
+             encrypt/ECDH cycles on every request. DoS vector.
+    Fix:   Per-MAC token bucket in responder — drop requests above N/minute.
+
+11. Wire-format versioning for ESP-NOW payloads (MEDIUM)
+    Files: espnow_bootstrap.h (WireBundle), espnow_responder.h (SiblingHealth)
+    Problem: Struct-memcpy over ESP-NOW with no version byte. Any new field is
+             a breaking fleet-wide change.
+    Fix:   Add `uint8_t wire_version` as first byte of every ESP-NOW struct;
+           bump and migrate deliberately.
+
+12. Heap churn in request handlers (LOW)
+    File:  ap_portal.h:94-100 (apHandleStatus JSON via String concatenation)
+    Problem: Repeated String allocation/concat on every /status request.
+    Fix:   Use snprintf into a stack buffer.
+
+13. NVS namespace registry (LOW)
+    Files: config.h defines 5 namespaces scattered across modules
+    Problem: No single list; easy to accidentally reuse a name.
+    Fix:   Consolidate into a single `enum class NvsNs` with name-lookup.
+
+14. Expanded unit test coverage (LOW)
+    File:  test/test_native/test_main.cpp (after PlatformIO migration)
+    Gaps:  semverIsNewer() edge cases (0.2.15 vs 0.2.7 numeric vs
+           lexicographic); credential bundle round-trip; topic path assembly
+           with pathological segment values.
+
+────────────────────────────────────────────────────────────────────────────────
+NODE-RED
+────────────────────────────────────────────────────────────────────────────────
+
+15. Migrate to Node-RED Projects mode (MEDIUM)
+    Problem: flows.json is a 62 KB flat blob, auto-reformatted on save;
+             credentials stored in plaintext in flows_cred.json; git diffs
+             are unreadable.
+    Fix:   Enable Projects mode; split flows into modules; separate creds.
+
+16. Extract repeated patterns to subflows (MEDIUM)
+    Problem: "MQTT in → JSON parse → table update" pattern repeats ~4 times
+             (Heartbeats, BLE, ESP-NOW); "peer selection → filter → chart"
+             repeats in BLE and ESP-NOW.
+    Fix:   Promote each to a subflow with parameter inputs.
+
+17. Add catch nodes / error handling (MEDIUM)
+    Problem: Zero catch nodes across all 3 tabs; 24 function nodes have no
+             try/catch. JSON parse failure or broker drop silently breaks
+             downstream UI.
+    Fix:   One catch node per tab → debug + status template;
+           wrap critical function nodes in try/catch with sensible fallback.
+
+18. Tab reorganisation (LOW)
+    Problem: 3 tabs, 70 nodes. Heartbeats tab conflates status monitoring,
+             file logging, and device registry — candidates for split.
+
+19. Dashboard 2.0 authentication (LOW)
+    Problem: Dashboard is open to the LAN. Fine for dev; risky if exposed to
+             a wider network.
+    Fix:   httpNodeAuth in settings.js with strong credentials.
+
+────────────────────────────────────────────────────────────────────────────────
+TOOLING / CI
+────────────────────────────────────────────────────────────────────────────────
+
+20. JTAG debugging (LOW)
+    Requires: an ST-Link or ESP-Prog debug probe + wiring to JTAG pins on the
+              dev board (not populated today).
+    Benefit: Step-through debugging via Cortex Debug extension in VS Code.
+
+21. Firmware binary reproducibility check (LOW)
+    Problem: Build timestamp in FIRMWARE_BUILD_TIMESTAMP breaks reproducible
+             builds.
+    Fix:   Use SOURCE_DATE_EPOCH env var in CI; or drop the field and rely on
+           git SHA embedded in binary.
+
+22. Dependency SBOM + supply-chain scan (LOW)
+    Add Trivy / Dependabot against the lib_deps list; alert on CVEs in
+    AsyncTCP / async-mqtt-client.
+
+────────────────────────────────────────────────────────────────────────────────
+PRIORITISATION GUIDANCE
+────────────────────────────────────────────────────────────────────────────────
+
+When revisiting this list: items 1, 2, 4, 5, 9, 10 are the ones most likely to
+cause field incidents. Items 7, 8, 15, 16, 17 compound over time — each release
+spent without them makes the next refactor more expensive. Items 12, 13, 18-22
+are paper cuts; tackle opportunistically.

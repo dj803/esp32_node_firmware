@@ -166,10 +166,12 @@ CRITICAL FILES
 
 SUGGESTED RELEASE CADENCE
 --------------------------
-  v0.3.0  Phase 1 + 2 + 3   Safety + concurrency (behaviour may shift under load)
-  v0.3.1  Phase 4 + 7       Logging + version-drift guard
-  v0.4.0  Phase 5 + 6       Refactor (regression risk — merits own release)
-  v0.4.1  Phase 8           Tests (no runtime impact)
+  v0.3.00 Phase 1 + 2 + 3 + 4   Safety + concurrency + non-blocking + error handling (SHIPPED)
+  v0.3.01 Phase 5 + 7            Deduplication + CI version-drift guard (SHIPPED)
+  v0.3.02 Phase 6 + 8            Forward-decl headers + host unit tests (SHIPPED)
+  v0.3.03 PlatformIO migration   Dual-build (arduino-cli + pio) — see it-is-working-sunny-grove.md
+  v0.3.04 PlatformIO cutover     Remove arduino-cli from CI; PIO becomes primary
+  v0.3.05 NVS wear reduction     _putIfChanged helper + call-site migration
 
 
 VERIFICATION

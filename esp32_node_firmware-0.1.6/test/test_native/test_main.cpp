@@ -1,0 +1,258 @@
+// =============================================================================
+// test_main.cpp  —  Host-side unit tests for pure firmware utility headers
+//                   (PlatformIO Unity harness)
+//
+// Previously test_all.cpp under a custom MSVC/cl.exe build path. Ported to
+// Unity in v0.3.03 as part of the PlatformIO migration.
+//
+// Tests the three dependency-free headers introduced in Phase 5:
+//   ranging_math.h   rssiToDistance()
+//   mac_utils.h      macToString()
+//   peer_tracker.h   PeerTracker<N>
+//
+// Also tests the MQTT topic sanitiser extracted in Phase 1.
+//
+// BUILD & RUN:
+//   pio test -e native
+// =============================================================================
+
+#include <unity.h>
+#include <string.h>
+#include <stdio.h>
+
+// Pull in the headers under test.
+// They include only <math.h>, <stdio.h>, <string.h>, <stdint.h> — safe on host.
+#include "ranging_math.h"
+#include "mac_utils.h"
+#include "peer_tracker.h"
+
+// ── Stub out millis() — used inside PeerTracker via setNow() but the test
+//    drives the clock manually, so the real implementation is not needed.
+// (On Arduino, millis() is provided by the runtime.)
+#ifndef ARDUINO
+static uint32_t _fake_millis = 0;
+inline uint32_t millis() { return _fake_millis; }
+#endif
+
+
+// =============================================================================
+// ranging_math.h tests
+// =============================================================================
+void test_ranging_math_one_metre() {
+    // At 1 m with txPower == rssi, exponent is 0 → distance should be 1.0 m
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, rssiToDistance(-59, -59, 2.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, rssiToDistance(-59, -59, 2.5f));
+}
+
+void test_ranging_math_ten_metres_freespace() {
+    // At 10 m (free space, n=2.0): RSSI = txPower - 10*n*log10(10) = -59 - 20 = -79
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 10.0f, rssiToDistance(-79, -59, 2.0f));
+}
+
+void test_ranging_math_two_metres_freespace() {
+    // At 2 m (n=2.0): RSSI = -59 - 20*log10(2) ≈ -59 - 6.02 = -65.02
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 1.995f, rssiToDistance(-65, -59, 2.0f));
+}
+
+void test_ranging_math_clamp_below_one_metre() {
+    // rssi > txPower gives exponent < 0 → would be < 1 m; clamp floor is 0.01 m
+    float clamped = rssiToDistance(-40, -59, 2.0f);
+    TEST_ASSERT_TRUE(clamped >= 0.01f);
+}
+
+void test_ranging_math_espnow_indoor_three_metres() {
+    // n=2.5 (ESP-NOW indoor), 3 m: RSSI ≈ -59 - 25*log10(3) ≈ -71
+    TEST_ASSERT_FLOAT_WITHIN(0.15f, 3.16f, rssiToDistance(-71, -59, 2.5f));
+}
+
+
+// =============================================================================
+// mac_utils.h tests
+// =============================================================================
+void test_mac_utils_all_zero() {
+    char out[18];
+    uint8_t zero[6] = {0, 0, 0, 0, 0, 0};
+    macToString(zero, out);
+    TEST_ASSERT_EQUAL_STRING("00:00:00:00:00:00", out);
+}
+
+void test_mac_utils_broadcast() {
+    char out[18];
+    uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    macToString(bcast, out);
+    TEST_ASSERT_EQUAL_STRING("FF:FF:FF:FF:FF:FF", out);
+}
+
+void test_mac_utils_typical_uppercase() {
+    char out[18];
+    uint8_t dev[6] = {0xAA, 0xBB, 0x0C, 0x1D, 0x2E, 0x3F};
+    macToString(dev, out);
+    TEST_ASSERT_EQUAL_STRING("AA:BB:0C:1D:2E:3F", out);
+}
+
+void test_mac_utils_null_terminated_17_char() {
+    char out[18];
+    uint8_t dev[6] = {0xAA, 0xBB, 0x0C, 0x1D, 0x2E, 0x3F};
+    macToString(dev, out);
+    TEST_ASSERT_EQUAL_CHAR('\0', out[17]);
+    TEST_ASSERT_EQUAL_size_t(17u, strlen(out));
+}
+
+
+// =============================================================================
+// peer_tracker.h tests
+// =============================================================================
+void test_peer_tracker_empty_starts_at_zero() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000);
+    TEST_ASSERT_EQUAL_UINT8(0, tracker.count());
+}
+
+void test_peer_tracker_observe_updates_existing() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000);
+    tracker.observe("AA:BB:CC:DD:EE:01", -60, 2.0f);
+    TEST_ASSERT_EQUAL_UINT8(1, tracker.count());
+    tracker.observe("AA:BB:CC:DD:EE:01", -62, 2.2f);
+    TEST_ASSERT_EQUAL_UINT8(1, tracker.count());
+}
+
+void test_peer_tracker_lru_eviction_on_full() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("AA:BB:CC:DD:EE:01", -60, 2.0f);
+    tracker.setNow(2000); tracker.observe("AA:BB:CC:DD:EE:02", -70, 3.5f);
+    tracker.setNow(3000); tracker.observe("AA:BB:CC:DD:EE:03", -75, 5.0f);
+    tracker.setNow(4000); tracker.observe("AA:BB:CC:DD:EE:04", -80, 7.0f);
+    TEST_ASSERT_EQUAL_UINT8(4, tracker.count());
+
+    // 5th MAC → evicts LRU (:01)
+    tracker.setNow(5000); tracker.observe("AA:BB:CC:DD:EE:05", -55, 1.5f);
+    TEST_ASSERT_EQUAL_UINT8(4, tracker.count());
+
+    bool found01 = false, found05 = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "AA:BB:CC:DD:EE:01") == 0) found01 = true;
+        if (strcmp(p.mac, "AA:BB:CC:DD:EE:05") == 0) found05 = true;
+    });
+    TEST_ASSERT_FALSE(found01);
+    TEST_ASSERT_TRUE(found05);
+}
+
+void test_peer_tracker_expire_stale_entries() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("AA:BB:CC:DD:EE:01", -60, 2.0f);
+    tracker.setNow(2000); tracker.observe("AA:BB:CC:DD:EE:02", -70, 3.5f);
+
+    // Advance clock well past stale window
+    tracker.setNow(10000);
+    tracker.expire(2500);
+    TEST_ASSERT_EQUAL_UINT8(0, tracker.count());
+}
+
+void test_peer_tracker_clear_resets() {
+    PeerTracker<4> tracker;
+    tracker.setNow(0);
+    tracker.observe("AA:BB:CC:DD:EE:FF", -50, 1.0f);
+    TEST_ASSERT_EQUAL_UINT8(1, tracker.count());
+    tracker.clear();
+    TEST_ASSERT_EQUAL_UINT8(0, tracker.count());
+}
+
+void test_peer_tracker_foreach_empty_noop() {
+    PeerTracker<4> tracker;
+    int calls = 0;
+    tracker.forEach([&](const PeerEntry&) { calls++; });
+    TEST_ASSERT_EQUAL_INT(0, calls);
+}
+
+
+// =============================================================================
+// MQTT topic sanitiser — extracted from mqtt_client.h for testability
+// (reproduced here as a standalone function since mqtt_client.h pulls in
+// Arduino/FreeRTOS headers that do not compile on the host)
+// =============================================================================
+static void sanitizeInPlace(char* buf, size_t len) {
+    for (size_t i = 0; i < len && buf[i]; i++) {
+        char c = buf[i];
+        if (c == '/' || c == '+' || c == '#' || (uint8_t)c < 0x20)
+            buf[i] = '_';
+    }
+}
+
+void test_topic_sanitizer_leaves_plain_alnum_unchanged() {
+    char seg[64];
+    strcpy(seg, "JHBDev");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("JHBDev", seg);
+}
+
+void test_topic_sanitizer_replaces_forward_slash() {
+    char seg[64];
+    strcpy(seg, "JHB/Dev");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("JHB_Dev", seg);
+}
+
+void test_topic_sanitizer_replaces_mqtt_wildcards() {
+    char seg[64];
+    strcpy(seg, "site+area");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("site_area", seg);
+    strcpy(seg, "all#nodes");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("all_nodes", seg);
+}
+
+void test_topic_sanitizer_replaces_control_chars() {
+    char ctrl[] = "abc\x01xyz";
+    sanitizeInPlace(ctrl, sizeof(ctrl));
+    TEST_ASSERT_EQUAL_CHAR('_', ctrl[3]);
+}
+
+void test_topic_sanitizer_empty_string() {
+    char seg[64];
+    strcpy(seg, "");
+    sanitizeInPlace(seg, sizeof(seg));
+    TEST_ASSERT_EQUAL_STRING("", seg);
+}
+
+
+// =============================================================================
+// Unity entry point
+// =============================================================================
+void setUp(void) {}
+void tearDown(void) {}
+
+int main(int /*argc*/, char** /*argv*/) {
+    UNITY_BEGIN();
+
+    // ranging_math
+    RUN_TEST(test_ranging_math_one_metre);
+    RUN_TEST(test_ranging_math_ten_metres_freespace);
+    RUN_TEST(test_ranging_math_two_metres_freespace);
+    RUN_TEST(test_ranging_math_clamp_below_one_metre);
+    RUN_TEST(test_ranging_math_espnow_indoor_three_metres);
+
+    // mac_utils
+    RUN_TEST(test_mac_utils_all_zero);
+    RUN_TEST(test_mac_utils_broadcast);
+    RUN_TEST(test_mac_utils_typical_uppercase);
+    RUN_TEST(test_mac_utils_null_terminated_17_char);
+
+    // peer_tracker
+    RUN_TEST(test_peer_tracker_empty_starts_at_zero);
+    RUN_TEST(test_peer_tracker_observe_updates_existing);
+    RUN_TEST(test_peer_tracker_lru_eviction_on_full);
+    RUN_TEST(test_peer_tracker_expire_stale_entries);
+    RUN_TEST(test_peer_tracker_clear_resets);
+    RUN_TEST(test_peer_tracker_foreach_empty_noop);
+
+    // topic_sanitizer
+    RUN_TEST(test_topic_sanitizer_leaves_plain_alnum_unchanged);
+    RUN_TEST(test_topic_sanitizer_replaces_forward_slash);
+    RUN_TEST(test_topic_sanitizer_replaces_mqtt_wildcards);
+    RUN_TEST(test_topic_sanitizer_replaces_control_chars);
+    RUN_TEST(test_topic_sanitizer_empty_string);
+
+    return UNITY_END();
+}
