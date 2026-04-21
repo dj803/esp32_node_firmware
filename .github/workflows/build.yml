@@ -2,7 +2,25 @@ name: Build and Release Firmware
 
 # Triggers:
 #   - Every push to master (build only, no release)
-#   - Every tag matching v*.*.* (build + attach firmware.bin to GitHub Release)
+#   - Every tag matching v*.*.* (build + PIO/Arduino parity check + attach
+#     firmware.bin to GitHub Release + publish ota.json to Pages)
+#
+# From v0.3.03 this workflow runs TWO builds in parallel:
+#   - build-arduino-cli  (legacy path, retained for one release as a safety net)
+#   - build-platformio   (new path, becomes the default in v0.3.04)
+# The parity-check job compares their firmware.bin sizes on tag builds and fails
+# if they differ by more than 4 KB, catching toolchain drift early.
+#
+# At v0.3.04 the arduino-cli job and parity-check are deleted; the PlatformIO
+# output becomes the canonical firmware.bin.
+#
+# LAYOUT NOTE:
+#   The project lives under esp32_node_firmware/ (not the repo root).
+#   `defaults.run.working-directory` below makes every `run:` step execute
+#   from that subfolder so paths like `src/`, `include/`, `platformio.ini`
+#   resolve correctly. Action inputs (upload-artifact `path:`, download paths)
+#   are relative to the checkout root, so those include the prefix explicitly.
+
 on:
   push:
     branches:
@@ -10,52 +28,33 @@ on:
     tags:
       - 'v*.*.*'
 
+defaults:
+  run:
+    working-directory: esp32_node_firmware
+
 jobs:
-  build:
-    name: Compile ESP32 Firmware
+  # ============================================================================
+  # PlatformIO build — new canonical path
+  # ============================================================================
+  build-platformio:
+    name: Compile with PlatformIO
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Install Arduino CLI ───────────────────────────────────────────────
-      - name: Install Arduino CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
 
-      # ── 3. Configure Arduino CLI ─────────────────────────────────────────────
-      - name: Configure Arduino CLI
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
 
-      # ── 4. Install ESP32 board package ───────────────────────────────────────
-      - name: Install ESP32 board package
-        run: |
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@3.1.1
-
-      # ── 5. Install libraries ──────────────────────────────────────────────────
-      # AsyncMqttClient requires AsyncTCP as a dependency.
-      - name: Install Arduino libraries
-        run: |
-          arduino-cli lib install "ArduinoJson@7" "RFID_MFRC522v2" "FastLED" "NimBLE-Arduino"
-          # AsyncMqttClient, AsyncTCP, and ESP32-OTA-Pull are installed from GitHub (not in registry)
-          mkdir -p ~/Arduino/libraries
-          git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
-            ~/Arduino/libraries/AsyncMqttClient
-          git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
-            ~/Arduino/libraries/AsyncTCP
-          git clone --depth 1 https://github.com/mikalhart/ESP32-OTA-Pull.git \
-            ~/Arduino/libraries/ESP32OTAPull
-
-      # ── 6. Extract version from tag (if this is a release build) ─────────────
       - name: Extract firmware version
         id: version
         run: |
@@ -67,53 +66,179 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Building version: ${VERSION}"
 
-      # ── 7. Patch FIRMWARE_VERSION in config.h ────────────────────────────────
-      # Ensures the compiled binary reports the same version as the git tag.
-      - name: Patch firmware version in config.h
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TIMESTAMP=$(date +%s)
-          sed -i "s|#define FIRMWARE_VERSION.*|#define FIRMWARE_VERSION           \"${VERSION}\"|" \
-            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
-          sed -i "s|#define FIRMWARE_BUILD_TIMESTAMP.*|#define FIRMWARE_BUILD_TIMESTAMP   ${TIMESTAMP}ULL|" \
-            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
-          echo "Patched config.h:"
-          grep -E "FIRMWARE_VERSION|FIRMWARE_BUILD_TIMESTAMP" esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
+      - name: Run host unit tests
+        run: pio test -e native -v
 
-      # ── 8. Compile sketch ────────────────────────────────────────────────────
+      - name: Build firmware
+        env:
+          FIRMWARE_VERSION: ${{ steps.version.outputs.version }}
+        run: pio run -e esp32dev
+
+      - name: Rename firmware.bin for artifact upload
+        run: cp .pio/build/esp32dev/firmware.bin firmware-pio.bin
+
+      - name: Upload PIO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-pio
+          path: esp32_node_firmware/firmware-pio.bin
+          retention-days: 30
+
+  # ============================================================================
+  # Arduino CLI build — legacy path, retained for parity check in v0.3.03.
+  # Deleted at v0.3.04.
+  # ============================================================================
+  build-arduino-cli:
+    name: Compile with Arduino CLI (legacy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "${GITHUB_WORKSPACE}/esp32_node_firmware/bin" >> $GITHUB_PATH
+
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      - name: Install ESP32 board package
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.1.1
+
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib install "ArduinoJson@7" "MFRC522v2" "NimBLE-Arduino"
+          mkdir -p ~/Arduino/libraries
+          git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
+            ~/Arduino/libraries/AsyncMqttClient
+          git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
+            ~/Arduino/libraries/AsyncTCP
+          git clone --depth 1 https://github.com/mikalhart/ESP32-OTA-Pull.git \
+            ~/Arduino/libraries/ESP32OTAPull
+
+      - name: Extract firmware version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      # Assemble the Arduino IDE layout from the PlatformIO src/ + include/ tree.
+      # Arduino CLI expects: <folder>/<folder>.ino plus all headers in the same folder.
+      # This step synthesises that layout at build time from the source of truth
+      # (src/main.cpp + include/*.h). Deleted at v0.3.04 together with this job.
+      - name: Assemble Arduino IDE layout from PIO sources
+        run: |
+          mkdir -p esp32_firmware/esp32_firmware
+          cp src/main.cpp esp32_firmware/esp32_firmware/esp32_firmware.ino
+          cp include/*.h esp32_firmware/esp32_firmware/
+
       - name: Compile sketch
         run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
-            --build-property "build.partitions=min_spiffs" \
-            --build-property "upload.maximum_size=1966080" \
             --output-dir ./build \
             --warnings default \
-            esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware
+            --build-property "build.extra_flags=-DFIRMWARE_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"" \
+            esp32_firmware/esp32_firmware
 
-      # ── 9. Rename output binary ──────────────────────────────────────────────
-      - name: Rename binary
+      - name: Rename output binary
         run: |
           cp ./build/esp32_firmware.ino.bin ./firmware.bin
-          echo "Binary size: $(wc -c < firmware.bin) bytes"
+          echo "Arduino CLI binary size: $(wc -c < firmware.bin) bytes"
 
-      # ── 10. Upload artifact (every build) ───────────────────────────────────
-      - name: Upload firmware artifact
+      - name: Upload Arduino CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ steps.version.outputs.version }}
-          path: firmware.bin
+          name: firmware-acli
+          path: esp32_node_firmware/firmware.bin
           retention-days: 30
 
-      # ── 11. Attach to GitHub Release (tag builds only) ───────────────────────
-      - name: Attach firmware.bin to release
-        if: startsWith(github.ref, 'refs/tags/v')
+  # ============================================================================
+  # Parity check — only on tag builds. Compares the two firmware.bin sizes.
+  # Deleted at v0.3.04 together with build-arduino-cli.
+  # ============================================================================
+  parity-check:
+    name: Arduino CLI vs PlatformIO binary parity
+    runs-on: ubuntu-latest
+    needs: [build-arduino-cli, build-platformio]
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download both binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Compare sizes
+        # Parity-check runs at checkout root against downloaded artifacts —
+        # override the project-subfolder default.
+        working-directory: ${{ github.workspace }}
+        run: |
+          ACLI=$(stat -c%s ./artifacts/firmware-acli/firmware.bin)
+          PIO=$(stat -c%s ./artifacts/firmware-pio/firmware-pio.bin)
+          DIFF=$(( ACLI > PIO ? ACLI - PIO : PIO - ACLI ))
+          echo "arduino-cli: ${ACLI} bytes"
+          echo "platformio : ${PIO} bytes"
+          echo "difference : ${DIFF} bytes"
+          # Allow up to 4 KB drift (compiler rev / flag / library pinning differences)
+          if [ "${DIFF}" -gt 4096 ]; then
+            echo "::error::Binary size drift exceeds 4 KB — investigate before v0.3.04 cutover"
+            exit 1
+          fi
+          echo "Parity check passed"
+
+  # ============================================================================
+  # Release — tag builds only. Uses the Arduino CLI binary as the canonical
+  # firmware.bin for v0.3.03 (safe fallback). Switches to PlatformIO at v0.3.04.
+  # ============================================================================
+  release:
+    name: Publish release assets
+    runs-on: ubuntu-latest
+    needs: [parity-check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Arduino CLI firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: firmware-acli
+          path: .
+
+      - name: Extract firmware version
+        id: version
+        working-directory: ${{ github.workspace }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Attach firmware.bin to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: firmware.bin
           name: "Firmware v${{ steps.version.outputs.version }}"
           body: |
             ## ESP32 Credential Bootstrap Firmware v${{ steps.version.outputs.version }}
+
+            Built with Arduino CLI (canonical) and verified against PlatformIO build.
+            From v0.3.04 the PlatformIO build becomes the canonical artifact.
 
             ### Installation
             Flash via Arduino IDE or esptool:
@@ -128,11 +253,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 12. Publish firmware.bin + ota.json to GitHub Pages ─────────────────
-      # GitHub Pages serves files directly (no redirect), so ESP32-OTA-Pull can
-      # download the binary without hitting the 302 that GitHub Release URLs return.
-      - name: Publish to GitHub Pages
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish firmware.bin + ota.json to GitHub Pages
+        working-directory: ${{ github.workspace }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           OWNER="${{ github.repository_owner }}"
@@ -142,20 +264,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Copy the binary out of the workspace before switching branches.
-          # Two reasons:
-          #   1. gh-pages tracks firmware.bin — git checkout refuses to overwrite an
-          #      untracked file of the same name that already exists in the workspace.
-          #   2. After checkout, $GITHUB_WORKSPACE/firmware.bin IS the tracked file,
-          #      so cp src dst would fail with "same file".
           cp firmware.bin /tmp/firmware.bin
           rm firmware.bin
 
-          # Restore config.h — it was patched in-place by step 7 but never committed.
-          # The binary is already compiled; leaving it dirty would block the branch switch.
-          git checkout -- esp32_node_firmware-0.1.6/esp32_firmware/esp32_firmware/config.h
-
-          # Check out gh-pages (create orphan branch if it doesn't exist yet)
           git fetch origin gh-pages 2>/dev/null || true
           if git ls-remote --exit-code origin gh-pages > /dev/null 2>&1; then
             git checkout gh-pages
@@ -164,7 +275,6 @@ jobs:
             git rm -rf . 2>/dev/null || true
           fi
 
-          # Write ota.json pointing to the Pages-hosted binary (no redirect)
           cat > ota.json <<EOF
           {
             "Configurations": [
@@ -176,7 +286,6 @@ jobs:
           }
           EOF
 
-          # Copy the freshly built binary into the Pages tree
           cp /tmp/firmware.bin firmware.bin
 
           git add ota.json firmware.bin
