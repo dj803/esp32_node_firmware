@@ -10,13 +10,13 @@ the next major version bump.
 FIRMWARE — SECURITY
 ────────────────────────────────────────────────────────────────────────────────
 
-1. CSRF tokens on HTTP portals (CRITICAL)
-   Files: include/ap_portal.h lines 185-254 (POST /save), 356-431 (POST /settings)
-   Problem: Both AP-mode and settings portals accept POSTs with no origin check
-            or CSRF token. Any script on the LAN (or compromised device) can
-            silently push new credentials / OTA URL.
-   Fix:    On GET, generate a random token, embed in a hidden form field, and
-           set it as a SameSite=Strict cookie. On POST, verify the two match.
+1. (shipped in v0.3.07) CSRF tokens on HTTP portals
+   include/ap_portal.h: generateCsrfToken() uses esp_random() for 128-bit
+   tokens. GET /  and GET /settings generate fresh tokens, embed them in
+   hidden form fields, and set SameSite=Strict; HttpOnly cookies.
+   POST /save and POST /settings verify the submitted field matches the
+   server-stored token (single-use — invalidated after a successful check)
+   and return HTTP 403 on failure.
 
 2. (moved to WONT_DO.txt — decision not to change the hardcoded AP password)
 

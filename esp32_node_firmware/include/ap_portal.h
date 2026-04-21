@@ -5,6 +5,7 @@
 #include <esp_wifi.h>
 #include <WebServer.h>
 #include "config.h"
+#include "logging.h"
 #include "credentials.h"
 #include "app_config.h"
 #include "device_id.h"
@@ -49,6 +50,36 @@
 // =============================================================================
 
 static WebServer _apServer(80);   // Shared server instance for both modes
+
+
+// ── CSRF token storage ─────────────────────────────────────────────────────────
+// Each portal mode keeps its own token. A fresh token is generated on every GET
+// and embedded in the form as a hidden field. The POST handler verifies the
+// submitted field value matches the last generated token.
+//
+// 128-bit token (32 lowercase hex chars) via esp_random() — unguessable on a
+// per-session basis. Token is one-shot: the next GET replaces it, so an old
+// captured token is invalid after the admin reloads the page.
+//
+// SameSite=Strict cookie set on GET prevents the browser from attaching the
+// cookie on any cross-origin POST, blocking drive-by CSRF from malicious pages
+// the admin happens to visit while the portal is open.
+
+static char _csrfTokenAp[33]       = {};   // Token for POST /save (AP mode)
+static char _csrfTokenSettings[33] = {};   // Token for POST /settings (Settings mode)
+
+static void generateCsrfToken(char* out) {
+    // Four 32-bit words from the hardware RNG → 128 bits of entropy
+    uint8_t bytes[16];
+    for (int i = 0; i < 4; i++) {
+        uint32_t r = esp_random();
+        memcpy(bytes + i * 4, &r, 4);
+    }
+    for (int i = 0; i < 16; i++) {
+        snprintf(out + i * 2, 3, "%02x", bytes[i]);
+    }
+    out[32] = '\0';
+}
 
 
 // ── Shared utility ─────────────────────────────────────────────────────────────
@@ -116,6 +147,8 @@ static void apHandleStatus() {
 // OTA JSON URL is pre-filled with gAppConfig value (from NVS or config.h default)
 // so that returning admins see what is currently configured.
 static void apHandleRoot() {
+    generateCsrfToken(_csrfTokenAp);   // Fresh token on every GET
+
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -132,6 +165,7 @@ static void apHandleRoot() {
         "</button>"
 
         "<form method='POST' action='/save'>"
+        "<input type='hidden' name='csrf' value='" + String(_csrfTokenAp) + "'>"
 
         "<h3>Wi-Fi</h3>"
         "<label>SSID *</label>"
@@ -177,12 +211,28 @@ static void apHandleRoot() {
         "<button type='submit'>Save &amp; Restart</button>"
         "</form>"
         "</body></html>";
+    _apServer.sendHeader("Set-Cookie",
+        String("csrf=") + _csrfTokenAp + "; SameSite=Strict; HttpOnly");
     _apServer.send(200, "text/html", html);
 }
 
 
 // ── POST /save — Full setup, save all fields, restart ─────────────────────────
 static void apHandleSave() {
+    // ── CSRF check ────────────────────────────────────────────────────────────
+    // Reject requests that don't carry the token embedded in the GET form.
+    // Protects against cross-site scripts silently pushing new credentials.
+    String csrfArg = _apServer.arg("csrf");
+    if (_csrfTokenAp[0] == '\0' || csrfArg.isEmpty() ||
+        csrfArg != String(_csrfTokenAp)) {
+        LOG_W("AP Portal", "POST /save rejected - CSRF check failed");
+        _apServer.send(403, "text/plain",
+            "Error: CSRF check failed. Reload the setup page and try again.");
+        return;
+    }
+    // Invalidate the token — each token is single-use.
+    _csrfTokenAp[0] = '\0';
+
     String ssid       = _apServer.arg("wifi_ssid");
     String murl       = _apServer.arg("mqtt_broker_url");
     String otaJsonUrl = _apServer.arg("ota_json_url");
@@ -216,7 +266,7 @@ static void apHandleSave() {
         _apServer.arg("mq_devtype").length()        > APP_CFG_MQTT_SEG_LEN         - 1) {
         _apServer.send(400, "text/plain",
             "Error: one or more fields exceed the maximum allowed length.");
-        Serial.println("[AP Portal] POST /save rejected — field too long");
+        LOG_W("AP Portal", "POST /save rejected - field too long");
         return;
     }
 
@@ -272,7 +322,7 @@ static void apHandleSave() {
     }
 
     _apServer.send(200, "text/plain", "All settings saved. Restarting...");
-    Serial.println("[AP Portal] Settings saved — restarting in 2 s");
+    LOG_I("AP Portal", "Settings saved - restarting in 2 s");
     // 2 s delay: gives the browser enough time to receive the HTTP response
     // before the AP interface disappears (STA mode switch cuts off the AP).
     delay(2000);
@@ -290,7 +340,7 @@ void apPortalStart() {
 
     WiFi.mode(WIFI_AP);
     WiFi.softAP(ssid.c_str(), AP_PASSWORD);
-    Serial.printf("[AP Portal] SSID: %s  IP: %s\n", ssid.c_str(), AP_LOCAL_IP);
+    LOG_I("AP Portal", "SSID: %s  IP: %s", ssid.c_str(), AP_LOCAL_IP);
 
     _apServer.on("/",       HTTP_GET,  apHandleRoot);
     _apServer.on("/save",   HTTP_POST, apHandleSave);
@@ -298,7 +348,7 @@ void apPortalStart() {
     _apServer.on("/status", HTTP_GET,  apHandleStatus);
     _apServer.begin();
 
-    Serial.println("[AP Portal] Waiting for admin — browse to 192.168.4.1");
+    LOG_I("AP Portal", "Waiting for admin - browse to 192.168.4.1");
     while (true) {
         _apServer.handleClient();
         delay(10);
@@ -322,6 +372,8 @@ static bool _settingsServerRunning = false;
 // Does NOT show Wi-Fi credentials — those are only changed in AP mode or
 // via MQTT credential rotation.
 static void settingsHandleGet() {
+    generateCsrfToken(_csrfTokenSettings);   // Fresh token on every GET
+
     String ip = WiFi.localIP().toString();
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
@@ -333,6 +385,7 @@ static void settingsHandleGet() {
                          "IP: " + ip + "</p>"
 
         "<form method='POST' action='/settings'>"
+        "<input type='hidden' name='csrf' value='" + String(_csrfTokenSettings) + "'>"
 
         "<h3>OTA Firmware Updates</h3>"
         "<label>OTA JSON URL *</label>"
@@ -374,12 +427,26 @@ static void settingsHandleGet() {
           "Locate This Device"
         "</button>"
         "</body></html>";
+    _apServer.sendHeader("Set-Cookie",
+        String("csrf=") + _csrfTokenSettings + "; SameSite=Strict; HttpOnly");
     _apServer.send(200, "text/html", html);
 }
 
 
 // ── POST /settings — Save OTA URL + MQTT settings, no restart ─────────────────
 static void settingsHandlePost() {
+    // ── CSRF check ────────────────────────────────────────────────────────────
+    String csrfArg = _apServer.arg("csrf");
+    if (_csrfTokenSettings[0] == '\0' || csrfArg.isEmpty() ||
+        csrfArg != String(_csrfTokenSettings)) {
+        LOG_W("Settings", "POST /settings rejected - CSRF check failed");
+        _apServer.send(403, "text/plain",
+            "Error: CSRF check failed. Reload the settings page and try again.");
+        return;
+    }
+    // Invalidate the token — each token is single-use.
+    _csrfTokenSettings[0] = '\0';
+
     String otaJsonUrl = _apServer.arg("ota_json_url");
 
     if (otaJsonUrl.isEmpty()) {
@@ -403,7 +470,7 @@ static void settingsHandlePost() {
         _apServer.arg("mqtt_password").length()     > sizeof(_btmp.mqtt_password)   - 1) {
         _apServer.send(400, "text/plain",
             "Error: one or more fields exceed the maximum allowed length.");
-        Serial.println("[Settings] POST /settings rejected — field too long");
+        LOG_W("Settings", "POST /settings rejected - field too long");
         return;
     }
 
@@ -472,7 +539,7 @@ static void settingsHandlePost() {
         "<br><a href='/settings'>Back to settings</a></body></html>";
     _apServer.send(200, "text/html", html);
 
-    Serial.println("[Settings] App config updated via settings portal");
+    LOG_I("Settings", "App config updated via settings portal");
 }
 
 
@@ -497,8 +564,8 @@ void settingsServerStart() {
     _apServer.begin();
     _settingsServerRunning = true;
 
-    Serial.printf("[Settings] Settings portal started — browse to http://%s/settings\n",
-                  WiFi.localIP().toString().c_str());
+    LOG_I("Settings", "Portal started - browse to http://%s/settings",
+          WiFi.localIP().toString().c_str());
 }
 
 
@@ -523,5 +590,5 @@ void settingsServerStop() {
     if (!_settingsServerRunning) return;
     _apServer.stop();
     _settingsServerRunning = false;
-    Serial.println("[Settings] Settings portal stopped");
+    LOG_I("Settings", "Settings portal stopped");
 }
