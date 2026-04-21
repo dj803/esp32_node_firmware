@@ -53,7 +53,10 @@ jobs:
           # No cache: pip — we have no requirements.txt, so cache lookup fails the job.
 
       - name: Install PlatformIO
-        run: pip install --upgrade platformio
+        # Pin click<8.2 — pioarduino 54.x uses an older click API that breaks
+        # on click 8.2+ with "ParamType.get_metavar() missing 1 required
+        # positional argument: 'ctx'" during the bootloader.bin build step.
+        run: pip install --upgrade "platformio" "click<8.2"
 
       - name: Extract firmware version
         id: version
