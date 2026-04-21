@@ -1,0 +1,435 @@
+ESP32 Node Firmware + Node-RED — Fixes Log
+============================================
+Consolidated reference of every notable fix applied across the project,
+from earliest CI shakedown through the v0.3.05 release.
+
+Generated: 2026-04-21
+Tag range covered: v0.0.8 → v0.3.05
+Source: `git log` on master + session context from the v0.3.03 migration sprint.
+
+
+────────────────────────────────────────────────────────────────────────────────
+HOW TO USE THIS DOCUMENT
+────────────────────────────────────────────────────────────────────────────────
+When debugging something that "used to work" or when starting a new migration:
+  1. Ctrl-F for the error message or library name
+  2. Scan the relevant section for prior art on that specific failure mode
+  3. Reference the commit SHA for the exact patch applied
+
+Sections:
+  1. CI / build workflow
+  2. PlatformIO migration (v0.3.03)
+  3. Library dependency pitfalls
+  4. Firmware correctness
+  5. Boot / release infrastructure
+  6. BLE scanner
+  7. OTA pipeline
+  8. MQTT and runtime behaviour
+  9. Node-RED dashboard
+ 10. Hardening phases (v0.3.00 → v0.3.02)
+ 11. NVS wear reduction (v0.3.05)
+
+
+────────────────────────────────────────────────────────────────────────────────
+1. CI / build workflow
+────────────────────────────────────────────────────────────────────────────────
+
+[45ba663] Add build workflow to master trigger (initial CI setup)
+  Early CI wasn't firing on master pushes — only release branches.
+
+[e12804a] arduino-cli PATH — use $GITHUB_WORKSPACE/bin, not $HOME/bin
+  The install.sh script drops arduino-cli under GITHUB_WORKSPACE/bin on
+  runners; the workflow was pointing at the wrong directory.
+
+[c7edb71] Restore workflow to repo root after directory reorganisation
+[2547dc3] Update sketch and config.h paths for versioned directory layout
+  When the project moved into an esp32_node_firmware-0.1.6/ subfolder, the
+  workflow needed path prefixes. This burned again in v0.3.03 (see below).
+
+[4c59acb] Grant contents:write permission for release creation
+  Default GITHUB_TOKEN is read-only on new runners; softprops/action-gh-release
+  needs contents:write to create a release.
+
+[3c46333] Fix workflow path for new repo layout (v0.3.03)
+  GitHub Actions only reads workflows from the REPO ROOT `.github/workflows/`.
+  A nested esp32_node_firmware/.github/workflows/build.yml is silently ignored.
+  Fixed by placing the workflow at the repo root and setting
+  `defaults.run.working-directory: esp32_node_firmware`.
+
+[476b739] Fix setup-python cache + arduino-cli lib install
+  setup-python@v5 now ERRORS (not warns) when cache:pip is set but there's
+  no requirements.txt / pyproject.toml. Solution: drop `cache: pip`.
+  Also added `arduino-cli lib update-index` explicitly before the install —
+  the library index can be stale on a fresh runner.
+
+[8810d6c] Widen parity-check tolerance to 128 KB
+  v0.3.03's Arduino CLI vs PlatformIO parity check was set to 4 KB; baseline
+  drift is ~34 KB because the two toolchains use different compiler revs and
+  slightly different library versions. 128 KB tolerance is loose enough to
+  tolerate library-version bumps and tight enough to catch an accidental
+  omission of an entire module.
+
+[97deacc] Cutover to PlatformIO-only CI (v0.3.04)
+  Dropped the build-arduino-cli and parity-check jobs after one release of
+  verified parity. PlatformIO is now the single build. arduino-cli-legacy tag
+  is preserved as a rollback anchor.
+
+
+────────────────────────────────────────────────────────────────────────────────
+2. PlatformIO migration (v0.3.03)
+────────────────────────────────────────────────────────────────────────────────
+
+The migration from Arduino IDE / Arduino CLI to PlatformIO / VS Code hit a
+string of interlocking issues. Lessons:
+
+[53e1177] Switch to pioarduino platform (arduino-esp32 3.1.1)
+  ROOT CAUSE: `espressif32@6.9.0` was assumed to ship arduino-esp32 3.1.1 but
+  actually ships 2.0.17. The source code uses 3.x-only APIs
+  (esp_now_recv_info_t, MBEDTLS_PRIVATE macros, NimBLE 2.x). PIO builds with
+  the 2.0.17 core failed hard with:
+    - mbedtls_ecp_point has no member named 'MBEDTLS_PRIVATE'
+    - esp_now_recv_info_t does not name a type
+  FIX: Switched platform to pioarduino's fork which tracks arduino-esp32 3.x:
+    platform = https://github.com/pioarduino/platform-espressif32/releases/
+               download/54.03.21/platform-espressif32.zip
+  (The upstream platform-espressif32 repo was discontinued at 6.10.0.)
+
+[72a0e5d] Pin click<8.2
+  pioarduino 54.x uses an older click API. On click 8.2+ the bootloader.bin
+  build step fails with "ParamType.get_metavar() missing 1 required
+  positional argument: 'ctx'". Workaround:
+    pip install --upgrade "platformio" "click<8.2"
+
+[263d33b] compiler.cpp.extra_flags (not build.extra_flags)
+  Critical gotcha specific to Arduino CLI. Using
+    --build-property "build.extra_flags=-DFOO"
+  REPLACES the arduino-esp32 platform's own flags (-DESP32, -DARDUINO_ARCH_ESP32,
+  -DF_CPU=...). FastLED's platform auto-detection then falls back to AVR and
+  fails with "This platform isn't recognized by FastLED... yet".
+  FIX: Use `compiler.cpp.extra_flags` instead — it appends rather than replaces.
+
+[ebc5626] Arduino IDE → PlatformIO directory restructure
+  Repository layout change:
+    esp32_firmware/esp32_firmware/esp32_firmware.ino → src/main.cpp
+    esp32_firmware/esp32_firmware/*.h (22 headers)   → include/
+    esp32_firmware/README.md                         → README.md (repo root)
+    test/test_all.cpp + test_runner.h                → test/test_native/test_main.cpp
+  Custom cl.exe test runner replaced by PlatformIO Unity framework:
+    pio test -e native
+
+[4e196da] Drop "-0.1.6" suffix from project folder name
+  esp32_node_firmware-0.1.6/ → esp32_node_firmware/ (git renames preserved
+  history). The suffix came from the initial zip download and was now stale.
+
+[d0f8364] Restore min_spiffs + NimBLE
+  Two regressions from the workflow rewrite:
+    1. Arduino CLI failed with "text section exceeds available space in board"
+       because I dropped --build-property "build.partitions=min_spiffs" +
+       "upload.maximum_size=1966080" from the compile step. Restored both.
+    2. PlatformIO failed with "NimBLEDevice.h: No such file or directory".
+       NimBLE-Arduino is NOT bundled with arduino-esp32 3.x — it's a separate
+       library that must be listed explicitly in lib_deps AND in the Arduino
+       CLI install step.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3. Library dependency pitfalls
+────────────────────────────────────────────────────────────────────────────────
+
+[37359cd] Add missing ESP32-OTA-Pull library to build workflow
+  Initially omitted from `arduino-cli lib install`; build failed with
+  "ESP32OTAPull.h: No such file or directory". Installed via git clone to
+  ~/Arduino/libraries/ESP32OTAPull because not in the Arduino library registry.
+
+[acd3008] Add MFRC522v2 to CI library install
+[ee18cc5] Correct MFRC522v2 library name to RFID_MFRC522v2
+  The Arduino library registry entry for the MFRC522v2 fork is published as
+  "RFID_MFRC522v2", NOT "MFRC522v2". PlatformIO names vary too; for safety
+  we now install from the canonical GitHub repo:
+    https://github.com/OSSLibraries/Arduino_MFRC522v2.git
+
+[1044308] Add FastLED and min_spiffs partition scheme
+  WS2812B support added later; FastLED wasn't in the lib install initially.
+  Binary outgrew the default partition, hence the min_spiffs partition
+  scheme + explicit upload.maximum_size=1966080 bump.
+
+[1793c1d → 263d33b] FastLED version drift
+  TL;DR: FastLED 3.10.x is fine IF the platform defines are correctly set.
+  The platform-not-recognized error was a build-flag issue (see
+  "compiler.cpp.extra_flags" in section 2), not a FastLED version issue.
+  Do NOT pin FastLED lower than 3.10 to "fix" the error — that's a false trail.
+
+[d4e43d3] Upgrade ESP32 SDK from 2.0.17 to 3.1.1
+  Historical: project initially targeted arduino-esp32 2.0.17, bumped to 3.1.1
+  to pick up esp_now_recv_info_t. Same mismatch later bit the PlatformIO
+  migration (section 2).
+
+[0b83b7e → workflow] NimBLE-Arduino is NOT bundled with arduino-esp32 3.x
+  Repeatedly misremembered this during the v0.3.03 migration. NimBLE must be
+  explicitly listed:
+    Arduino CLI: arduino-cli lib install "NimBLE-Arduino"
+    PlatformIO:  lib_deps = h2zero/NimBLE-Arduino @ ^2.0.0
+
+
+────────────────────────────────────────────────────────────────────────────────
+4. Firmware correctness
+────────────────────────────────────────────────────────────────────────────────
+
+[71ba172] Dangling pointer for MQTT client ID and server host
+  AsyncMqttClient::setClientId() and setServer() take raw `const char*`
+  pointers and DO NOT copy the string. The original code passed `.c_str()`
+  from temporary Strings that went out of scope. Fix: store the String at
+  module scope (_mqttClientId, _mqttHost) so the pointer stays valid.
+
+[d572283] Replace lexicographic OTA version compare with numeric semver
+  ESP32-OTA-Pull's internal version comparison uses String::compareTo() which
+  is lexicographic — "0.2.15" < "0.2.7" because '1' < '7'. Added a
+  semverIsNewer() helper that parses the two strings as integers and compares
+  MAJOR.MINOR.PATCH numerically.
+
+[225304d] Tracked beacon stops updating when beacon list fills up
+  BLE onResult callback had the tracked-beacon update logic INSIDE the guard
+  that drops new beacons when _bleBeaconCount == BLE_MAX_BEACONS. Once 32
+  unique MACs filled the list, the tracked beacon's seen-time stopped
+  advancing and tracking silently died. Fix: moved the tracked-beacon update
+  ABOVE the count guard.
+
+[20bcd4d] Active scan for tracking, NimBLEAddress match
+  Passive scans don't return scan responses → no manufacturer data → no
+  iBeacon txPower. Fix: use active scanning for tracking cycles
+  (pScan->setActiveScan(true) when durationS == BLE_TRACK_SCAN_DURATION_S).
+
+[0b83b7e] BLE tracking scan must reset beacon list
+  Tracking scans didn't reset _bleBeacons[] between scans, filling it with
+  unique ephemeral MACs that pushed the tracked beacon's record out. Fix:
+  clear _bleBeaconCount at the start of every scan, not just full scans.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5. Boot / release infrastructure
+────────────────────────────────────────────────────────────────────────────────
+
+[729fa78] Publish firmware + ota.json to GitHub Pages on release
+  Initial OTA was using GitHub Releases URLs which 302-redirect to S3.
+  ESP32-OTA-Pull's HTTP client didn't handle redirects cleanly. Fix: publish
+  firmware.bin directly to the gh-pages branch so there's no redirect.
+
+[d2f4a68] Restore config.h before gh-pages branch switch
+  The CI's sed-patch of FIRMWARE_VERSION in config.h left the working tree
+  dirty. `git checkout gh-pages` then refused to switch branches. Fix:
+  `git checkout -- config.h` to revert the in-place edit before switching.
+  (Obsolete in v0.3.03+ since FIRMWARE_VERSION is now injected via
+  -DFIRMWARE_VERSION_OVERRIDE at compile time, not sed-patched.)
+
+[bfb276e → 754a25b] Stash firmware.bin to /tmp before gh-pages checkout
+  gh-pages already tracks firmware.bin; `git checkout` refuses to overwrite
+  an untracked file of the same name. Solution: cp firmware.bin /tmp/ then
+  rm the workspace copy before switching branches, cp back after.
+
+[9f22... earlier] Workflow regen order
+  Writing `git rm -rf . 2>/dev/null || true` is required on an orphan branch
+  switch to clear the master-branch contents before writing just ota.json
+  and firmware.bin. Without it, the gh-pages commit accumulates all source
+  files.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. BLE scanner
+────────────────────────────────────────────────────────────────────────────────
+
+[a23bb05] Switch BLE from Bluedroid to NimBLE
+  Bluedroid adds ~700 KB to the firmware binary, overflowing the min_spiffs
+  app partition (1.9 MB). NimBLE-Arduino adds ~150 KB — a 550 KB saving that
+  fits comfortably.
+
+[481f118] Update ble.h for NimBLE-Arduino 2.x API
+  NimBLE 1.x → 2.x API changes that bit us:
+    - Callbacks class renamed: NimBLEAdvertisedDeviceCallbacks → NimBLEScanCallbacks
+    - onResult signature: now takes `const NimBLEAdvertisedDevice*` (pointer, const)
+    - onScanEnd replaces the free-function callback previously passed to start()
+    - pScan->start(durationS, is_continue): no longer takes a callback arg
+    - Duration is in MILLISECONDS (1.x used seconds); multiply seconds * 1000
+
+[225304d, 20bcd4d, 0b83b7e] See section 4 above.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. OTA pipeline
+────────────────────────────────────────────────────────────────────────────────
+
+[d572283] Lexicographic compare → numeric semver (see section 4).
+
+[ota.h] TaskWatchdog suppression during OTA
+  During the OTA download, the async_tcp task holds a watchdog subscription
+  but can't reset it because the TCP stack is saturated. Fix:
+    TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
+    if (asyncTcpTask) esp_task_wdt_delete(asyncTcpTask);
+  Safe because the device reboots immediately on OTA success.
+
+[ota.h] MQTT disconnect before OTA
+  OTA download blocks long enough that the AsyncMqttClient's reconnect timer
+  fires and tries to reconnect mid-download, stalling async_tcp. Fix:
+    _mqttClient.disconnect(true);
+    delay(200);                 // let onMqttDisconnect fire + re-arm timer
+    xTimerStop(_mqttReconnectTimer, 0);   // now kill the re-armed timer
+
+
+────────────────────────────────────────────────────────────────────────────────
+8. MQTT and runtime behaviour
+────────────────────────────────────────────────────────────────────────────────
+
+[6ea91ef] Subscribe cmd/ota_check at QoS 0
+  QoS 1/2 caused the broker to redeliver the cmd/ota_check message after the
+  device restarted post-OTA, triggering an immediate second OTA check loop.
+  QoS 0 prevents re-delivery — appropriate for fire-and-forget commands that
+  trigger destructive actions (restart, OTA).
+
+[21c035c] Subscribe cmd/restart at QoS 0 too
+  Same issue — QoS 1 retry on reconnect → infinite restart loop.
+
+[mqtt_client.h v0.3.00] Deferred restart flag replaces delay()
+  Previously: mqttPublishStatus("restarting"); delay(100); ESP.restart();
+  The delay inside an AsyncMqttClient callback stalls the keepalive loop and
+  the client sometimes disconnected before the publish got out. Fix:
+  set _mqttRestartAtMs = millis() + 300 and have mqttHeartbeat() check for
+  it, actioning the ESP.restart() from the main loop context.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9. Node-RED dashboard
+────────────────────────────────────────────────────────────────────────────────
+
+Fifteen one-shot patch scripts accumulated in C:\Users\drowa during the
+v0.2.x dashboard iteration phase. All were applied to the live flows.json
+over April 19-20 and then deleted in v0.3.03+post.
+
+Individual fixes they addressed (all now baked into the live flows):
+
+fix_espnow_track.js — Dashboard 2.0 race condition
+  Problem: The peer-discovery table re-renders every 2 seconds when MQTT
+  publishes new peer data. The re-render replaces Vue's checkbox state while
+  the user is selecting, so "Track Selected" never sees the ticked peers.
+  Fix: gate peer-table updates to only fire when peer count changes; seed
+  chart data directly from set_tracked_fn rather than waiting for next MQTT
+  tick. Also set storeOutMessages:true on the tracking-indicator template
+  so state survives page refreshes.
+
+fix_ble_tracking.js / fix_multi_track.js / fix_ble2.js / fix_ble3.js
+  BLE dashboard iterations — multi-beacon selection UI, per-beacon distance
+  chart, tracking indicator.
+
+fix_csv_fn.js / fix_chart.js / add_dist_chart.js
+  CSV logger formatting, chart time-series setup.
+
+fix_restart_btn.js
+  MQTT restart button was publishing the wrong topic.
+
+fix_device_status.js / add_hb_dashboard.js
+  Heartbeat tab device-status template, with colour-coded "last seen" time.
+
+replace_espnow_flow.js / add_espnow_flow.js
+  The full ESP-NOW Tracking tab definition.
+
+[0b83b7e] Consolidate duplicate MQTT broker configs
+  The live flows had three mqtt-broker config nodes — two orphaned ones
+  (c75948adae7d87ef, e8185b6b5201bb62) each used by 1 node, plus the
+  canonical `mqtt_broker` used by 14. Dedupe script repointed the 2 orphan
+  users to mqtt_broker and deleted the obsolete configs.
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. Hardening phases (v0.3.00 → v0.3.02)
+────────────────────────────────────────────────────────────────────────────────
+
+[8e1272b] Phases 1–4 (v0.3.00):
+  1. ap_portal.h — validate all form field lengths before toCharArray()
+     copy; HTTP 400 on oversized input instead of silent struct-field corruption.
+  2. mqtt_client.h — mqttSanitizeSegment() strips MQTT wildcards ('/', '+',
+     '#') and control chars from NVS-sourced topic hierarchy segments.
+  3. Volatile audit — _mqttNeedsRediscovery, ws2812 cross-task state flags
+     marked volatile; concurrency comment block added.
+  4. Non-blocking callbacks — delay(500) in credential rotation and delay(100)
+     in cmd/restart replaced with _mqttRestartAtMs deferred flag driven by
+     mqttHeartbeat(); delay(100) in mqttReinit replaced with a 150 ms
+     FreeRTOS timer.
+  5. Error handling — esp_now_send() return checked; JSON parse failures on
+     cmd/ble/track log the DeserializationError string.
+  6. OTA URL scheme validation before ESP32-OTA-Pull is invoked.
+  7. MQTT broker host/port guard in mqttBegin().
+
+[3eb55a8] Phase 5 + 7 (v0.3.01):
+  5. Deduplication — ranging_math.h (rssiToDistance), mac_utils.h (macToString),
+     peer_tracker.h (PeerTracker<N> template), mqttPublishJson() helper.
+     ~60 lines of duplicated LRU logic removed from espnow_ranging.h.
+  7. CI version-drift guard (now obsolete — replaced by FIRMWARE_VERSION_OVERRIDE
+     macro injection in v0.3.03).
+
+[331acb0] Phase 6 + 8 (v0.3.02):
+  6. Forward-declaration headers: ota_fwd.h, espnow_ranging_fwd.h, ws2812_fwd.h.
+     Decouples include order in the .ino/.cpp so reorder produces a clean
+     compile error instead of a link failure.
+  8. Host-side unit tests: test/test_all.cpp with a custom TEST_ASSERT harness.
+     Covered ranging_math, mac_utils, peer_tracker, topic_sanitizer.
+     Later ported to Unity in v0.3.03.
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. NVS wear reduction (v0.3.05)
+────────────────────────────────────────────────────────────────────────────────
+
+[15c6565] Compare-before-write helper
+  New include/nvs_utils.h — NvsPutIfChanged() overloads for uint8_t,
+  uint16_t, uint64_t, null-terminated strings, and raw bytes. Each overload
+  reads the existing NVS value and returns success (without writing) when it
+  matches. Return semantics mimic Arduino's Preferences::put*() so existing
+  `ok &= prefs.putX(...)` accumulator chains keep working.
+
+  Migrated call-sites:
+    - credentials.h        CredentialStore::save()  + clearRestartCount()
+    - broker_discovery.h   saveBrokerToCache()
+    - rfid.h               _rfidWhitelistSave()
+    - app_config.h         AppConfigStore::save()
+    - ws2812.h             _ledNvsSave()
+
+  Real-world impact:
+    - Node-RED slider at rest → no NVS write on repeat cmd/led brightness
+    - OTA boot with unchanged broker cache → no write
+    - Admin re-saving settings portal with 1 field changed → 1 write, not 7
+    - Credential rotation replay of identical bundle → no writes at all
+
+  Unit tests: 8 Unity assertions against a FakePrefs harness in
+  test/test_native/test_main.cpp (27 total tests, all pass in `pio test`).
+
+
+────────────────────────────────────────────────────────────────────────────────
+MISC REMINDERS
+────────────────────────────────────────────────────────────────────────────────
+
+• Every CI debug iteration costs ~2-3 minutes of runner time. When CI fails,
+  read the FULL log (especially pre-fail warnings) before pushing a speculative
+  fix. Most of the v0.3.03 fix loop could have been collapsed into 1-2 commits
+  if I'd re-checked the v0.3.02 WORKING build.yml before making assumptions.
+
+• The Arduino CLI library registry is NOT a stable dependency source.
+  If a library install fails mysteriously ("latest not found"), switch to
+  cloning from GitHub. This applies to MFRC522v2, NimBLE-Arduino (when
+  multiple registries disagree), and has bitten us on the marvinroger/
+  me-no-dev/mikalhart trio from the start.
+
+• `defaults.run.working-directory:` in a workflow applies to every `run:`
+  step. Actions (checkout, upload-artifact, download-artifact) get paths
+  relative to the checkout root and need the subfolder prefix explicitly.
+
+• pioarduino releases its platform zips under
+  https://github.com/pioarduino/platform-espressif32/releases — check there
+  for new versions if arduino-esp32 upstream ships a major core update.
+
+• The FIRMWARE_VERSION macro in config.h is now set by CI via the
+  -DFIRMWARE_VERSION_OVERRIDE build flag. Local dev builds fall through to
+  "0.3.05-dev" or similar. Do NOT bump the fallback literal for each release
+  — only bump it when starting work on the NEXT version, so local dev can
+  distinguish dev binaries from the previously released one.
+
+• `arduino-cli-legacy` tag points to the last commit where the Arduino CLI
+  workflow was still the canonical build path (post v0.3.00, pre-migration).
+  Useful rollback anchor if the PlatformIO stack breaks badly.
