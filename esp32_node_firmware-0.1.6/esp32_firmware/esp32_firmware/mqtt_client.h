@@ -12,27 +12,22 @@
 #include "broker_discovery.h"  // BrokerResult from mDNS / port scan / stored URL
 #include "led.h"
 
-// ota.h is included AFTER this file in the main sketch.
-// Forward-declare otaCheckNow here so onMqttMessage can call it when
-// an OTA trigger arrives via MQTT, even though ota.h isn't included yet.
-void otaCheckNow();
+// Forward declarations collected into dedicated _fwd.h headers so include
+// order in esp32_firmware.ino no longer needs to be fragile.
+// Each _fwd.h declares only the symbols this file needs to call; the
+// actual definitions remain in their respective implementation headers.
+#include "ota_fwd.h"     // otaCheckNow(), otaTrigger()
+#include "ws2812_fwd.h"  // ws2812PostEvent(), ws2812PublishState()
 
-// ws2812.h is included BEFORE this file in the main sketch.
-// Forward-declare the API functions used inside mqtt_client.h handlers so the
-// compiler sees the declarations regardless of include ordering edge cases.
-// (ws2812PostEvent and ws2812PublishState are defined as inline in ws2812.h.)
-void ws2812PublishState();
-void ws2812PostEvent(const LedEvent& e);
-
-// rfid.h whitelist API — forward declarations so handleRfidWhitelist can call
-// them. rfid.h is included AFTER mqtt_client.h in the main sketch.
+// rfid.h whitelist API — rfid.h is included AFTER mqtt_client.h.
+// These cannot move to rfid_fwd.h without pulling in RFID_UID_STR_LEN,
+// so they remain here where config.h (which defines it) is already included.
 bool    rfidWhitelistAdd(const char* uid);
 bool    rfidWhitelistRemove(const char* uid);
 void    rfidWhitelistClear();
 void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 
-// ble.h API — forward declarations so BLE MQTT handlers can call them.
-// ble.h is included AFTER mqtt_client.h in the main sketch.
+// BLE API — ble.h is included AFTER mqtt_client.h.
 #ifdef BLE_ENABLED
 void bleTriggerScan();
 void bleSetTrackedMacs(const char** macs, uint8_t count);

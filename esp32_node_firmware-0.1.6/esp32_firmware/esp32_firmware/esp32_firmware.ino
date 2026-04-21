@@ -48,11 +48,18 @@
 //   3. AppConfigStore::load()                   — load GitHub + MQTT topic settings
 //   4. State machine: BOOT → BOOTSTRAP/WIFI_CONNECT → OPERATIONAL or AP_MODE
 //
-// INCLUDE ORDER MATTERS:
-//   ap_portal.h before mqtt_client.h (settingsServerStart forward decl)
-//   ws2812.h before mqtt_client.h (ws2812PostEvent/ws2812PublishState called there)
-//   mqtt_client.h before ota.h (mqttPublishStatus forward decl)
-//   rfid.h after mqtt_client.h AND ws2812.h (calls both mqttPublish and ws2812PostEvent)
+// INCLUDE ORDER:
+//   Most cross-module forward declarations are now in *_fwd.h headers, so
+//   accidental reordering produces a clear compile error instead of a link
+//   failure. A few ordering constraints remain:
+//
+//   ws2812.h  BEFORE  mqtt_client.h  — ws2812_fwd.h forward-declares LedEvent
+//       as an incomplete type; mqtt_client.h uses it by reference which is fine,
+//       but rfid.h creates LedEvent values and needs the full definition first.
+//   mqtt_client.h  BEFORE  ota.h    — ota.h calls mqttPublishStatus() which is
+//       a static defined (not just declared) in mqtt_client.h.
+//   espnow_ranging.h  AFTER  mqtt_client.h  — calls mqttPublishJson() (static).
+//   rfid.h  AFTER  mqtt_client.h AND ws2812.h  — calls both.
 // =============================================================================
 
 #include <Arduino.h>

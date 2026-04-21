@@ -26,7 +26,7 @@
 //   Linux/Mac:  date +%s
 //   Windows:    PowerShell: [int][double]::Parse((Get-Date -UFormat %s))
 // -----------------------------------------------------------------------------
-#define FIRMWARE_VERSION           "0.3.01"
+#define FIRMWARE_VERSION           "0.3.02"
 #define FIRMWARE_BUILD_TIMESTAMP   1745229600ULL   // 2026-04-21 10:40:00 UTC
 
 

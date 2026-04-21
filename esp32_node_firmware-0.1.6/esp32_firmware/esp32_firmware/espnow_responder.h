@@ -9,10 +9,7 @@
 #include "app_config.h"   // gAppConfig (ota_json_url) + AppConfigStore::save()
 #include "led.h"
 
-// Forward declaration — espnow_ranging.h is included AFTER mqtt_client.h in the
-// .ino file (it depends on mqttPublish). The dispatcher calls this function for
-// every received frame so ranging works regardless of message type.
-void espnowRangingObserve(const uint8_t* mac6, int8_t rssi);
+#include "espnow_ranging_fwd.h"   // espnowRangingObserve() — defined in espnow_ranging.h
 
 // =============================================================================
 // espnow_responder.h  —  Serve credential bundles to bootstrapping siblings
