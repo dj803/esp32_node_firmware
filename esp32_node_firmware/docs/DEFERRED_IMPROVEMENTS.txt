@@ -18,12 +18,7 @@ FIRMWARE — SECURITY
    Fix:    On GET, generate a random token, embed in a hidden form field, and
            set it as a SameSite=Strict cookie. On POST, verify the two match.
 
-2. AP password hardcoded as "password" (CRITICAL)
-   File:   include/config.h line 127
-   Problem: Trivially guessable; documented in source. Anyone within Wi-Fi
-            range of an ESP32 in AP mode can connect.
-   Fix:    Derive from MAC — e.g. "ESP32-" + last 6 hex chars — or generate
-           random per-boot and print to serial during AP-mode entry.
+2. (moved to WONT_DO.txt — decision not to change the hardcoded AP password)
 
 3. HTTPS for provisioning portals (MEDIUM)
    Problem: Plain HTTP portals allow eavesdropping of entered credentials on
@@ -154,26 +149,19 @@ NODE-RED
 TOOLING / CI
 ────────────────────────────────────────────────────────────────────────────────
 
-20. JTAG debugging (LOW)
-    Requires: an ST-Link or ESP-Prog debug probe + wiring to JTAG pins on the
-              dev board (not populated today).
-    Benefit: Step-through debugging via Cortex Debug extension in VS Code.
+20. (moved to SUGGESTED_IMPROVEMENTS.txt — JTAG debugging)
+21. (moved to SUGGESTED_IMPROVEMENTS.txt — reproducible builds)
+22. (moved to SUGGESTED_IMPROVEMENTS.txt — SBOM / supply-chain scan)
 
-21. Firmware binary reproducibility check (LOW)
-    Problem: Build timestamp in FIRMWARE_BUILD_TIMESTAMP breaks reproducible
-             builds.
-    Fix:   Use SOURCE_DATE_EPOCH env var in CI; or drop the field and rely on
-           git SHA embedded in binary.
-
-22. Dependency SBOM + supply-chain scan (LOW)
-    Add Trivy / Dependabot against the lib_deps list; alert on CVEs in
-    AsyncTCP / async-mqtt-client.
+See SUGGESTED_IMPROVEMENTS.txt for these items plus the Node.js 24 upgrade
+(hard CI deadline June 2026) and the local PlatformIO validation todo.
 
 ────────────────────────────────────────────────────────────────────────────────
 PRIORITISATION GUIDANCE
 ────────────────────────────────────────────────────────────────────────────────
 
-When revisiting this list: items 1, 2, 4, 5, 9, 10 are the ones most likely to
+When revisiting this list: items 1, 4, 5, 9, 10 are the ones most likely to
 cause field incidents. Items 7, 8, 15, 16, 17 compound over time — each release
-spent without them makes the next refactor more expensive. Items 12, 13, 18-22
-are paper cuts; tackle opportunistically.
+spent without them makes the next refactor more expensive. Items 12, 13, 18, 19
+are paper cuts; tackle opportunistically. Items 2, 20, 21, 22 have been moved
+out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.

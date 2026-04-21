@@ -1,0 +1,22 @@
+ESP32 Node Firmware — Won't Do
+================================
+Decisions recorded here are intentional choices NOT to implement a previously
+audited improvement. Keep this file so future audits don't re-flag these items
+as missing work.
+
+────────────────────────────────────────────────────────────────────────────────
+
+1. AP password hardcoded as "password"  (was audit item #2 in DEFERRED)
+   File:    include/config.h line 127
+   Decided: 2026-04-21
+
+   Rationale: AP mode is only entered during first provisioning or after all
+   other credential sources have failed. Physical proximity is already required
+   (the device broadcasts its own Wi-Fi SSID). The admin workflow documents the
+   default password, and changing it per-device would force operators to check
+   MAC-derived strings on the device's serial console or a sticker — neither
+   available during field deployments. The trade-off of a known default
+   password is accepted.
+
+   If the threat model changes (e.g. deployment in a hostile RF environment
+   or on a contested wireless spectrum), revisit.

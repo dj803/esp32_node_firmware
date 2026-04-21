@@ -1,0 +1,36 @@
+ESP32 Node Firmware — Suggested Improvements (Infrastructure)
+==============================================================
+These items came out of the v0.3.03 audit but aren't on the committed
+release path. Tackle opportunistically or when an adjacent fix makes one
+of them cheap to bundle in.
+
+────────────────────────────────────────────────────────────────────────────────
+
+1. Upgrade GitHub Actions to Node.js 24
+   WHERE:    .github/workflows/build.yml (actions/checkout@v4, setup-python@v5,
+             upload-artifact@v4, download-artifact@v4, softprops/action-gh-release@v2)
+   DEADLINE: Node.js 20 is deprecated; hard cutoff June 2026. After that
+             date, CI builds will fail without this upgrade.
+   FIX:      Either bump each action to its Node 24 build once published, or
+             set FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true at workflow level.
+
+2. JTAG debugging setup                                (was audit item 20)
+   Requires: ST-Link or ESP-Prog debug probe, JTAG pins wired on the dev board
+   Benefit:  Step-through debugging via Cortex Debug in VS Code.
+   Effort:   ~2h firmware config + hardware provisioning.
+
+3. Reproducible builds                                 (was audit item 21)
+   Problem:  FIRMWARE_BUILD_TIMESTAMP in config.h is a literal epoch value
+             that changes per release, making binary output non-deterministic.
+   Fix:      Replace with SOURCE_DATE_EPOCH env var in CI, or drop the field
+             entirely and rely on the git SHA embedded in FIRMWARE_VERSION.
+
+4. Dependency SBOM + supply-chain scan                 (was audit item 22)
+   Add Dependabot (built-in) and/or Trivy against the platformio.ini lib_deps
+   list. Alerts on CVEs in AsyncTCP, async-mqtt-client, NimBLE-Arduino, etc.
+
+5. Local PlatformIO validation
+   No local `pio run` / `pio test` was ever run during the v0.3.03 migration —
+   CI was the only signal. Run `pip install platformio` on the dev machine and
+   confirm `pio run -e esp32dev` + `pio test -e native` both pass locally, so
+   future iterations don't round-trip through CI for trivial syntax errors.
