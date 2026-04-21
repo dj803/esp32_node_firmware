@@ -64,20 +64,19 @@ FIRMWARE — OBSERVABILITY
 FIRMWARE — CORRECTNESS
 ────────────────────────────────────────────────────────────────────────────────
 
-9. Consolidate module-local state flags (HIGH)
-   Files:  ap_portal.h:291 (_settingsServerRunning),
-           espnow_responder.h:27 (_responderActive),
-           rfid.h:59 (_rfidReady)
-   Problem: These flags can drift out of sync with top-level currentState.
-   Fix:    Either promote each to a bit in a central RuntimeState bitmask, OR
-           document that each is purely internal and expose only via accessor
-           functions so misuse is impossible.
+9. (shipped in v0.3.10) Consolidate module-local state flags
+   ap_portal.h: inline settingsServerIsRunning() accessor added; flag documented
+   as strictly internal with a note that it must never be read from outside the
+   module. espnow_responder.h: inline espnowResponderIsActive() accessor added.
+   rfid.h: inline rfidIsReady() accessor added. No central bitmask — option (a)
+   from the plan: keep flags module-local, enforce via accessors.
 
-10. Per-peer rate limiting for ESP-NOW responder (HIGH)
-    File:  espnow_responder.h (no rate table present today)
-    Problem: A misbehaving sibling can flood credential requests, forcing
-             encrypt/ECDH cycles on every request. DoS vector.
-    Fix:   Per-MAC token bucket in responder — drop requests above N/minute.
+10. (shipped in v0.3.10) Per-peer rate limiting for ESP-NOW responder
+    espnow_responder.h: token-bucket table (RATE_BUCKET_CAP=3, RATE_REFILL_MS=
+    60000, RATE_MAC_SLOTS=8). Each credential request costs 1 token; refill 1
+    per minute up to cap 3. New MACs start with CAP-1 tokens. Drop + LOG_W when
+    tokens exhausted. LRU evict on full table via circular _rateBucketNext index.
+    Upgraded from the existing 30-s flat cooldown that was already in the file.
 
 11. (shipped in v0.3.08) Wire-format versioning for ESP-NOW WireBundle
     include/espnow_bootstrap.h: ESPNOW_WIRE_VERSION constant (=1) + uint8_t
@@ -151,9 +150,9 @@ See SUGGESTED_IMPROVEMENTS.txt for these items plus the Node.js 24 upgrade
 PRIORITISATION GUIDANCE
 ────────────────────────────────────────────────────────────────────────────────
 
-When revisiting this list: items 9, 10 are the ones most likely to cause
-field incidents. Items 15, 16, 17 compound over time — each release
-spent without them makes the next refactor more expensive. Items 18, 19
+When revisiting this list: items 15, 16, 17 compound over time — each release
+spent without them makes the next refactor more expensive. Item 3 (HTTPS) is the
+one infrastructure improvement remaining on the firmware track. Items 18, 19
 are paper cuts; tackle opportunistically.
-Items 1, 4, 5, 6, 7, 8, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
+Items 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
 Items 2, 20, 21, 22 have been moved out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.

@@ -519,6 +519,41 @@ New files: include/logging.h, include/fwevent.h
 
 
 ────────────────────────────────────────────────────────────────────────────────
+15. v0.3.10 — Module-local state flag accessors + per-peer ESP-NOW rate limiting
+────────────────────────────────────────────────────────────────────────────────
+
+[ap_portal.h] Module-local state flag accessor (DEFERRED item 9)
+  _settingsServerRunning kept as a static module-private flag. An inline
+  settingsServerIsRunning() accessor added so external callers can query state
+  without reading the flag directly. A comment documents that the flag must not
+  be read from outside ap_portal.h.
+
+[rfid.h] Module-local state flag accessor (DEFERRED item 9)
+  _rfidReady kept as a static module-private flag. An inline rfidIsReady()
+  accessor added with a matching doc comment.
+
+[espnow_responder.h] Module-local state flag accessor (DEFERRED item 9)
+  _responderActive kept as a static module-private flag. An inline
+  espnowResponderIsActive() accessor added.
+
+[espnow_responder.h] Per-peer token-bucket rate limiter (DEFERRED item 10)
+  Replaced the previous flat 30-second per-MAC cooldown with a proper token-
+  bucket table: RATE_BUCKET_CAP=3 tokens, RATE_REFILL_MS=60000 (1 per minute),
+  RATE_MAC_SLOTS=8 entries. Each credential request consumes 1 token; refill
+  computed as floor(elapsed / RATE_REFILL_MS) capped at RATE_BUCKET_CAP. New
+  MACs start at CAP-1 so the very first request always passes. The table uses a
+  circular _rateBucketNext eviction index (LRU-approximate). Requests exceeding
+  the budget are silently dropped with LOG_W("Responder", "rate-limit dropped").
+
+[espnow_responder.h, broker_discovery.h] LOG_* macro adoption
+  All remaining Serial.printf / Serial.println calls in both files converted to
+  LOG_I / LOG_W / LOG_E macros (introduced in v0.3.06). Both files now include
+  "logging.h". espnow_responder.h covers all handlers: onEspNowRequest,
+  onEspNowOtaUrlRequest/Response, onEspNowBrokerRequest/Response,
+  espnowGetSiblingBroker, and espnowResponderStart.
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

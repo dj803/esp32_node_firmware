@@ -56,6 +56,8 @@ static MFRC522DriverPinSimple _rfidSsPin(RFID_SS_PIN);
 static MFRC522DriverPinSimple _rfidRstPin(RFID_RST_PIN);
 static MFRC522DriverSPI       _rfidDriver{_rfidSsPin};
 static MFRC522                _rfid{_rfidDriver};
+// _rfidReady is module-internal — never read from outside rfid.h.
+// Use rfidIsReady() for any external query.
 static bool                   _rfidReady        = false; // False if reader not detected at init
 static String                 _rfidLastUid      = "";    // UID of last published card (colon fmt)
 static uint32_t               _rfidLastReadMs   = 0;     // millis() of last publish
@@ -265,6 +267,9 @@ void rfidInit() {
 //     PICC_ReadCardSerial() and publishes the UID to MQTT telemetry.
 //   - Per-card debounce prevents the same UID being re-published within
 //     RFID_DEBOUNCE_MS; different cards are always processed immediately.
+// Returns true when the MFRC522 was detected and initialised successfully.
+inline bool rfidIsReady() { return _rfidReady; }
+
 void rfidLoop() {
     if (!_rfidReady) return;   // Reader not detected at init — skip all SPI work
 

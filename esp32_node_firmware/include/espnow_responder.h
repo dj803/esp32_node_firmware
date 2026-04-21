@@ -4,6 +4,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include "config.h"
+#include "logging.h"    // LOG_I / LOG_W / LOG_E macros
 #include "credentials.h"
 #include "crypto.h"
 #include "app_config.h"   // gAppConfig (ota_json_url) + AppConfigStore::save()
@@ -20,7 +21,12 @@
 // =============================================================================
 
 static CredentialBundle _localBundle;
+// _responderActive is module-internal — never read from outside espnow_responder.h.
+// Use espnowResponderIsActive() for any external query.
 static bool             _responderActive = false;
+
+// Returns true while the ESP-NOW credential responder is running.
+inline bool espnowResponderIsActive() { return _responderActive; }
 
 // ── Active broker address (set after discovery, served to siblings) ────────────
 static char     _activeBrokerHost[64] = {0};
@@ -65,38 +71,62 @@ static volatile bool _otaUrlRespReceived = false;
 static char          _receivedOtaUrl[201] = {0};   // max 200 chars + null
 
 
-// ── Per-MAC request rate limiting ─────────────────────────────────────────────
-// Prevents a rebooting or misbehaving node from flooding siblings with requests.
-// Each slot stores the MAC and the millis() timestamp of the last response sent.
-// On overflow, the oldest slot is evicted (LRU via a round-robin write pointer).
-#define RESPONDER_COOLDOWN_MS  30000   // Ignore repeat requests within 30 s
-#define RESPONDER_MAC_SLOTS    8       // Track up to 8 distinct requesters
+// ── Per-MAC request rate limiting (token bucket) ──────────────────────────────
+// Prevents a misbehaving sibling from flooding credential requests and forcing
+// expensive ECDH + AES cycles on every arrival.
+//
+// Each tracked MAC gets a token bucket:
+//   Capacity:  RATE_BUCKET_CAP tokens
+//   Refill:    1 token every RATE_REFILL_MS (60 s)
+//   Cost:      1 token per credential request
+// A request is dropped (rate-limited) when the bucket is empty.
+// When the table is full, the oldest entry (round-robin) is evicted (LRU).
+//
+// This allows a well-behaved node that reboots 3 times in quick succession to
+// still bootstrap successfully (3 tokens), while blocking a sustained flood.
+// ─────────────────────────────────────────────────────────────────────────────
+#define RATE_BUCKET_CAP   3       // Max tokens per MAC
+#define RATE_REFILL_MS    60000   // One token refills per 60 s
+#define RATE_MAC_SLOTS    8       // Track up to 8 distinct requesters
 
 static struct {
     uint8_t  mac[6];
-    uint32_t last_ms;
-} _respCooldown[RESPONDER_MAC_SLOTS];
-static uint8_t _respCooldownNext = 0;   // Next slot to evict (round-robin)
+    uint8_t  tokens;        // Current token count (0 … RATE_BUCKET_CAP)
+    uint32_t lastRefillMs;  // millis() when last refill was applied
+} _rateBuckets[RATE_MAC_SLOTS];
+static uint8_t _rateBucketNext = 0;   // Round-robin eviction pointer
 
-// Returns true if the given MAC is within its cooldown window.
-// If not, records the MAC and current time, then returns false (caller may serve).
+// Returns true (rate-limited) if the MAC has no tokens left.
+// Otherwise consumes one token and returns false (caller may serve).
+// Side-effects: refills tokens based on elapsed time before consuming.
 static bool responderIsRateLimited(const uint8_t* mac) {
     uint32_t now = millis();
-    for (int i = 0; i < RESPONDER_MAC_SLOTS; i++) {
-        if (memcmp(_respCooldown[i].mac, mac, 6) == 0) {
-            if (now - _respCooldown[i].last_ms < RESPONDER_COOLDOWN_MS) {
-                return true;   // Still in cooldown
-            }
-            // Cooldown expired — update timestamp and allow
-            _respCooldown[i].last_ms = now;
-            return false;
+
+    // Search for an existing bucket for this MAC
+    for (int i = 0; i < RATE_MAC_SLOTS; i++) {
+        if (memcmp(_rateBuckets[i].mac, mac, 6) != 0) continue;
+
+        // Found — top up tokens based on elapsed time
+        uint32_t elapsed  = now - _rateBuckets[i].lastRefillMs;
+        uint8_t  toAdd    = (uint8_t)(elapsed / RATE_REFILL_MS);
+        if (toAdd > 0) {
+            uint8_t refilled          = _rateBuckets[i].tokens + toAdd;
+            _rateBuckets[i].tokens    = refilled < RATE_BUCKET_CAP
+                                        ? refilled : RATE_BUCKET_CAP;
+            _rateBuckets[i].lastRefillMs = now;
         }
+
+        if (_rateBuckets[i].tokens == 0) return true;   // bucket empty — drop
+        _rateBuckets[i].tokens--;
+        return false;   // token consumed — allow
     }
-    // MAC not seen before — record in the next round-robin slot
-    memcpy(_respCooldown[_respCooldownNext].mac, mac, 6);
-    _respCooldown[_respCooldownNext].last_ms = now;
-    _respCooldownNext = (_respCooldownNext + 1) % RESPONDER_MAC_SLOTS;
-    return false;
+
+    // MAC not seen before — evict round-robin slot, init with (CAP-1) tokens
+    memcpy(_rateBuckets[_rateBucketNext].mac, mac, 6);
+    _rateBuckets[_rateBucketNext].tokens       = RATE_BUCKET_CAP - 1;  // use 1 now
+    _rateBuckets[_rateBucketNext].lastRefillMs = now;
+    _rateBucketNext = (_rateBucketNext + 1) % RATE_MAC_SLOTS;
+    return false;   // allowed (first request from this MAC)
 }
 
 void espnowResponderSetBundle(const CredentialBundle& b) {
@@ -108,27 +138,27 @@ void espnowResponderSetBundle(const CredentialBundle& b) {
 void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
     const uint8_t* requesterMac = recvInfo->src_addr;
 
-    Serial.printf("[ESP-NOW Responder] REQ from %02X:%02X:%02X:%02X:%02X:%02X len=%d\n",
-                  requesterMac[0], requesterMac[1], requesterMac[2],
-                  requesterMac[3], requesterMac[4], requesterMac[5], len);
+    LOG_I("Responder", "REQ from %02X:%02X:%02X:%02X:%02X:%02X len=%d",
+          requesterMac[0], requesterMac[1], requesterMac[2],
+          requesterMac[3], requesterMac[4], requesterMac[5], len);
 
     if (!_responderActive) {
-        Serial.println("[ESP-NOW Responder] Not active yet");
+        LOG_W("Responder", "Not active yet — ignoring request");
         return;
     }
     if (responderIsRateLimited(requesterMac)) {
-        Serial.printf("[ESP-NOW Responder] Rate-limited %02X:%02X:%02X:%02X:%02X:%02X\n",
-                      requesterMac[0], requesterMac[1], requesterMac[2],
-                      requesterMac[3], requesterMac[4], requesterMac[5]);
+        LOG_W("Responder", "Rate-limited %02X:%02X:%02X:%02X:%02X:%02X — dropping",
+              requesterMac[0], requesterMac[1], requesterMac[2],
+              requesterMac[3], requesterMac[4], requesterMac[5]);
         return;
     }
     if (len != (int)REQ_LEN) {
-        Serial.printf("[ESP-NOW Responder] Bad length %d (expected %d)\n", len, REQ_LEN);
+        LOG_W("Responder", "Bad length %d (expected %d)", len, REQ_LEN);
         return;
     }
     if (data[0] != ESPNOW_MSG_CREDENTIAL_REQ) return;
     if (data[1] != ESPNOW_PROTOCOL_VERSION) {
-        Serial.printf("[ESP-NOW Responder] Version mismatch %d\n", data[1]);
+        LOG_W("Responder", "Protocol version mismatch %d", data[1]);
         return;
     }
 
@@ -137,7 +167,7 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     // Generate ephemeral responder keypair
     EcdhContext respCtx;
     if (!cryptoGenKeypair(respCtx)) {
-        Serial.println("[ESP-NOW Responder] Keygen failed");
+        LOG_E("Responder", "ECDH keygen failed");
         return;
     }
 
@@ -146,7 +176,7 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     memcpy(&keyCtx, &respCtx, sizeof(keyCtx));
     uint8_t aesKey[AES_KEY_LEN];
     if (!cryptoDeriveKey(keyCtx, requesterPubKey, aesKey)) {
-        Serial.println("[ESP-NOW Responder] Key derivation failed");
+        LOG_E("Responder", "AES key derivation failed");
         return;
     }
 
@@ -159,7 +189,7 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     uint8_t encBuf[sizeof(WireBundle) + GCM_NONCE_LEN + GCM_TAG_LEN + 4];
     size_t  encLen = 0;
     if (!cryptoEncrypt(aesKey, (const uint8_t*)&wire, sizeof(WireBundle), encBuf, encLen)) {
-        Serial.println("[ESP-NOW Responder] Encryption failed");
+        LOG_E("Responder", "Encryption failed");
         memset(aesKey, 0, AES_KEY_LEN);
         memset(&wire, 0, sizeof(wire));
         return;
@@ -170,9 +200,9 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
     // Build response packet
     // [type 1][ver 1][mac 6][responder_pubkey 32][payload_len 2][nonce+ct+tag 203] = 245 bytes
     size_t totalLen = 1 + 1 + 6 + CURVE25519_KEY_LEN + 2 + encLen;
-    Serial.printf("[ESP-NOW Responder] Response size: %d bytes (limit 250)\n", (int)totalLen);
+    LOG_I("Responder", "Response size: %d bytes (limit 250)", (int)totalLen);
     if (totalLen > 250) {
-        Serial.println("[ESP-NOW Responder] Response too large — this should not happen");
+        LOG_E("Responder", "Response too large — this should not happen");
         return;
     }
 
@@ -201,10 +231,10 @@ void onEspNowRequest(const esp_now_recv_info_t* recvInfo, const uint8_t* data, i
 
     esp_err_t err = esp_now_send(requesterMac, resp, idx);
     if (err == ESP_OK) {
-        Serial.println("[ESP-NOW Responder] Bundle sent to sibling");
+        LOG_I("Responder", "Bundle sent to sibling");
         ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
     } else {
-        Serial.printf("[ESP-NOW Responder] Send failed: %d\n", err);
+        LOG_W("Responder", "Send failed: %d", err);
     }
 }
 
@@ -217,14 +247,14 @@ static void onEspNowOtaUrlRequest(const esp_now_recv_info_t* recvInfo,
     if (len < 2) return;
     if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
     if (!(_responderHealthFlags & (1u << 2))) {
-        Serial.println("[ESP-NOW Responder] OTA URL req ignored — own URL not verified");
+        LOG_I("Responder", "OTA URL req ignored — own URL not yet verified");
         return;
     }
 
     const uint8_t* requesterMac = recvInfo->src_addr;
     size_t urlLen = strnlen(gAppConfig.ota_json_url, 200);
     if (urlLen == 0) {
-        Serial.println("[ESP-NOW Responder] OTA URL req ignored — no URL configured");
+        LOG_I("Responder", "OTA URL req ignored — no URL configured");
         return;
     }
 
@@ -246,7 +276,7 @@ static void onEspNowOtaUrlRequest(const esp_now_recv_info_t* recvInfo,
     if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
     esp_now_send(requesterMac, buf, totalLen);
     ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
-    Serial.println("[ESP-NOW Responder] OTA URL sent to requester");
+    LOG_I("Responder", "OTA URL sent to requester");
 }
 
 
@@ -265,7 +295,7 @@ static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
     memcpy(_receivedOtaUrl, data + 9, urlLen);
     _receivedOtaUrl[urlLen] = '\0';
     _otaUrlRespReceived = true;
-    Serial.printf("[ESP-NOW] OTA URL received from sibling: %s\n", _receivedOtaUrl);
+    LOG_I("ESP-NOW", "OTA URL received from sibling: %s", _receivedOtaUrl);
 }
 
 
@@ -291,17 +321,17 @@ bool espnowRequestOtaUrl() {
     uint8_t req[2] = { ESPNOW_MSG_OTA_URL_REQ, ESPNOW_PROTOCOL_VERSION };
     esp_err_t err = esp_now_send(ESPNOW_BROADCAST, req, sizeof(req));
     if (err != ESP_OK) {
-        Serial.printf("[ESP-NOW] OTA URL req send failed: %d\n", err);
+        LOG_W("ESP-NOW", "OTA URL req send failed: %d", err);
         return false;
     }
     ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
-    Serial.println("[ESP-NOW] OTA URL request broadcast — waiting for sibling...");
+    LOG_I("ESP-NOW", "OTA URL request broadcast — waiting for sibling...");
 
     uint32_t deadline = millis() + OTA_URL_REQUEST_TIMEOUT_MS;
     while (!_otaUrlRespReceived && millis() < deadline) delay(10);
 
     if (!_otaUrlRespReceived) {
-        Serial.println("[ESP-NOW] No OTA URL response from siblings");
+        LOG_I("ESP-NOW", "No OTA URL response from siblings");
         return false;
     }
 
@@ -311,7 +341,7 @@ bool espnowRequestOtaUrl() {
     strncpy(cfg.ota_json_url, _receivedOtaUrl, sizeof(cfg.ota_json_url) - 1);
     cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
     AppConfigStore::save(cfg);
-    Serial.printf("[ESP-NOW] OTA URL updated to: %s\n", gAppConfig.ota_json_url);
+    LOG_I("ESP-NOW", "OTA URL updated to: %s", gAppConfig.ota_json_url);
     return true;
 }
 
@@ -352,11 +382,10 @@ static void onEspNowHealthQuery(const esp_now_recv_info_t* recvInfo,
     if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
 
     esp_now_send(requesterMac, buf, sizeof(buf));
-    Serial.printf("[ESP-NOW Responder] HEALTH_RESP → %02X:%02X:%02X:%02X:%02X:%02X"
-                  "  fw=0x%06X flags=0x%02X\n",
-                  requesterMac[0], requesterMac[1], requesterMac[2],
-                  requesterMac[3], requesterMac[4], requesterMac[5],
-                  h.fw_version_uint32, h.health_flags);
+    LOG_I("Responder", "HEALTH_RESP → %02X:%02X:%02X:%02X:%02X:%02X fw=0x%06X flags=0x%02X",
+          requesterMac[0], requesterMac[1], requesterMac[2],
+          requesterMac[3], requesterMac[4], requesterMac[5],
+          h.fw_version_uint32, h.health_flags);
 }
 #endif // SIBLING_PRIMARY_SELECTION
 
@@ -372,7 +401,7 @@ static void onEspNowBrokerRequest(const esp_now_recv_info_t* recvInfo,
     if (len < 2) return;
     if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
     if (_activeBrokerHost[0] == '\0' || _activeBrokerPort == 0) {
-        Serial.println("[ESP-NOW Responder] BROKER_REQ ignored — no broker set yet");
+        LOG_W("Responder", "BROKER_REQ ignored — no broker set yet");
         return;
     }
 
@@ -395,8 +424,7 @@ static void onEspNowBrokerRequest(const esp_now_recv_info_t* recvInfo,
     if (!esp_now_is_peer_exist(requesterMac)) esp_now_add_peer(&peer);
 
     esp_now_send(requesterMac, buf, totalLen);
-    Serial.printf("[ESP-NOW Responder] BROKER_RESP → sibling: %s:%d\n",
-                  _activeBrokerHost, _activeBrokerPort);
+    LOG_I("Responder", "BROKER_RESP → sibling: %s:%d", _activeBrokerHost, _activeBrokerPort);
 }
 
 
@@ -416,8 +444,7 @@ static void onEspNowBrokerResponse(const esp_now_recv_info_t* recvInfo,
     _siblingBrokerHost[hostLen] = '\0';
     memcpy(&_siblingBrokerPort, data + 3 + hostLen, 2);
     _brokerRespReceived = true;
-    Serial.printf("[ESP-NOW] BROKER_RESP from sibling: %s:%d\n",
-                  _siblingBrokerHost, _siblingBrokerPort);
+    LOG_I("Responder", "BROKER_RESP from sibling: %s:%d", _siblingBrokerHost, _siblingBrokerPort);
 }
 
 
@@ -441,16 +468,16 @@ bool espnowGetSiblingBroker(char* hostOut, size_t hostOutLen, uint16_t* portOut)
     uint8_t req[2] = { ESPNOW_MSG_BROKER_REQ, ESPNOW_PROTOCOL_VERSION };
     esp_err_t err = esp_now_send(ESPNOW_BROADCAST, req, sizeof(req));
     if (err != ESP_OK) {
-        Serial.printf("[ESP-NOW] BROKER_REQ send failed: %d\n", err);
+        LOG_E("Responder", "BROKER_REQ send failed: %d", err);
         return false;
     }
-    Serial.println("[ESP-NOW] BROKER_REQ broadcast — waiting for sibling...");
+    LOG_I("Responder", "BROKER_REQ broadcast — waiting for sibling...");
 
     uint32_t deadline = millis() + BROKER_ESPNOW_TIMEOUT_MS;
     while (!_brokerRespReceived && millis() < deadline) delay(10);
 
     if (!_brokerRespReceived) {
-        Serial.println("[ESP-NOW] No broker response from siblings");
+        LOG_W("Responder", "No broker response from siblings");
         return false;
     }
 
@@ -517,5 +544,5 @@ void espnowResponderStart() {
     uint8_t ch = 0;
     wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
     esp_wifi_get_channel(&ch, &second);
-    Serial.printf("[ESP-NOW Responder] Listening on Wi-Fi channel %d\n", ch);
+    LOG_I("Responder", "Listening on Wi-Fi channel %d", ch);
 }

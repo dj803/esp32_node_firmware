@@ -374,7 +374,12 @@ void apPortalStart() {
 // GitHub settings take effect on next OTA check.
 // =============================================================================
 
+// _settingsServerRunning is module-internal — never read from outside ap_portal.h.
+// Use the accessor below for any external query.
 static bool _settingsServerRunning = false;
+
+// Returns true while the settings HTTP portal is serving requests.
+inline bool settingsServerIsRunning() { return _settingsServerRunning; }
 
 // ── GET /settings — Settings-only form (STA mode) ───────────────────────────────
 // Served over the existing Wi-Fi STA connection (device LAN IP, port 80).
