@@ -47,11 +47,13 @@
 //   │  Hosts a Wi-Fi access point + HTTP portal for manual configuration.  │
 //   │  NEVER returns — calls ESP.restart() after credentials are saved.    │
 //
-// BOOT SEQUENCE (inside setup()):
-//   1. Serial.begin()
-//   2. WiFi.mode(WIFI_STA) + DeviceId::init()   — generate/load persistent UUID
-//   3. AppConfigStore::load()                   — load GitHub + MQTT topic settings
-//   4. State machine: BOOT → BOOTSTRAP/WIFI_CONNECT → OPERATIONAL or AP_MODE
+// BOOT SEQUENCE:
+//   setup():  Serial, LED, ws2812, WiFi.mode(), WiFiEvent, DeviceId, AppConfig,
+//             BOOT state check → BOOTSTRAP_REQUEST: spawn async task, return
+//                              → WIFI_CONNECT: WiFi.begin(), return
+//                              → AP_MODE: apPortalStart() (never returns)
+//   loop():   Polls bootstrap task (BOOTSTRAP_REQUEST), polls wifiConnected
+//             (WIFI_CONNECT), then services startup + ongoing tasks (OPERATIONAL)
 //
 // INCLUDE ORDER:
 //   Most cross-module forward declarations are now in *_fwd.h headers, so
@@ -140,475 +142,458 @@ void WiFiEvent(WiFiEvent_t event) {
 
 // ── connectWifi ───────────────────────────────────────────────────────────────
 // Starts a Wi-Fi connection attempt and blocks until either an IP is assigned
-// or WIFI_CONNECT_TIMEOUT_MS elapses.
+// or WIFI_CONNECT_TIMEOUT_MS elapses.  Used only on the rare sibling re-verify
+// path during WIFI_CONNECT (SIBLING_REVERIFY_ATTEMPTS == 1); the normal
+// boot-time Wi-Fi association is non-blocking and driven from loop().
 // Returns true if connected, false if timed out.
 static bool connectWifi(const CredentialBundle& b) {
-    WiFi.disconnect(true);         // Ensure any previous connection is fully torn down
-    WiFi.mode(WIFI_STA);           // Station mode (client, not access point)
-    WiFi.onEvent(WiFiEvent);       // Register the event handler for connect/disconnect events
-    WiFi.begin(b.wifi_ssid, b.wifi_password);  // Start the association process
-
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(b.wifi_ssid, b.wifi_password);
     LOG_I("WiFi", "Connecting to SSID: %s", b.wifi_ssid);
-
-    // Poll wifiConnected (set by WiFiEvent) every 100 ms until connected or timeout
     uint32_t deadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
-    while (!wifiConnected && millis() < deadline) {
-        delay(100);   // Yield to the Wi-Fi task while waiting
-    }
+    while (!wifiConnected && millis() < deadline) delay(100);
     return wifiConnected;
 }
 
 
+// ── Boot-time WiFi state (shared between setup and loop) ─────────────────────
+// These track the non-blocking WIFI_CONNECT phase that loop() drives.
+static int      _bootWifiAttempts = 0;
+static uint32_t _bootWifiDeadline = 0;
+static bool     _bootWifiBegan    = false;
+
+
 // =============================================================================
 // setup() — runs once at boot
-// Drives the state machine from BOOT through to OPERATIONAL (or AP_MODE).
-// setup() only returns if currentState == OPERATIONAL at the end.
+//
+// Performs hardware initialisation and determines the initial boot state,
+// then returns as quickly as possible so loop() can drive the state machine.
+//
+//   • If BOOTSTRAP_REQUEST: spawns the async ESP-NOW task and returns.
+//   • If WIFI_CONNECT:      calls WiFi.begin() (non-blocking) and returns.
+//   • If AP_MODE:           calls apPortalStart() which never returns.
+//
+// All subsequent state transitions (BOOTSTRAP→WIFI_CONNECT→OPERATIONAL) happen
+// inside loop().  One-time OPERATIONAL setup (broker discovery, mqttBegin,
+// peripheral init) also runs in loop() on the first OPERATIONAL iteration.
 // =============================================================================
 void setup() {
     Serial.begin(115200);
-    delay(500);   // Give the serial monitor time to connect before the first print
-    ledInit();                          // Start LED timer — must be early so all states can blink
-    ledSetPattern(LedPattern::BOOT);    // Solid ON during initialisation
-    ws2812Init();                       // WS2812B strip: FastLED setup, LEDs off, create event queue
-    ws2812TaskStart();                  // Spawn strip task on Core 1 — boot animations from here
+    delay(500);   // Give the serial monitor time to attach before the first print
+    ledInit();
+    ledSetPattern(LedPattern::BOOT);
+    ws2812Init();
+    ws2812TaskStart();
     Serial.println();
     LOG_I("BOOT", "ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
-    // Initialise the persistent device UUID (stored in NVS namespace "esp32id").
-    // Must run before any MQTT topic building or status publishing.
-    // On first boot, generates and saves a new UUID.
-    // On subsequent boots (including after OTA updates), loads the existing UUID.
-    WiFi.mode(WIFI_STA);   // MAC address readable only after Wi-Fi mode is set
+    // MAC address is readable only after Wi-Fi mode is set.
+    // Register WiFiEvent early so it is active before any WiFi.begin() call.
+    WiFi.mode(WIFI_STA);
+    WiFi.onEvent(WiFiEvent);
     DeviceId::init();
 
-    // Load GitHub owner/repo and MQTT ISA-95 topic segments from NVS into gAppConfig.
-    // Any field not yet saved in NVS falls back to the config.h compile-time default.
-    // Must run BEFORE mqttBegin() (reads gAppConfig for topic building) and
-    // BEFORE otaCheckNow() (reads gAppConfig.ota_json_url).
+    // Load GitHub owner/repo and MQTT ISA-95 topic segments from NVS.
+    // Falls back to config.h compile-time defaults for any field not yet saved.
+    // Must run BEFORE mqttBegin() (topic building) and otaCheckNow() (OTA URL).
     AppConfigStore::load();
-
 
     // ─────────────────────────────────────────────────────────────────────────
     // STATE: BOOT
-    // Check whether credentials were flagged stale by a previous boot cycle
-    // (written by loop() before a sustained-failure restart). If so, force a
-    // sibling re-verify even if admin credentials are present — they may no
-    // longer be valid after a network change.
-    //
-    // Otherwise, if admin credentials exist, skip bootstrap for a fast re-boot.
-    // If no credentials of any kind exist, go to BOOTSTRAP_REQUEST to ask siblings.
+    // Determine the initial state based on NVS credential freshness.
     // ─────────────────────────────────────────────────────────────────────────
     {
         bool credStale = CredentialStore::isCredStale();
         if (credStale) {
-            // Clear the flag now — this boot is the re-verify attempt.
-            // If sibling bootstrap fails, the device falls back to its stored
-            // credentials or AP mode as normal; the flag will not re-trigger.
             CredentialStore::setCredStale(false);
-            LOG_W("BOOT", "Credentials flagged stale - forcing sibling re-verify");
+            LOG_W("BOOT", "Credentials flagged stale — forcing sibling re-verify");
             currentState = State::BOOTSTRAP_REQUEST;
         } else if (CredentialStore::hasPrimary()) {
-            // Admin credentials are in NVS and not stale — load them
-            LOG_I("BOOT", "Admin credentials found - skipping bootstrap");
+            LOG_I("BOOT", "Admin credentials found — skipping bootstrap");
             if (CredentialStore::load(activeBundle)) {
-                currentState = State::WIFI_CONNECT;   // Go straight to Wi-Fi
+                currentState = State::WIFI_CONNECT;
             } else {
-                // NVS said admin credentials exist but they couldn't be loaded — corrupted?
-                LOG_E("BOOT", "Failed to load admin credentials - entering AP mode");
+                LOG_E("BOOT", "Failed to load admin credentials — entering AP mode");
                 currentState = State::AP_MODE;
             }
         } else {
-            // No admin credentials — need to ask a sibling node for them
             currentState = State::BOOTSTRAP_REQUEST;
         }
     }
 
-
     // ─────────────────────────────────────────────────────────────────────────
-    // STATE: BOOTSTRAP_REQUEST
-    // Broadcast an ESP-NOW credential request and wait for a sibling to respond.
-    // Each attempt waits up to BOOTSTRAP_TIMEOUT_MS before trying again.
-    // If no sibling responds after BOOTSTRAP_MAX_ATTEMPTS, fall back to
-    // any existing NVS bundle, or if there is none, go to AP_MODE.
+    // BOOTSTRAP_REQUEST: spawn the async task — loop() will poll for completion
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::BOOTSTRAP_REQUEST) {
-        LOG_I("BOOT", "Starting ESP-NOW bootstrap");
-        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — searching for sibling
+        LOG_I("BOOT", "Starting async ESP-NOW bootstrap");
+        ledSetPattern(LedPattern::WIFI_CONNECTING);
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "bootstrap", sizeof(e.animName)); ws2812PostEvent(e); }
-        WiFi.mode(WIFI_STA);   // ESP-NOW requires STA mode even before AP association
-
-        bool gotBundle = false;   // True once we have valid credentials to use
-
-        // Timestamp safety cap — reject bundles from rogue nodes advertising a
-        // far-future timestamp that would permanently win all comparisons.
-        const uint64_t BOOTSTRAP_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
-
-        for (int attempt = 1;
-             attempt <= BOOTSTRAP_MAX_ATTEMPTS && !gotBundle;
-             attempt++)
-        {
-            LOG_I("BOOT", "Bootstrap attempt %d of %d", attempt, BOOTSTRAP_MAX_ATTEMPTS);
-
-            CredentialBundle received;
-#ifdef SIBLING_PRIMARY_SELECTION
-            bool gotResp = espnowBootstrapWithPrimarySelection(received);
-#else
-            bool gotResp = espnowBootstrap(received);
-#endif
-            if (gotResp) {
-                // Reject bundles with an unreasonably far-future timestamp
-                if (received.timestamp > BOOTSTRAP_MAX_TS) {
-                    LOG_W("BOOT", "Received bundle timestamp %llu exceeds cap %llu - discarding",
-                          received.timestamp, BOOTSTRAP_MAX_TS);
-                    // Treat as if no response arrived for this attempt
-                } else {
-                // A sibling responded — compare with whatever is already in NVS
-                // and keep whichever bundle has the newer timestamp.
-                CredentialBundle stored;
-                bool hasStored = CredentialStore::load(stored);
-
-                // Use the received bundle if:
-                //   - We have nothing stored yet, OR
-                //   - The received bundle is strictly newer.
-                // When timestamps are equal, keep the stored bundle (conservative default).
-                bool useReceived = !hasStored
-                    || received.timestamp > stored.timestamp
-                    || (received.timestamp == stored.timestamp
-                        && memcmp(WiFi.macAddress().c_str(),
-                                  "00:00:00:00:00:00", 6) < 0);  // always false — stored wins on tie
-
-                if (useReceived) {
-                    activeBundle = received;
-                    CredentialStore::save(activeBundle);   // Persist for next boot
-                    LOG_I("BOOT", "New bundle adopted and saved");
-                } else {
-                    activeBundle = stored;
-                    LOG_I("BOOT", "Kept existing NVS bundle (newer timestamp)");
-                }
-                gotBundle = true;   // We have credentials — exit the retry loop
-                } // end timestamp cap else
-
-            } else {
-                // No response this attempt
-                if (attempt < BOOTSTRAP_MAX_ATTEMPTS) {
-                    LOG_I("BOOT", "No response - retrying in 2 s");
-                    // TODO(v0.3.07): remove when bootstrap becomes non-blocking state machine
-                    delay(2000);
-                }
-            }
-        }
-
-        if (!gotBundle) {
-            // All bootstrap attempts failed — fall back to anything in NVS
-            if (CredentialStore::load(activeBundle)) {
-                LOG_I("BOOT", "No sibling found - using stored NVS bundle");
-                currentState = State::WIFI_CONNECT;
-            } else {
-                // Nothing in NVS either — no choice but to enter AP mode
-                LOG_W("BOOT", "No credentials available - entering AP mode");
-                currentState = State::AP_MODE;
-            }
-        } else {
-            currentState = State::WIFI_CONNECT;
-        }
+        espnowBootstrapBegin();   // FreeRTOS task — returns immediately
+        return;                   // loop() drives the rest
     }
 
-
     // ─────────────────────────────────────────────────────────────────────────
-    // STATE: WIFI_CONNECT
-    // Try to associate with the Wi-Fi router using the credentials in activeBundle.
-    // If all attempts fail, increment the restart counter and reboot.
-    // If the restart counter reaches DEVICE_RESTART_MAX, enter AP_MODE instead
-    // (prevents an infinite restart loop if credentials are wrong).
+    // WIFI_CONNECT: call WiFi.begin() non-blocking — loop() will poll
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::WIFI_CONNECT) {
-        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — associating with router
+        ledSetPattern(LedPattern::WIFI_CONNECTING);
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "wifi", sizeof(e.animName)); ws2812PostEvent(e); }
-        bool connected = false;
-
-        for (int attempt = 1;
-             attempt <= WIFI_MAX_ATTEMPTS && !connected;
-             attempt++)
-        {
-            LOG_I("WiFi", "Association attempt %d of %d", attempt, WIFI_MAX_ATTEMPTS);
-            connected = connectWifi(activeBundle);
-            if (!connected && attempt < WIFI_MAX_ATTEMPTS) {
-                // TODO(v0.3.07): replace with non-blocking retry when boot path is refactored
-                delay(2000);
-            }
-        }
-
-        if (!connected) {
-            // All Wi-Fi attempts failed. Before incrementing the restart counter,
-            // ask siblings for fresh credentials — they may have a newer bundle
-            // (e.g. after an admin rotated credentials on the network).
-            // WiFi is NOT connected here so it is safe to change the channel.
-            LOG_W("WiFi", "All attempts failed - trying sibling credential re-verify");
-
-            // Timestamp safety cap (same rule as BOOTSTRAP_REQUEST above)
-            const uint64_t REVERIFY_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
-
-            for (int sibAttempt = 0;
-                 sibAttempt < SIBLING_REVERIFY_ATTEMPTS && !connected;
-                 sibAttempt++)
-            {
-                CredentialBundle fresh;
-#ifdef SIBLING_PRIMARY_SELECTION
-                bool gotFresh = espnowBootstrapWithPrimarySelection(fresh);
-#else
-                bool gotFresh = espnowBootstrap(fresh);
-#endif
-                if (gotFresh) {
-                    if (fresh.timestamp > REVERIFY_MAX_TS) {
-                        LOG_W("WiFi", "Sibling bundle timestamp %llu exceeds cap - discarding",
-                              fresh.timestamp);
-                    } else if (fresh.timestamp > activeBundle.timestamp) {
-                        // Strictly newer credentials received — adopt and retry WiFi
-                        activeBundle = fresh;
-                        CredentialStore::save(activeBundle);
-                        LOG_I("WiFi", "Fresh credentials from sibling - retrying WiFi");
-
-                        for (int ra = 1; ra <= WIFI_MAX_ATTEMPTS && !connected; ra++) {
-                            LOG_I("WiFi", "Re-verify attempt %d of %d", ra, WIFI_MAX_ATTEMPTS);
-                            connected = connectWifi(activeBundle);
-                            if (!connected && ra < WIFI_MAX_ATTEMPTS) {
-                                // TODO(v0.3.07): replace with non-blocking retry
-                                delay(2000);
-                            }
-                        }
-                        if (connected) {
-                            CredentialStore::clearRestartCount();
-                            ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow blink — waiting for MQTT
-                            currentState = State::OPERATIONAL;
-                        } else {
-                            LOG_W("WiFi", "Still failed with fresh sibling credentials");
-                        }
-                    } else {
-                        LOG_I("WiFi", "Sibling bundle not newer (ts=%llu <= stored=%llu)",
-                              fresh.timestamp, activeBundle.timestamp);
-                    }
-                } else {
-                    LOG_W("WiFi", "No sibling responded to re-verify request");
-                }
-            }
-
-            if (!connected) {
-                // All attempts exhausted including sibling re-verify
-                uint8_t restarts = CredentialStore::incrementRestartCount();
-                LOG_W("WiFi", "Failed - restart count now %d / %d", restarts, DEVICE_RESTART_MAX);
-
-                if (restarts < DEVICE_RESTART_MAX) {
-                    // Still within the restart budget — reboot and try again
-                    LOG_W("WiFi", "Restarting device...");
-                    ledSetPattern(LedPattern::ERROR);   // 3× flash — visible during 1s delay
-                    delay(1000);    // Brief pause so the serial message is transmitted
-                    ESP.restart();  // Full hardware restart
-                } else {
-                    // Restart budget exhausted — credentials may be wrong or router is down.
-                    // Enter AP_MODE so the admin can update credentials.
-                    LOG_W("WiFi", "Restart limit reached - entering AP mode");
-                    currentState = State::AP_MODE;
-                }
-            }
-        } else {
-            // Successfully connected — reset the restart counter
-            CredentialStore::clearRestartCount();
-            ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow blink — waiting for MQTT
-            currentState = State::OPERATIONAL;
-        }
+        LOG_I("WiFi", "Association attempt 1 of %d — SSID: %s",
+              WIFI_MAX_ATTEMPTS, activeBundle.wifi_ssid);
+        WiFi.disconnect(true);
+        WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+        _bootWifiAttempts = 1;
+        _bootWifiDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
+        _bootWifiBegan    = true;
+        return;   // loop() drives the rest
     }
 
-
     // ─────────────────────────────────────────────────────────────────────────
-    // STATE: AP_MODE
-    // Host a Wi-Fi access point and HTTP configuration portal.
-    // This call NEVER returns — apPortalStart() runs its own blocking loop
-    // and calls ESP.restart() after the admin saves credentials.
+    // AP_MODE: host the config portal — never returns
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::AP_MODE) {
-        ledSetPattern(LedPattern::AP_MODE);   // rapid 100/100 blink — config portal active
+        ledSetPattern(LedPattern::AP_MODE);
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "ap_mode", sizeof(e.animName)); ws2812PostEvent(e); }
-        apPortalStart();
-        // Execution does not reach here
-    }
-
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // STATE: OPERATIONAL
-    // We are connected to Wi-Fi. Start all application services:
-    //   1. ESP-NOW responder — other nodes can now bootstrap from us
-    //   2. MQTT — connect to the broker and begin messaging
-    //
-    // After setup() returns, loop() takes over for ongoing tasks.
-    // ─────────────────────────────────────────────────────────────────────────
-    if (currentState == State::OPERATIONAL) {
-        LOG_I("BOOT", "Wi-Fi connected - starting services");
-
-        // Register our credentials with the ESP-NOW responder so that any
-        // new node that asks us for credentials gets the active bundle
-        espnowResponderSetBundle(activeBundle);
-        espnowResponderStart();   // Start listening for incoming ESP-NOW requests
-
-        // Initialise health flags for sibling health advertisements.
-        // WiFi is confirmed connected (we are here). GitHub is assumed reachable
-        // until the first OTA check proves otherwise (~1 hour). MQTT starts at 0
-        // and is set by onMqttConnect once the broker responds.
-        responderSetHealthFlag(0, true);   // bit 0: WiFi connected
-        responderSetHealthFlag(2, true);   // bit 2: GitHub assumed reachable
-
-        // Discover the MQTT broker using mDNS, then port scan, then stored URL.
-        // discoverBroker() returns the best address found by any method.
-        // The result is passed directly to mqttBegin() — the NVS bundle is
-        // not modified, so discovery only affects this session.
-        BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
-
-        // Persist the discovered address so next boot can skip mDNS/port scan
-        if (broker.found()) {
-            saveBrokerToCache(broker.host, broker.port);
-            // Share with ESP-NOW responder so siblings can ask us for the broker
-            espnowResponderSetBroker(broker.host, broker.port);
-        }
-
-        // Strip returns to idle blue breathing — OPERATIONAL state reached
-        { LedEvent e{}; e.type = LedEventType::RESET; ws2812PostEvent(e); }
-
-        // Connect to the MQTT broker — non-blocking; result arrives via callbacks
-        mqttBegin(activeBundle, broker);
-
-#ifdef RFID_ENABLED
-        // Initialise the MFRC522 reader over SPI. Called here (after Wi-Fi connects and
-        // ESP-NOW channel scanning is complete) so SPI is free from radio contention.
-        rfidInit();
-#endif
-
-#ifdef BLE_ENABLED
-        // Initialise BLE scanner. Called after Wi-Fi is up — BLE and WiFi share the
-        // 2.4 GHz radio and ESP-IDF handles the coexistence automatically.
-        bleInit();
-#endif
+        apPortalStart();   // never returns
     }
 }
 
 
 // =============================================================================
 // loop() — runs repeatedly after setup() returns
-// Only active when currentState == OPERATIONAL. All other states either never
-// reach loop() (AP_MODE blocks in setup) or the device has restarted.
+//
+// Drives the full boot state machine through to OPERATIONAL, then handles
+// ongoing work (Wi-Fi recovery, MQTT, OTA, ranging, RFID, BLE).
+//
+//   BOOTSTRAP_REQUEST  — polls the async ESP-NOW task; on completion
+//                        processes the bundle and transitions to WIFI_CONNECT
+//                        or AP_MODE.
+//   WIFI_CONNECT       — polls wifiConnected (set by WiFiEvent); retries up
+//                        to WIFI_MAX_ATTEMPTS; synchronous sibling re-verify
+//                        on total failure; falls through to AP_MODE or restart.
+//   AP_MODE            — calls apPortalStart() which never returns.
+//   OPERATIONAL        — one-time service startup on first entry, then the
+//                        regular heartbeat / OTA / RFID / BLE tasks.
 // =============================================================================
 void loop() {
-    // Guard: if setup() didn't reach OPERATIONAL for any reason, do nothing
-    if (currentState != State::OPERATIONAL) return;
 
-    // ── Wi-Fi health check ────────────────────────────────────────────────────
-    // If the Wi-Fi connection dropped (wifiConnected set to false by WiFiEvent),
-    // attempt reconnection without blocking the rest of the loop.
-    //
-    // State is tracked across loop() iterations via static variables:
-    //   _wifiRecoveryAttempts — how many reconnects have been tried this outage
-    //   _wifiRetryAt          — millis() timestamp before which we do not retry
-    //
-    // Note: connectWifi() still blocks for up to WIFI_CONNECT_TIMEOUT_MS per
-    // call. Full non-blocking WiFi recovery (state machine driven from loop())
-    // is deferred to v0.3.07 along with the ESP-NOW channel scan refactor.
-    if (!wifiConnected) {
-        static int      _wifiRecoveryAttempts = 0;
-        static uint32_t _wifiRetryAt          = 0;
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATE: BOOTSTRAP_REQUEST — poll the FreeRTOS task started in setup()
+    // ─────────────────────────────────────────────────────────────────────────
+    if (currentState == State::BOOTSTRAP_REQUEST) {
+        if (!espnowBootstrapIsDone()) return;   // task still running
 
-        if (_wifiRecoveryAttempts == 0) {
-            // First check after losing connection — log and start the recovery sequence
-            LOG_W("Loop", "Wi-Fi lost - attempting reconnect");
-            ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 — reconnecting
+        // Task completed — process result
+        const uint64_t BOOTSTRAP_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
+        bool gotBundle = false;
+
+        CredentialBundle received;
+        if (espnowBootstrapGetResult(received)) {
+            if (received.timestamp > BOOTSTRAP_MAX_TS) {
+                LOG_W("BOOT", "Bootstrap bundle timestamp %llu exceeds cap — discarding",
+                      received.timestamp);
+            } else {
+                // Compare with stored bundle and keep the newer one
+                CredentialBundle stored;
+                bool hasStored    = CredentialStore::load(stored);
+                bool useReceived  = !hasStored || received.timestamp > stored.timestamp;
+
+                if (useReceived) {
+                    activeBundle = received;
+                    CredentialStore::save(activeBundle);
+                    LOG_I("BOOT", "New bundle adopted and saved");
+                } else {
+                    activeBundle = stored;
+                    LOG_I("BOOT", "Kept existing NVS bundle (newer timestamp)");
+                }
+                gotBundle = true;
+            }
         }
 
-        if (millis() < _wifiRetryAt) {
-            // Still in the inter-attempt pause — return so other loop tasks can run
+        if (!gotBundle) {
+            // All bootstrap attempts failed — fall back to NVS bundle if any
+            if (CredentialStore::load(activeBundle)) {
+                LOG_I("BOOT", "No sibling — using stored NVS bundle");
+                gotBundle = true;
+            }
+        }
+
+        if (!gotBundle) {
+            LOG_W("BOOT", "No credentials available — entering AP mode");
+            currentState = State::AP_MODE;
             return;
         }
 
-        connectWifi(activeBundle);
-        _wifiRecoveryAttempts++;
+        // Transition to WIFI_CONNECT — fire WiFi.begin() and come back next tick
+        currentState = State::WIFI_CONNECT;
+        ledSetPattern(LedPattern::WIFI_CONNECTING);
+        { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
+          strlcpy(e.animName, "wifi", sizeof(e.animName)); ws2812PostEvent(e); }
+        LOG_I("WiFi", "Association attempt 1 of %d — SSID: %s",
+              WIFI_MAX_ATTEMPTS, activeBundle.wifi_ssid);
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+        _bootWifiAttempts = 1;
+        _bootWifiDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
+        _bootWifiBegan    = true;
+        return;
+    }
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATE: WIFI_CONNECT — non-blocking WiFi association
+    // ─────────────────────────────────────────────────────────────────────────
+    if (currentState == State::WIFI_CONNECT) {
+        // First entry when coming straight from setup() (BOOT→WIFI_CONNECT path)
+        if (!_bootWifiBegan) {
+            LOG_I("WiFi", "Association attempt 1 of %d — SSID: %s",
+                  WIFI_MAX_ATTEMPTS, activeBundle.wifi_ssid);
+            WiFi.disconnect(true);
+            WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+            _bootWifiAttempts = 1;
+            _bootWifiDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
+            _bootWifiBegan    = true;
+        }
 
         if (wifiConnected) {
-            // Reconnected successfully — clear recovery state
-            _wifiRecoveryAttempts = 0;
-            _wifiRetryAt          = 0;
-            // AsyncMqttClient will automatically reconnect to the broker
-            // via its own reconnect timer — no explicit call needed here.
-        } else if (_wifiRecoveryAttempts >= WIFI_MAX_ATTEMPTS) {
-            // All attempts exhausted — flag credentials as stale so next boot
-            // forces a sibling re-verify before falling back to AP mode.
-            LOG_W("Loop", "Could not reconnect - flagging credentials stale and restarting");
-            ledSetPattern(LedPattern::ERROR);   // 3× flash before restart
-            CredentialStore::setCredStale(true);
-            CredentialStore::incrementRestartCount();   // Track this failure
-            ESP.restart();
-        } else {
-            // Schedule the next attempt with a 3-second pause.
-            // Return to loop() so MQTT heartbeat and OTA tasks can still run.
-            _wifiRetryAt = millis() + 3000;
+            // Connected — reset restart counter and proceed to OPERATIONAL
+            CredentialStore::clearRestartCount();
+            ledSetPattern(LedPattern::WIFI_CONNECTED);
+            currentState   = State::OPERATIONAL;
+            _bootWifiBegan = false;
+            return;
+        }
+
+        if (millis() < _bootWifiDeadline) return;   // still waiting for this attempt
+
+        // Attempt timed out
+        LOG_W("WiFi", "Attempt %d of %d timed out", _bootWifiAttempts, WIFI_MAX_ATTEMPTS);
+
+        if (_bootWifiAttempts < WIFI_MAX_ATTEMPTS) {
+            // Retry immediately
+            _bootWifiAttempts++;
+            LOG_I("WiFi", "Association attempt %d of %d", _bootWifiAttempts, WIFI_MAX_ATTEMPTS);
+            WiFi.disconnect(true);
+            WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+            _bootWifiDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
+            return;
+        }
+
+        // All Wi-Fi attempts exhausted — try synchronous sibling re-verify
+        // (SIBLING_REVERIFY_ATTEMPTS == 1 so this path is rare and brief)
+        LOG_W("WiFi", "All attempts failed — trying sibling credential re-verify");
+        _bootWifiBegan = false;
+
+        const uint64_t REVERIFY_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
+        bool connected = false;
+
+        for (int sib = 0; sib < SIBLING_REVERIFY_ATTEMPTS && !connected; sib++) {
+            CredentialBundle fresh;
+#ifdef SIBLING_PRIMARY_SELECTION
+            bool gotFresh = espnowBootstrapWithPrimarySelection(fresh);
+#else
+            bool gotFresh = espnowBootstrap(fresh);
+#endif
+            if (gotFresh) {
+                if (fresh.timestamp > REVERIFY_MAX_TS) {
+                    LOG_W("WiFi", "Sibling bundle timestamp %llu exceeds cap — discarding",
+                          fresh.timestamp);
+                } else if (fresh.timestamp > activeBundle.timestamp) {
+                    activeBundle = fresh;
+                    CredentialStore::save(activeBundle);
+                    LOG_I("WiFi", "Fresh credentials from sibling — retrying WiFi");
+                    for (int ra = 1; ra <= WIFI_MAX_ATTEMPTS && !connected; ra++) {
+                        LOG_I("WiFi", "Re-verify WiFi attempt %d of %d", ra, WIFI_MAX_ATTEMPTS);
+                        connected = connectWifi(activeBundle);
+                    }
+                    if (connected) {
+                        CredentialStore::clearRestartCount();
+                        ledSetPattern(LedPattern::WIFI_CONNECTED);
+                        currentState = State::OPERATIONAL;
+                    } else {
+                        LOG_W("WiFi", "Still failed with fresh sibling credentials");
+                    }
+                } else {
+                    LOG_I("WiFi", "Sibling bundle not newer (ts=%llu <= stored=%llu)",
+                          fresh.timestamp, activeBundle.timestamp);
+                }
+            } else {
+                LOG_W("WiFi", "No sibling responded to re-verify request");
+            }
+        }
+
+        if (!connected) {
+            uint8_t restarts = CredentialStore::incrementRestartCount();
+            LOG_W("WiFi", "Failed — restart count %d / %d", restarts, DEVICE_RESTART_MAX);
+            if (restarts < DEVICE_RESTART_MAX) {
+                LOG_W("WiFi", "Restarting device...");
+                ledSetPattern(LedPattern::ERROR);
+                delay(1000);
+                ESP.restart();
+            } else {
+                LOG_W("WiFi", "Restart limit reached — entering AP mode");
+                currentState = State::AP_MODE;
+            }
+        }
+        return;
+    }
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATE: AP_MODE — host the config portal (never returns)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (currentState == State::AP_MODE) {
+        ledSetPattern(LedPattern::AP_MODE);
+        { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
+          strlcpy(e.animName, "ap_mode", sizeof(e.animName)); ws2812PostEvent(e); }
+        apPortalStart();   // never returns — calls ESP.restart() after credentials saved
+        return;
+    }
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STATE: OPERATIONAL
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── One-time service startup ──────────────────────────────────────────────
+    // Runs on the very first OPERATIONAL loop() tick. Doing this here (rather
+    // than in setup()) means discoverBroker() blocks in loop() context where all
+    // FreeRTOS tasks (LED strip, Wi-Fi stack) continue to run unimpeded.
+    {
+        static bool _servicesStarted = false;
+        if (!_servicesStarted) {
+            _servicesStarted = true;
+            LOG_I("BOOT", "Wi-Fi connected — starting services");
+
+            espnowResponderSetBundle(activeBundle);
+            espnowResponderStart();
+
+            // WiFi is confirmed connected. GitHub reachability is assumed until
+            // the first OTA check proves otherwise (~1 hour from boot).
+            responderSetHealthFlag(0, true);   // bit 0: WiFi connected
+            responderSetHealthFlag(2, true);   // bit 2: GitHub assumed reachable
+
+            BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
+            if (broker.found()) {
+                saveBrokerToCache(broker.host, broker.port);
+                espnowResponderSetBroker(broker.host, broker.port);
+            }
+
+            { LedEvent e{}; e.type = LedEventType::RESET; ws2812PostEvent(e); }
+
+            mqttBegin(activeBundle, broker);
+
+#ifdef RFID_ENABLED
+            rfidInit();   // SPI free now that ESP-NOW channel scan is complete
+#endif
+#ifdef BLE_ENABLED
+            bleInit();    // BLE + WiFi share 2.4 GHz; ESP-IDF handles coexistence
+#endif
+            return;   // Give other tasks a cycle before entering the regular loop
+        }
+    }
+
+    // ── Wi-Fi health check ────────────────────────────────────────────────────
+    // Tracks transitions between connected and disconnected, then drives a
+    // non-blocking reconnection sequence (WiFi.begin() + millis() deadline).
+    {
+        static bool     _wifiWasConnected    = true;   // true = assume connected at startup
+        static int      _wifiRecovAttempts   = 0;
+        static uint32_t _wifiRetryAt         = 0;
+        static uint32_t _wifiAttemptDeadline = 0;
+        static bool     _wifiAttemptStarted  = false;
+
+        if (wifiConnected && !_wifiWasConnected) {
+            // Just re-established connection — reset recovery state
+            _wifiWasConnected   = true;
+            _wifiRecovAttempts  = 0;
+            _wifiRetryAt        = 0;
+            _wifiAttemptStarted = false;
+            LOG_I("Loop", "Wi-Fi reconnected");
+            ledSetPattern(LedPattern::WIFI_CONNECTED);
+        }
+
+        if (!wifiConnected) {
+            if (_wifiWasConnected) {
+                _wifiWasConnected = false;
+                LOG_W("Loop", "Wi-Fi lost — attempting reconnect");
+                ledSetPattern(LedPattern::WIFI_CONNECTING);
+            }
+
+            if (!_wifiAttemptStarted) {
+                if (millis() < _wifiRetryAt) return;   // cooling-down pause
+                // Start a new reconnect attempt
+                WiFi.disconnect(true);
+                WiFi.mode(WIFI_STA);
+                WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+                _wifiAttemptDeadline  = millis() + WIFI_CONNECT_TIMEOUT_MS;
+                _wifiAttemptStarted   = true;
+                _wifiRecovAttempts++;
+                LOG_I("Loop", "WiFi recovery attempt %d of %d",
+                      _wifiRecovAttempts, WIFI_MAX_ATTEMPTS);
+                return;
+            }
+
+            if (millis() < _wifiAttemptDeadline) return;   // waiting for this attempt
+
+            // Attempt timed out
+            _wifiAttemptStarted = false;
+
+            if (_wifiRecovAttempts >= WIFI_MAX_ATTEMPTS) {
+                LOG_W("Loop", "Could not reconnect — flagging credentials stale and restarting");
+                ledSetPattern(LedPattern::ERROR);
+                CredentialStore::setCredStale(true);
+                CredentialStore::incrementRestartCount();
+                ESP.restart();
+            }
+            _wifiRetryAt = millis() + 3000;   // 3-second pause before next attempt
             return;
         }
     }
 
     // ── MQTT heartbeat ────────────────────────────────────────────────────────
-    // Publishes a heartbeat status message every HEARTBEAT_INTERVAL_MS.
-    // mqttHeartbeat() checks the elapsed time internally and returns immediately
-    // if the interval has not elapsed yet — safe to call every loop tick.
     mqttHeartbeat();
 
     // ── MQTT self-heal ────────────────────────────────────────────────────────
-    // Hung watchdog: if connect() was called but no callback (success or failure)
-    // arrived within MQTT_HUNG_TIMEOUT_MS the AsyncMqttClient TCP layer has
-    // silently stalled — restart immediately.
-    // Tier 2: hard restart once MQTT_RESTART_THRESHOLD consecutive failures hit.
-    // Tier 1: re-run broker discovery at MQTT_REDISCOVERY_THRESHOLD failures.
     if (mqttIsHung()) {
-        LOG_W("Loop", "MQTT hung (no callback) - restarting device");
+        LOG_W("Loop", "MQTT hung (no callback) — restarting device");
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
-        // Sustained MQTT failure — credentials may be wrong (wrong broker URL,
-        // bad username/password). Flag as stale so next boot asks siblings.
-        LOG_W("Loop", "MQTT unrecoverable - flagging credentials stale and restarting");
+        LOG_W("Loop", "MQTT unrecoverable — flagging credentials stale and restarting");
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttNeedsRediscovery()) {
         mqttClearRediscoveryFlag();
-        ledSetPattern(LedPattern::WIFI_CONNECTING);   // re-running discovery
-        LOG_W("Loop", "MQTT stuck - re-running broker discovery");
+        ledSetPattern(LedPattern::WIFI_CONNECTING);
+        LOG_W("Loop", "MQTT stuck — re-running broker discovery");
         BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
         if (broker.found()) saveBrokerToCache(broker.host, broker.port);
         mqttReinit(broker);
     }
 
     // ── OTA version check ─────────────────────────────────────────────────────
-    // Checks GitHub for a newer firmware release every OTA_CHECK_INTERVAL_MS,
-    // or immediately if an MQTT ota_check command was received.
-    // otaLoop() returns quickly if the interval hasn't elapsed.
     otaLoop();
 
     // ── ESP-NOW ranging ───────────────────────────────────────────────────────
-    // Broadcasts a periodic ranging beacon and publishes peer RSSI/distance to
-    // MQTT topic .../espnow every ESPNOW_MQTT_PUBLISH_MS.
     espnowRangingLoop();
 
 #ifdef RFID_ENABLED
-    rfidLoop();             // Poll for RFID card scans; publishes UID to .../telemetry
+    rfidLoop();
 #endif
-
 #ifdef BLE_ENABLED
-    bleLoop();              // BLE scan trigger, tracked beacon MQTT publish (2 s), serial print (10 s)
+    bleLoop();
 #endif
 
-    settingsServerTick();   // Handle HTTP requests on the settings portal (no-op
-                            // when portal is not active — returns false immediately)
+    settingsServerTick();
 
-    delay(100);   // Yield for 100 ms — prevents watchdog timeout and keeps CPU free
-                  // for the Wi-Fi and MQTT background tasks running on core 0
+    delay(100);
 }

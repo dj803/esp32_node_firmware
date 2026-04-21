@@ -30,24 +30,19 @@ FIRMWARE — SECURITY
 FIRMWARE — PERFORMANCE / BOOT TIME
 ────────────────────────────────────────────────────────────────────────────────
 
-4. Non-blocking ESP-NOW channel scan (HIGH)
-   File:   include/espnow_bootstrap.h lines 289, 304, 388, 461, 540, 607
-   Problem: Blocking `while (!_response && millis() < deadline) delay(10)` on
-            every channel. Full 1-13 sweep ≈ 6.5 s worst case, blocking setup().
-   Fix:    Convert to a state-machine / FreeRTOS-task pattern driven from loop().
+4. (shipped in v0.3.09) Non-blocking ESP-NOW channel scan
+   include/espnow_bootstrap.h: espnowBootstrapBegin() / IsDone() / GetResult()
+   FreeRTOS task API. setup() returns immediately; loop() polls the task.
 
-5. Non-blocking broker port scan (HIGH)
-   File:   include/broker_discovery.h line 348
-   Problem: Synchronous TCP connect per host, 75 ms timeout × 254 hosts ≈ 19 s
-            worst case. Blocks setup().
-   Fix:    Use AsyncTCP (already in lib_deps) for parallel connects with a
-            collector callback; early-exit at PORTSCAN_MAX_RESULTS.
+5. (shipped in v0.3.09) Non-blocking broker port scan
+   include/broker_discovery.h: tryPortScan() rewritten with AsyncTCP parallel
+   sliding window (PORTSCAN_WINDOW = 6). Worst case ≈ 7.6 s vs 19 s.
 
-6. (shipped in v0.3.06) Remaining blocking delay()s in setup / loop
-   — loop() Wi-Fi reconnect delay(3000) replaced with millis-based non-blocking
-     pattern in main.cpp. setup() retry delays carry TODO(v0.3.07) comments and
-     will be removed when the boot path becomes a state machine.
-   — ap_portal.h delays deferred to v0.3.11 (HTTPS refactor touches same file).
+6. (shipped in v0.3.09) Remaining blocking delay()s in setup / loop
+   setup() now returns immediately after WiFi.begin() or spawning the bootstrap
+   task. All TODO(v0.3.07) comments removed. loop() drives the full boot state
+   machine with millis()-based non-blocking Wi-Fi association.
+   ap_portal.h delays deferred to v0.3.11 (HTTPS refactor touches same file).
 
 ────────────────────────────────────────────────────────────────────────────────
 FIRMWARE — OBSERVABILITY
@@ -156,9 +151,9 @@ See SUGGESTED_IMPROVEMENTS.txt for these items plus the Node.js 24 upgrade
 PRIORITISATION GUIDANCE
 ────────────────────────────────────────────────────────────────────────────────
 
-When revisiting this list: items 4, 5, 9, 10 are the ones most likely to
-cause field incidents. Items 15, 16, 17 compound over time — each release
+When revisiting this list: items 9, 10 are the ones most likely to cause
+field incidents. Items 15, 16, 17 compound over time — each release
 spent without them makes the next refactor more expensive. Items 18, 19
 are paper cuts; tackle opportunistically.
-Items 1, 6, 7, 8, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
+Items 1, 4, 5, 6, 7, 8, 11, 12, 13, 14 have shipped (see "(shipped in …)" annotations).
 Items 2, 20, 21, 22 have been moved out to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.

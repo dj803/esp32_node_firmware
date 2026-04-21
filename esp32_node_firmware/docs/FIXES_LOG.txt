@@ -481,6 +481,44 @@ New files: include/logging.h, include/fwevent.h
 
 
 ────────────────────────────────────────────────────────────────────────────────
+14. v0.3.09 — Non-blocking ESP-NOW scan + AsyncTCP parallel broker port scan
+────────────────────────────────────────────────────────────────────────────────
+
+[espnow_bootstrap.h] Async FreeRTOS task API (DEFERRED items 4, 6)
+  Added espnowBootstrapBegin() / espnowBootstrapIsDone() / espnowBootstrapGetResult()
+  backed by a FreeRTOS task (_espnowBootstrapTask, 8 KB stack, priority 5).
+  The task runs the existing espnowBootstrap() BOOTSTRAP_MAX_ATTEMPTS times
+  with vTaskDelay(2000 ms) between retries and self-deletes on completion.
+  setup() calls espnowBootstrapBegin() and returns immediately; loop() polls
+  espnowBootstrapIsDone() in the BOOTSTRAP_REQUEST state.
+
+[broker_discovery.h] AsyncTCP parallel port scan (DEFERRED items 5)
+  tryPortScan() replaced with an async sliding-window implementation using
+  AsyncTCP. PORTSCAN_WINDOW = PORTSCAN_MAX_RESULTS + 2 = 6 parallel AsyncClient
+  connections. Each slot fires a connect(); callbacks set volatile done/open
+  flags; main task polls with delay(5) to yield to the AsyncTCP/lwIP FreeRTOS
+  task. Manual per-slot timeout at 2 × PORTSCAN_TIMEOUT_MS (150 ms) prevents
+  stalls. Worst-case time: ceil(254/6) × ~180 ms ≈ 7.6 s vs 19 s synchronous.
+  #include <AsyncTCP.h> and #include "logging.h" added; all Serial.printf/
+  println calls in the file converted to LOG_I/LOG_W macros.
+
+[src/main.cpp] Non-blocking boot state machine in loop() (DEFERRED items 4, 5)
+  setup() now returns immediately after spawning the bootstrap task (or calling
+  WiFi.begin() for the fast re-boot path). loop() drives the full state machine:
+  — BOOTSTRAP_REQUEST: polls espnowBootstrapIsDone(); on completion processes the
+    bundle (timestamp cap, NVS compare) and transitions to WIFI_CONNECT.
+  — WIFI_CONNECT: non-blocking WiFi.begin() + millis() deadline polling; retries
+    up to WIFI_MAX_ATTEMPTS; synchronous espnowBootstrap() sibling re-verify on
+    total failure (SIBLING_REVERIFY_ATTEMPTS == 1, rare path).
+  — AP_MODE: calls apPortalStart() (never returns).
+  — OPERATIONAL: one-time service startup on first entry (espnowResponderStart,
+    discoverBroker, mqttBegin, rfidInit, bleInit); subsequent iterations run
+    non-blocking Wi-Fi recovery + MQTT watchdog + OTA + ranging + RFID + BLE.
+  WiFiEvent registered in setup() before any WiFi.begin() call.
+  All remaining TODO(v0.3.07) comments removed.
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

@@ -422,6 +422,76 @@ bool espnowBootstrap(CredentialBundle& out) {
 }
 
 
+// ── Async task-based bootstrap API ───────────────────────────────────────────
+// espnowBootstrapBegin() spawns a FreeRTOS task that runs the full
+// BOOTSTRAP_MAX_ATTEMPTS retry sequence without blocking the Arduino main task.
+// Poll espnowBootstrapIsDone() from loop(); call espnowBootstrapGetResult()
+// once done to obtain the received bundle (if any).
+//
+// Safe to call from setup() or loop(). Only one task may run at a time;
+// calling espnowBootstrapBegin() while a task is already running is a no-op.
+//
+// Stack: 8 KB on the system heap — sufficient for ECDH + AES stack frames
+// inside espnowBootstrap(). The task self-deletes on completion.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static TaskHandle_t     _bootstrapTaskHandle = nullptr;
+static volatile bool    _bootstrapTaskDone   = false;
+static volatile bool    _bootstrapTaskOk     = false;
+static CredentialBundle _bootstrapTaskBundle;   // written by task, read after done
+
+static void _espnowBootstrapTask(void* /*pvParams*/) {
+    const uint64_t MAX_TS  = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
+    CredentialBundle received;
+    bool gotBundle = false;
+
+    for (int attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS && !gotBundle; attempt++) {
+        LOG_I("ESP-NOW", "Async bootstrap attempt %d of %d", attempt, BOOTSTRAP_MAX_ATTEMPTS);
+        CredentialBundle candidate;
+        bool gotResp = espnowBootstrap(candidate);
+        if (gotResp) {
+            if (candidate.timestamp > MAX_TS) {
+                LOG_W("ESP-NOW", "Bundle timestamp exceeds cap — discarding");
+            } else {
+                received  = candidate;
+                gotBundle = true;
+            }
+        } else if (attempt < BOOTSTRAP_MAX_ATTEMPTS) {
+            LOG_I("ESP-NOW", "No response — retrying in 2 s");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+    }
+
+    if (gotBundle) {
+        _bootstrapTaskBundle = received;
+        _bootstrapTaskOk     = true;
+    }
+    _bootstrapTaskDone   = true;
+    _bootstrapTaskHandle = nullptr;
+    vTaskDelete(nullptr);   // task self-deletes
+}
+
+// Start the async bootstrap. No-op if a task is already running.
+static void espnowBootstrapBegin() {
+    if (_bootstrapTaskHandle != nullptr) return;   // already running
+    _bootstrapTaskDone = false;
+    _bootstrapTaskOk   = false;
+    memset(&_bootstrapTaskBundle, 0, sizeof(_bootstrapTaskBundle));
+    xTaskCreate(_espnowBootstrapTask, "esp_bootstrap", 8192, nullptr, 5,
+                &_bootstrapTaskHandle);
+}
+
+// Returns true once the task has finished (success or all attempts exhausted).
+static inline bool espnowBootstrapIsDone()  { return _bootstrapTaskDone; }
+
+// Copies the received bundle into `out` and returns true if bootstrap succeeded.
+// Must only be called after espnowBootstrapIsDone() returns true.
+static bool espnowBootstrapGetResult(CredentialBundle& out) {
+    if (_bootstrapTaskOk) { out = _bootstrapTaskBundle; return true; }
+    return false;
+}
+
+
 #ifdef SIBLING_PRIMARY_SELECTION
 // ── espnowBootstrapWithPrimarySelection ───────────────────────────────────────
 // Two-phase bootstrap that prefers the healthiest sibling:

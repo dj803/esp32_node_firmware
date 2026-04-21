@@ -3,7 +3,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <AsyncTCP.h>    // parallel async TCP connects for the port scan (Step 2)
 #include <Preferences.h>
+#include "logging.h"     // LOG_I / LOG_W macros
 // Note: ESPmDNS.h is NOT included here.
 // The Arduino wrapper MDNSResponder has an unstable API across ESP32 core
 // versions (2.x vs 3.x). Instead we call the ESP-IDF mdns layer directly,
@@ -122,7 +124,7 @@ static void saveBrokerToCache(const char* host, uint16_t port) {
     NvsPutIfChanged(prefs, "b0h", host, strnlen(host, 63) + 1);
     NvsPutIfChanged(prefs, "b0p", (uint16_t)port);
     prefs.end();
-    Serial.printf("[Discovery] Cache: saved %s:%d as slot 0\n", host, port);
+    LOG_I("Discovery", "Cache: saved %s:%d as slot 0", host, port);
 }
 
 
@@ -151,32 +153,32 @@ static BrokerResult tryCachedBrokers() {
     BrokerCache c = loadBrokerCache();
 
     if (c.count == 0) {
-        Serial.println("[Discovery] Step 0: no cached brokers");
+        LOG_I("Discovery", "Step 0: no cached brokers");
         return result;
     }
 
-    // Always print all cached entries so they are visible in the serial log
-    Serial.printf("[Discovery] Step 0: %d cached broker(s) known:\n", c.count);
+    // Always log all cached entries so they are visible in the serial log
+    LOG_I("Discovery", "Step 0: %d cached broker(s) known:", c.count);
     for (int i = 0; i < 2; i++) {
         if (c.host[i][0] != '\0') {
-            Serial.printf("[Discovery]   [%d] %s:%d\n", i, c.host[i], c.port[i]);
+            LOG_I("Discovery", "  [%d] %s:%d", i, c.host[i], c.port[i]);
         }
     }
 
     // Try each cached broker in order (slot 0 = most recent)
     for (int i = 0; i < 2; i++) {
         if (c.host[i][0] == '\0' || c.port[i] == 0) continue;
-        Serial.printf("[Discovery] Step 0: probing %s:%d...\n", c.host[i], c.port[i]);
+        LOG_I("Discovery", "Step 0: probing %s:%d...", c.host[i], c.port[i]);
         uint32_t t = tcpPingMs(c.host[i], c.port[i], 1000);
         if (t != 0xFFFFFFFF) {
             strncpy(result.host, c.host[i], sizeof(result.host) - 1);
             result.port   = c.port[i];
             result.method = DiscoveryMethod::CACHED;
-            Serial.printf("[Discovery] Step 0: connected %s:%d (%u ms)\n",
-                          result.host, result.port, t);
+            LOG_I("Discovery", "Step 0: connected %s:%d (%u ms)",
+                  result.host, result.port, t);
             return result;
         }
-        Serial.printf("[Discovery] Step 0: %s:%d unreachable\n", c.host[i], c.port[i]);
+        LOG_W("Discovery", "Step 0: %s:%d unreachable", c.host[i], c.port[i]);
     }
     return result;   // empty — caller falls through to Steps 1–3
 }
@@ -196,18 +198,18 @@ static BrokerResult tryEspNowBroker() {
     if (host[0] == '\0' || port == 0) return result;
 
     // Verify the address is actually reachable before returning it
-    Serial.printf("[Discovery] Step 0.5: sibling gave %s:%d — probing...\n", host, port);
+    LOG_I("Discovery", "Step 0.5: sibling gave %s:%d — probing...", host, port);
     uint32_t t = tcpPingMs(host, port, 1000);
     if (t == 0xFFFFFFFF) {
-        Serial.printf("[Discovery] Step 0.5: %s:%d unreachable — discarding\n", host, port);
+        LOG_W("Discovery", "Step 0.5: %s:%d unreachable — discarding", host, port);
         return result;
     }
 
     strncpy(result.host, host, sizeof(result.host) - 1);
     result.port   = port;
     result.method = DiscoveryMethod::SIBLING;
-    Serial.printf("[Discovery] Step 0.5: using sibling broker %s:%d (%u ms)\n",
-                  result.host, result.port, t);
+    LOG_I("Discovery", "Step 0.5: using sibling broker %s:%d (%u ms)",
+          result.host, result.port, t);
     return result;
 }
 
@@ -223,13 +225,13 @@ static BrokerResult tryEspNowBroker() {
 //   result->next         — pointer to next result (or NULL)
 static BrokerResult tryMdnsDiscovery() {
     BrokerResult result;
-    Serial.println("[Discovery] Step 1: mDNS query for _mqtt._tcp...");
+    LOG_I("Discovery", "Step 1: mDNS query for _mqtt._tcp...");
 
     // Initialise the ESP-IDF mdns service. Safe to call multiple times —
     // returns ESP_ERR_INVALID_STATE if already initialised, which we ignore.
     esp_err_t initErr = mdns_init();
     if (initErr != ESP_OK && initErr != ESP_ERR_INVALID_STATE) {
-        Serial.printf("[Discovery] mDNS: init failed (%d)\n", initErr);
+        LOG_W("Discovery", "mDNS: init failed (%d)", initErr);
         return result;
     }
 
@@ -252,7 +254,7 @@ static BrokerResult tryMdnsDiscovery() {
         &results);
 
     if (err != ESP_OK || results == NULL) {
-        Serial.println("[Discovery] mDNS: no _mqtt._tcp services found");
+        LOG_I("Discovery", "mDNS: no _mqtt._tcp services found");
         mdns_query_results_free(results);
         return result;   // Empty — caller tries Step 2
     }
@@ -260,7 +262,7 @@ static BrokerResult tryMdnsDiscovery() {
     // Count results and log them
     int count = 0;
     for (mdns_result_t* r = results; r != NULL; r = r->next) count++;
-    Serial.printf("[Discovery] mDNS: %d service(s) found\n", count);
+    LOG_I("Discovery", "mDNS: %d service(s) found", count);
 
     // Find the best result using TCP connect latency as the ranking metric.
     // Lower latency = broker is closer on the network.
@@ -279,11 +281,11 @@ static BrokerResult tryMdnsDiscovery() {
 
         uint16_t port = r->port;
 
-        Serial.printf("[Discovery] mDNS candidate: %s:%d\n", ipStr, port);
+        LOG_I("Discovery", "mDNS candidate: %s:%d", ipStr, port);
 
         uint32_t t = tcpPingMs(ipStr, port, 500);
-        Serial.printf("[Discovery] mDNS TCP probe %s: %s ms\n",
-                      ipStr, t == 0xFFFFFFFF ? "timeout" : String(t).c_str());
+        LOG_I("Discovery", "mDNS TCP probe %s: %s ms",
+              ipStr, t == 0xFFFFFFFF ? "timeout" : String(t).c_str());
 
         if (t < bestTimeMs) {
             bestTimeMs = t;
@@ -296,73 +298,184 @@ static BrokerResult tryMdnsDiscovery() {
 
     if (bestHost[0] == '\0') {
         // All candidates timed out on TCP probe
-        Serial.println("[Discovery] mDNS: all candidates failed TCP probe");
+        LOG_W("Discovery", "mDNS: all candidates failed TCP probe");
         return result;
     }
 
     strncpy(result.host, bestHost, sizeof(result.host) - 1);
     result.port   = bestPort;
     result.method = DiscoveryMethod::MDNS;
-    Serial.printf("[Discovery] mDNS: selected %s:%d (%u ms)\n",
-                  result.host, result.port, bestTimeMs);
+    LOG_I("Discovery", "mDNS: selected %s:%d (%u ms)",
+          result.host, result.port, bestTimeMs);
     return result;
 }
 
 
-// ── Step 2: TCP port scan ─────────────────────────────────────────────────────
+// ── Step 2: TCP port scan (AsyncTCP parallel) ─────────────────────────────────
+// Probes the local /24 subnet for open port 1883 using AsyncTCP so that
+// PORTSCAN_WINDOW connections run in parallel.  Each batch of PORTSCAN_WINDOW
+// hosts fires simultaneously; we wait for all of them to either connect, send
+// an error, or hit the per-batch deadline before moving to the next batch.
+//
+// Worst-case time: ceil(254 / PORTSCAN_WINDOW) batches × (2 × PORTSCAN_TIMEOUT_MS)
+//   = ceil(254/6) × 150 ms ≈ 6.4 s   (vs 254 × 75 ms = 19.1 s synchronous).
+// Best case (broker found quickly): a few hundred milliseconds.
+//
+// PORTSCAN_WINDOW = PORTSCAN_MAX_RESULTS + 2 gives us a small extra cushion
+// beyond the number of results we need so that we can drain a full batch even
+// after reaching the result cap.
+// ─────────────────────────────────────────────────────────────────────────────
+static const int PORTSCAN_WINDOW = PORTSCAN_MAX_RESULTS + 2;   // parallel slots
+
 static BrokerResult tryPortScan() {
     BrokerResult result;
-    Serial.println("[Discovery] Step 2: TCP port scan (port 1883)...");
+
+    LOG_I("Discovery", "Step 2: async TCP port scan (port %d, window %d)...",
+          PORTSCAN_PORT, PORTSCAN_WINDOW);
 
     IPAddress myIP      = WiFi.localIP();
     IPAddress myGateway = WiFi.gatewayIP();
+    uint32_t  base      = ((uint32_t)myIP[0] << 24)
+                        | ((uint32_t)myIP[1] << 16)
+                        | ((uint32_t)myIP[2] << 8);
 
-    // Build /24 network base from first three octets of own IP
-    uint32_t base = ((uint32_t)myIP[0] << 24)
-                  | ((uint32_t)myIP[1] << 16)
-                  | ((uint32_t)myIP[2] << 8);
+    LOG_I("Discovery", "Scanning %d.%d.%d.1-254...", myIP[0], myIP[1], myIP[2]);
 
-    Serial.printf("[Discovery] Scanning %d.%d.%d.1-254...\n",
-                  myIP[0], myIP[1], myIP[2]);
+    // Per-slot state.  Callbacks run in the AsyncTCP/lwIP task context; done
+    // and open must be volatile so the main task reads fresh values each poll.
+    struct Slot {
+        AsyncClient*  client  = nullptr;
+        IPAddress     target;
+        uint32_t      startMs = 0;
+        volatile bool done    = true;   // "done" means the slot is free
+        volatile bool open    = false;
+    };
+
+    // Static to avoid stack pressure — slots are re-initialised each call.
+    static Slot slots[PORTSCAN_WINDOW];
+    for (int i = 0; i < PORTSCAN_WINDOW; i++) {
+        slots[i].client = nullptr;
+        slots[i].done   = true;
+        slots[i].open   = false;
+    }
 
     IPAddress candidates[PORTSCAN_MAX_RESULTS];
     int       foundCount = 0;
+    int       nextHost   = 1;   // .1 through .254
 
-    WiFiClient client;
+    // Process in batches: fill all free slots, wait for completion, repeat.
+    while ((nextHost <= 254 || /* any in-flight */ [&]() {
+                for (int i = 0; i < PORTSCAN_WINDOW; i++)
+                    if (!slots[i].done) return true;
+                return false; }())
+           && foundCount < PORTSCAN_MAX_RESULTS)
+    {
+        // 1. Fill free slots with new connection probes
+        for (int i = 0; i < PORTSCAN_WINDOW
+                       && nextHost <= 254
+                       && foundCount < PORTSCAN_MAX_RESULTS; i++)
+        {
+            if (!slots[i].done) continue;   // still in flight
 
-    for (int i = 1; i <= 254 && foundCount < PORTSCAN_MAX_RESULTS; i++) {
-        IPAddress target(
-            (base >> 24) & 0xFF,
-            (base >> 16) & 0xFF,
-            (base >>  8) & 0xFF,
-            (uint8_t)i
-        );
+            // Clean up previous client (if any) in this slot
+            if (slots[i].client) {
+                delete slots[i].client;
+                slots[i].client = nullptr;
+            }
 
-        if (target == myIP)      continue;
-        if (target == myGateway) continue;
+            // Find the next host to probe, skipping own IP and gateway
+            IPAddress target;
+            bool found = false;
+            while (nextHost <= 254) {
+                target = IPAddress(
+                    (base >> 24) & 0xFF,
+                    (base >> 16) & 0xFF,
+                    (base >>  8) & 0xFF,
+                    (uint8_t)nextHost++
+                );
+                if (target != myIP && target != myGateway) { found = true; break; }
+            }
+            if (!found) break;
 
-        // Print progress every 10 hosts so the serial monitor shows the
-        // scan is alive. Skipped hosts (own IP, gateway) are not counted.
-        if (i % 10 == 0) {
-            Serial.printf("[Discovery] Port scan: probing .%d–.%d...\n",
-                          i, min(i + 9, 254));
+            // Arm the slot and fire the async connect
+            slots[i].target  = target;
+            slots[i].startMs = millis();
+            slots[i].done    = false;
+            slots[i].open    = false;
+            slots[i].client  = new AsyncClient();
+
+            Slot* sp = &slots[i];
+
+            // onConnect: port is open — close immediately, mark done
+            slots[i].client->onConnect(
+                [](void* arg, AsyncClient* c) {
+                    Slot* s = static_cast<Slot*>(arg);
+                    s->open = true;
+                    s->done = true;
+                    c->close(true);
+                }, sp);
+
+            // onError: connection refused or unreachable — mark done
+            slots[i].client->onError(
+                [](void* arg, AsyncClient*, int8_t) {
+                    static_cast<Slot*>(arg)->done = true;
+                }, sp);
+
+            // onDisconnect: fires after close(true) in the onConnect path
+            slots[i].client->onDisconnect(
+                [](void* arg, AsyncClient*) {
+                    static_cast<Slot*>(arg)->done = true;
+                }, sp);
+
+            slots[i].client->connect(target, PORTSCAN_PORT);
         }
 
-        if (client.connect(target, PORTSCAN_PORT, PORTSCAN_TIMEOUT_MS)) {
-            client.stop();
-            candidates[foundCount++] = target;
-            Serial.printf("[Discovery] Port scan: open port at %s\n",
-                          target.toString().c_str());
+        // 2. Apply manual timeout — AsyncTCP has no built-in connect deadline.
+        //    Use 2× PORTSCAN_TIMEOUT_MS so the async window is generous relative
+        //    to the original synchronous per-host timeout.
+        uint32_t now = millis();
+        for (int i = 0; i < PORTSCAN_WINDOW; i++) {
+            if (!slots[i].done
+                && (now - slots[i].startMs) > (uint32_t)(PORTSCAN_TIMEOUT_MS * 2))
+            {
+                slots[i].done = true;
+                if (slots[i].client) slots[i].client->close(true);
+            }
         }
+
+        // 3. Harvest newly-open ports from completed slots
+        for (int i = 0; i < PORTSCAN_WINDOW; i++) {
+            if (slots[i].done && slots[i].open && foundCount < PORTSCAN_MAX_RESULTS) {
+                candidates[foundCount++] = slots[i].target;
+                LOG_I("Discovery", "Port scan: open port at %s",
+                      slots[i].target.toString().c_str());
+                slots[i].open = false;   // prevent double-counting
+            }
+        }
+
+        delay(5);   // yield to the AsyncTCP / lwIP task so callbacks can fire
     }
 
+    // Cleanup: abort any remaining in-flight connections and free clients
+    for (int i = 0; i < PORTSCAN_WINDOW; i++) {
+        if (slots[i].client) {
+            slots[i].client->close(true);
+            delete slots[i].client;
+            slots[i].client = nullptr;
+        }
+        slots[i].done = true;
+    }
+    // Brief pause so AsyncTCP can finish draining error callbacks before the
+    // Slot objects go back to their static storage (safe — they stay in scope).
+    delay(30);
+
     if (foundCount == 0) {
-        Serial.println("[Discovery] Port scan: nothing found");
+        LOG_I("Discovery", "Port scan: nothing found");
         return result;
     }
 
-    // Pick the candidate with the lowest last-octet (servers typically have
-    // low-numbered IPs on home/office networks, e.g. .1, .2, .10)
+    // Pick the candidate with the lowest last octet (servers typically have
+    // low-numbered IPs on home/office networks, e.g. .1, .2, .10).
     IPAddress chosen = candidates[0];
     for (int i = 1; i < foundCount; i++) {
         if (candidates[i][3] < chosen[3]) chosen = candidates[i];
@@ -371,8 +484,8 @@ static BrokerResult tryPortScan() {
     chosen.toString().toCharArray(result.host, sizeof(result.host));
     result.port   = PORTSCAN_PORT;
     result.method = DiscoveryMethod::PORTSCAN;
-    Serial.printf("[Discovery] Port scan: selected %s:%d (%d candidate(s))\n",
-                  result.host, result.port, foundCount);
+    LOG_I("Discovery", "Port scan: selected %s:%d (%d candidate(s))",
+          result.host, result.port, foundCount);
     return result;
 }
 
@@ -400,11 +513,11 @@ BrokerResult discoverBroker(const char* storedUrl) {
     if (result.found()) return result;
 
 #else
-    Serial.println("[Discovery] Auto-discovery disabled — using stored URL");
+    LOG_I("Discovery", "Auto-discovery disabled — using stored URL");
 #endif
 
     // Step 3: parse stored URL as fallback
-    Serial.printf("[Discovery] Step 3: stored URL: %s\n", storedUrl);
+    LOG_I("Discovery", "Step 3: stored URL: %s", storedUrl);
     String url(storedUrl);
     int schemeEnd = url.indexOf("://");
     if (schemeEnd >= 0) url = url.substring(schemeEnd + 3);
