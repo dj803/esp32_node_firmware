@@ -21,7 +21,7 @@
 // use this overload. The legacy semverIsNewer() tolerates malformed input and
 // treats missing components as 0 — useful when OTA_JSON contains partial data,
 // but unacceptable for security-sensitive flows.
-static bool semverParse(const char* s, int& maj, int& min, int& pat) {
+[[maybe_unused]] static bool semverParse(const char* s, int& maj, int& min, int& pat) {
     if (!s) return false;
     int a = 0, b = 0, c = 0;
     int consumed = 0;

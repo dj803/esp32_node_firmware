@@ -11,5 +11,5 @@
 // in the translation unit (currently esp32_firmware.ino).
 // =============================================================================
 
-void otaCheckNow();   // Trigger an immediate OTA firmware check
+void otaCheckNow(bool isSiblingRetry = false);   // Trigger an immediate OTA firmware check
 void otaTrigger();    // Schedule an OTA check on the next loop() tick
