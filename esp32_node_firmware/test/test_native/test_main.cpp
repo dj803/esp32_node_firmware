@@ -218,6 +218,105 @@ void test_topic_sanitizer_empty_string() {
 
 
 // =============================================================================
+// nvs_utils.h compare-logic tests
+//
+// We can't link against Arduino's Preferences class on the host runner, so
+// this tests the raw compare-then-skip logic by re-implementing the
+// decision surface of NvsPutIfChanged() against a fake in-memory store.
+// The shape must mirror nvs_utils.h exactly — if either drifts, update both.
+// =============================================================================
+
+struct FakePrefs {
+    // Track write count so the test can assert "no write happened"
+    int writes = 0;
+    // Stored values (just the types the real call-sites use)
+    bool has_u8 = false;  uint8_t  u8  = 0;
+    bool has_u16 = false; uint16_t u16 = 0;
+    bool has_u64 = false; uint64_t u64 = 0;
+    bool has_str = false; char str[128] = {0};
+    bool has_bytes = false; uint8_t bytes[128] = {0}; size_t bytes_len = 0;
+
+    void put_u8(uint8_t v) {
+        if (has_u8 && u8 == v) return;
+        u8 = v; has_u8 = true; writes++;
+    }
+    void put_u16(uint16_t v) {
+        if (has_u16 && u16 == v) return;
+        u16 = v; has_u16 = true; writes++;
+    }
+    void put_u64(uint64_t v) {
+        if (has_u64 && u64 == v) return;
+        u64 = v; has_u64 = true; writes++;
+    }
+    void put_str(const char* v) {
+        if (has_str && strcmp(str, v) == 0) return;
+        strncpy(str, v, sizeof(str) - 1);
+        str[sizeof(str) - 1] = '\0';
+        has_str = true; writes++;
+    }
+    void put_bytes(const void* data, size_t len) {
+        if (has_bytes && bytes_len == len && memcmp(bytes, data, len) == 0) return;
+        memcpy(bytes, data, len);
+        bytes_len = len; has_bytes = true; writes++;
+    }
+};
+
+void test_nvs_u8_skip_on_identical() {
+    FakePrefs p;
+    p.put_u8(42); p.put_u8(42); p.put_u8(42);
+    TEST_ASSERT_EQUAL_INT(1, p.writes);   // only the first write counts
+}
+
+void test_nvs_u8_writes_on_change() {
+    FakePrefs p;
+    p.put_u8(1); p.put_u8(2); p.put_u8(3);
+    TEST_ASSERT_EQUAL_INT(3, p.writes);
+}
+
+void test_nvs_u16_skip_on_identical() {
+    FakePrefs p;
+    p.put_u16(1883); p.put_u16(1883);
+    TEST_ASSERT_EQUAL_INT(1, p.writes);
+}
+
+void test_nvs_u64_skip_on_identical() {
+    FakePrefs p;
+    p.put_u64(1745229000ULL); p.put_u64(1745229000ULL);
+    TEST_ASSERT_EQUAL_INT(1, p.writes);
+}
+
+void test_nvs_str_skip_on_identical() {
+    FakePrefs p;
+    p.put_str("Enigma"); p.put_str("Enigma"); p.put_str("Enigma");
+    TEST_ASSERT_EQUAL_INT(1, p.writes);
+}
+
+void test_nvs_str_writes_on_change() {
+    FakePrefs p;
+    p.put_str("JHBDev"); p.put_str("JHBProd");
+    TEST_ASSERT_EQUAL_INT(2, p.writes);
+}
+
+void test_nvs_bytes_skip_on_identical() {
+    FakePrefs p;
+    uint8_t mac_a[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};
+    uint8_t mac_b[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01};   // identical content
+    p.put_bytes(mac_a, 6);
+    p.put_bytes(mac_b, 6);
+    TEST_ASSERT_EQUAL_INT(1, p.writes);
+}
+
+void test_nvs_bytes_writes_on_length_change() {
+    FakePrefs p;
+    uint8_t a[6] = {1,2,3,4,5,6};
+    uint8_t b[8] = {1,2,3,4,5,6,7,8};
+    p.put_bytes(a, 6);
+    p.put_bytes(b, 8);   // same prefix, different length → must write
+    TEST_ASSERT_EQUAL_INT(2, p.writes);
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -253,6 +352,16 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_topic_sanitizer_replaces_mqtt_wildcards);
     RUN_TEST(test_topic_sanitizer_replaces_control_chars);
     RUN_TEST(test_topic_sanitizer_empty_string);
+
+    // nvs_utils compare-logic
+    RUN_TEST(test_nvs_u8_skip_on_identical);
+    RUN_TEST(test_nvs_u8_writes_on_change);
+    RUN_TEST(test_nvs_u16_skip_on_identical);
+    RUN_TEST(test_nvs_u64_skip_on_identical);
+    RUN_TEST(test_nvs_str_skip_on_identical);
+    RUN_TEST(test_nvs_str_writes_on_change);
+    RUN_TEST(test_nvs_bytes_skip_on_identical);
+    RUN_TEST(test_nvs_bytes_writes_on_length_change);
 
     return UNITY_END();
 }

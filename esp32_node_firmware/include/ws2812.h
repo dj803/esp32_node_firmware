@@ -4,6 +4,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 #include "config.h"
+#include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 
 // =============================================================================
 // ws2812.h  —  WS2812B addressable LED strip control
@@ -139,8 +140,12 @@ static void mqttPublishLedState(const char* state,
 static void _ledNvsSave() {
     Preferences p;
     p.begin(LED_STRIP_NVS_NAMESPACE, false);
-    p.putUChar("brightness", _ledActiveBrightness);
-    p.putUChar("count",      _ledActiveCount);
+    // NvsPutIfChanged skips the write when the stored value already matches.
+    // Matters because every MQTT cmd/led brightness / count / animation call
+    // triggers a save, even when the payload repeats (e.g. Node-RED dashboard
+    // slider at rest firing periodic same-value updates).
+    NvsPutIfChanged(p, "brightness", (uint8_t)_ledActiveBrightness);
+    NvsPutIfChanged(p, "count",      (uint8_t)_ledActiveCount);
     p.end();
 }
 

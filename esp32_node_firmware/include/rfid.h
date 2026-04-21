@@ -50,6 +50,7 @@
 #include <Preferences.h>
 #include "config.h"
 #include "led.h"
+#include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 
 static MFRC522DriverPinSimple _rfidSsPin(RFID_SS_PIN);
 static MFRC522DriverPinSimple _rfidRstPin(RFID_RST_PIN);
@@ -89,11 +90,15 @@ static void rfidNormaliseUid(char* uid) {
 static void _rfidWhitelistSave() {
     Preferences p;
     p.begin(RFID_NVS_NAMESPACE, false);
-    p.putUChar("count", _rfidWhitelistCount);
+    // NvsPutIfChanged skips writes when the slot already holds the same UID.
+    // Whitelist persists across boots, so repeat calls with an unchanged list
+    // (e.g. after a retained MQTT cmd/rfid/whitelist replay on reconnect)
+    // should not re-write every slot.
+    NvsPutIfChanged(p, "count", (uint8_t)_rfidWhitelistCount);
     for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
         char key[4];
         snprintf(key, sizeof(key), "u%d", i);
-        p.putString(key, _rfidWhitelist[i]);
+        NvsPutIfChanged(p, key, _rfidWhitelist[i]);
     }
     p.end();
 }

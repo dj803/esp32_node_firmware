@@ -11,6 +11,7 @@
 #include "mdns.h"         // ESP-IDF mdns C API (always available in Arduino ESP32)
 #include "config.h"
 #include "device_id.h"   // DeviceId::get() used as mDNS hostname
+#include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 
 // =============================================================================
 // broker_discovery.h  —  Automatic MQTT broker discovery
@@ -112,12 +113,14 @@ static void saveBrokerToCache(const char* host, uint16_t port) {
     if (strcmp(c.host[0], host) == 0 && c.port[0] == port) return;  // already current
     Preferences prefs;
     prefs.begin(BROKER_CACHE_NVS_NAMESPACE, false);  // read-write
-    // Shift: slot 0 → slot 1
-    prefs.putBytes("b1h", c.host[0], sizeof(c.host[0]));
-    prefs.putUShort("b1p", c.port[0]);
+    // Shift: slot 0 → slot 1. NvsPutIfChanged skips writes when the value
+    // already matches — e.g. if slot 1 already held the previous slot 0,
+    // no redundant write is issued.
+    NvsPutIfChanged(prefs, "b1h", c.host[0], sizeof(c.host[0]));
+    NvsPutIfChanged(prefs, "b1p", (uint16_t)c.port[0]);
     // Write new entry as slot 0
-    prefs.putBytes("b0h", host, strnlen(host, 63) + 1);
-    prefs.putUShort("b0p", port);
+    NvsPutIfChanged(prefs, "b0h", host, strnlen(host, 63) + 1);
+    NvsPutIfChanged(prefs, "b0p", (uint16_t)port);
     prefs.end();
     Serial.printf("[Discovery] Cache: saved %s:%d as slot 0\n", host, port);
 }

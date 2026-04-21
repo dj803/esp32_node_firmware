@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "config.h"
+#include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 
 // =============================================================================
 // app_config.h  —  Runtime-configurable application settings (NVS namespace
@@ -163,14 +164,17 @@ public:
         if (!prefs.begin(APP_CONFIG_NVS_NAMESPACE, false)) return false;
 
         bool ok = true;
-        // putString() returns the number of bytes written; 0 means failure
-        ok &= prefs.putString("ota_json_url", cfg.ota_json_url)      > 0;
-        ok &= prefs.putString("mq_ent",       cfg.mqtt_enterprise)   > 0;
-        ok &= prefs.putString("mq_site",    cfg.mqtt_site)        > 0;
-        ok &= prefs.putString("mq_area",    cfg.mqtt_area)        > 0;
-        ok &= prefs.putString("mq_line",    cfg.mqtt_line)        > 0;
-        ok &= prefs.putString("mq_cell",    cfg.mqtt_cell)        > 0;
-        ok &= prefs.putString("mq_devtype", cfg.mqtt_device_type) > 0;
+        // NvsPutIfChanged reads the existing NVS value and only writes when
+        // it differs. The settings portal typically saves all 7 fields at
+        // once even though only 1–2 may have changed, so per-field guarding
+        // is a meaningful flash-wear saving in real-world use.
+        ok &= NvsPutIfChanged(prefs, "ota_json_url", cfg.ota_json_url)     > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_ent",       cfg.mqtt_enterprise)  > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_site",      cfg.mqtt_site)        > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_area",      cfg.mqtt_area)        > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_line",      cfg.mqtt_line)        > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_cell",      cfg.mqtt_cell)        > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_devtype",   cfg.mqtt_device_type) > 0;
         prefs.end();
 
         if (ok) {

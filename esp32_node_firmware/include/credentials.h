@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>   // Arduino ESP32 wrapper around ESP-IDF NVS (Non-Volatile Storage)
 #include "config.h"
+#include "nvs_utils.h"     // NvsPutIfChanged — compare-before-write wrappers
 
 // =============================================================================
 // credentials.h  —  Credential bundle definition and NVS storage helpers
@@ -95,15 +96,18 @@ public:
         if (!prefs.begin(NVS_NAMESPACE, false)) return false;
 
         bool ok = true;
-        // putX() returns number of bytes written (0 on failure)
-        ok &= prefs.putULong64("ts",     b.timestamp)                        > 0;
-        ok &= prefs.putUChar("src",      (uint8_t)b.source)                  == 1;
-        ok &= prefs.putBytes("ssid",     b.wifi_ssid,       strlen(b.wifi_ssid)       + 1) > 0;
-        ok &= prefs.putBytes("wpass",    b.wifi_password,   strlen(b.wifi_password)   + 1) > 0;
-        ok &= prefs.putBytes("murl",     b.mqtt_broker_url, strlen(b.mqtt_broker_url) + 1) > 0;
-        ok &= prefs.putBytes("musr",     b.mqtt_username,   strlen(b.mqtt_username)   + 1) > 0;
-        ok &= prefs.putBytes("mpwd",     b.mqtt_password,   strlen(b.mqtt_password)   + 1) > 0;
-        ok &= prefs.putBytes("rotkey",   b.rotation_key,    16)                        > 0;
+        // NvsPutIfChanged compares existing value and skips the write if
+        // unchanged — reduces NVS flash wear on repeated rotations of the
+        // same bundle. Return semantics match Preferences::put*() so the
+        // "> 0" / "== 1" success checks below keep working.
+        ok &= NvsPutIfChanged(prefs, "ts",     (uint64_t)b.timestamp)              > 0;
+        ok &= NvsPutIfChanged(prefs, "src",    (uint8_t)b.source)                  == 1;
+        ok &= NvsPutIfChanged(prefs, "ssid",   b.wifi_ssid,       strlen(b.wifi_ssid)       + 1) > 0;
+        ok &= NvsPutIfChanged(prefs, "wpass",  b.wifi_password,   strlen(b.wifi_password)   + 1) > 0;
+        ok &= NvsPutIfChanged(prefs, "murl",   b.mqtt_broker_url, strlen(b.mqtt_broker_url) + 1) > 0;
+        ok &= NvsPutIfChanged(prefs, "musr",   b.mqtt_username,   strlen(b.mqtt_username)   + 1) > 0;
+        ok &= NvsPutIfChanged(prefs, "mpwd",   b.mqtt_password,   strlen(b.mqtt_password)   + 1) > 0;
+        ok &= NvsPutIfChanged(prefs, "rotkey", b.rotation_key,    16)                        > 0;
 
         prefs.end();
         return ok;
@@ -124,10 +128,14 @@ public:
 
     // Reset the device restart counter to zero.
     // Called after a successful Wi-Fi connection to clear the failure count.
+    // Uses NvsPutIfChanged — on a clean boot the counter is already 0, so
+    // the write is skipped, which matters because this is called on every
+    // successful WiFi connect (potentially many times a day under flapping
+    // network conditions).
     static void clearRestartCount() {
         Preferences prefs;
         if (!prefs.begin(NVS_NAMESPACE, false)) return;
-        prefs.putUChar("restarts", 0);
+        NvsPutIfChanged(prefs, "restarts", (uint8_t)0);
         prefs.end();
     }
 
