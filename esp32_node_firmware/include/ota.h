@@ -82,7 +82,7 @@ static void _otaReaddAsyncTcpToWdt() {
 // a GitHub fetch failure. It prevents infinite recursion if the sibling-
 // provided URL also fails — we give up rather than asking the same siblings
 // again. Default false keeps the public API unchanged for existing callers.
-void otaCheckNow(bool isSiblingRetry = false) {
+void otaCheckNow(bool isSiblingRetry) {
     // ── OTA URL validation ────────────────────────────────────────────────────
     // Reject obviously broken URLs before handing them to ESP32-OTA-Pull.
     // A blank URL or one that doesn't start with http(s):// will produce a
