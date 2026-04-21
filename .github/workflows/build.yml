@@ -1,18 +1,17 @@
 name: Build and Release Firmware
 
 # Triggers:
-#   - Every push to master (build only, no release)
-#   - Every tag matching v*.*.* (build + PIO/Arduino parity check + attach
-#     firmware.bin to GitHub Release + publish ota.json to Pages)
+#   - Every push to master         → build + unit tests, no release
+#   - Every tag matching v*.*.*    → build + release (firmware.bin + ota.json)
 #
-# From v0.3.03 this workflow runs TWO builds in parallel:
-#   - build-arduino-cli  (legacy path, retained for one release as a safety net)
-#   - build-platformio   (new path, becomes the default in v0.3.04)
-# The parity-check job compares their firmware.bin sizes on tag builds and fails
-# if they differ by more than 4 KB, catching toolchain drift early.
-#
-# At v0.3.04 the arduino-cli job and parity-check are deleted; the PlatformIO
-# output becomes the canonical firmware.bin.
+# HISTORY:
+#   v0.3.03  introduced a dual-build matrix (Arduino CLI + PlatformIO) with a
+#            parity-check step to verify the two toolchains produced equivalent
+#            binaries. That served its purpose — the two outputs were within
+#            34 KB of each other on the v0.3.03 release.
+#   v0.3.04  (this version) drops the Arduino CLI job and parity-check.
+#            PlatformIO is now the canonical build. The pre-cutover workflow
+#            is preserved on the `arduino-cli-legacy` tag for rollback.
 #
 # LAYOUT NOTE:
 #   The project lives under esp32_node_firmware/ (not the repo root).
@@ -34,9 +33,9 @@ defaults:
 
 jobs:
   # ============================================================================
-  # PlatformIO build — new canonical path
+  # PlatformIO build — canonical path from v0.3.04 onward
   # ============================================================================
-  build-platformio:
+  build:
     name: Compile with PlatformIO
     runs-on: ubuntu-latest
     permissions:
@@ -77,164 +76,28 @@ jobs:
           FIRMWARE_VERSION: ${{ steps.version.outputs.version }}
         run: pio run -e esp32dev
 
-      - name: Rename firmware.bin for artifact upload
-        run: cp .pio/build/esp32dev/firmware.bin firmware-pio.bin
+      - name: Copy firmware.bin to workflow root
+        # Place the artifact at esp32_node_firmware/firmware.bin so downstream
+        # release steps can reference a stable path regardless of PlatformIO's
+        # internal build output directory structure.
+        run: cp .pio/build/esp32dev/firmware.bin firmware.bin
 
-      - name: Upload PIO artifact
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-pio
-          path: esp32_node_firmware/firmware-pio.bin
-          retention-days: 30
-
-  # ============================================================================
-  # Arduino CLI build — legacy path, retained for parity check in v0.3.03.
-  # Deleted at v0.3.04.
-  # ============================================================================
-  build-arduino-cli:
-    name: Compile with Arduino CLI (legacy)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Arduino CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "${GITHUB_WORKSPACE}/esp32_node_firmware/bin" >> $GITHUB_PATH
-
-      - name: Configure Arduino CLI
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-
-      - name: Install ESP32 board package
-        run: |
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@3.1.1
-
-      - name: Install Arduino libraries
-        # Library install matches what v0.3.02's CI used successfully:
-        #   - RFID_MFRC522v2 (not "MFRC522v2") is the actual registry entry name
-        #   - NimBLE-Arduino DOES need to be installed — arduino-esp32 core 3.1.1
-        #     does NOT bundle it (that was an earlier incorrect assumption)
-        #   - FastLED at whatever version the registry serves — 3.10.x works fine
-        #     with arduino-esp32 3.1.1 (the earlier failure was caused by
-        #     build.extra_flags clobbering the platform's own ESP32 defines)
-        run: |
-          arduino-cli lib update-index
-          arduino-cli lib install "ArduinoJson@7" "RFID_MFRC522v2" "FastLED" "NimBLE-Arduino"
-          mkdir -p ~/Arduino/libraries
-          git clone --depth 1 https://github.com/marvinroger/async-mqtt-client.git \
-            ~/Arduino/libraries/AsyncMqttClient
-          git clone --depth 1 https://github.com/me-no-dev/AsyncTCP.git \
-            ~/Arduino/libraries/AsyncTCP
-          git clone --depth 1 https://github.com/mikalhart/ESP32-OTA-Pull.git \
-            ~/Arduino/libraries/ESP32OTAPull
-
-      - name: Extract firmware version
-        id: version
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION="0.0.0-dev"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
-      # Assemble the Arduino IDE layout from the PlatformIO src/ + include/ tree.
-      # Arduino CLI expects: <folder>/<folder>.ino plus all headers in the same folder.
-      # This step synthesises that layout at build time from the source of truth
-      # (src/main.cpp + include/*.h). Deleted at v0.3.04 together with this job.
-      - name: Assemble Arduino IDE layout from PIO sources
-        run: |
-          mkdir -p esp32_firmware/esp32_firmware
-          cp src/main.cpp esp32_firmware/esp32_firmware/esp32_firmware.ino
-          cp include/*.h esp32_firmware/esp32_firmware/
-
-      - name: Compile sketch
-        # Use compiler.cpp.extra_flags (appends) NOT build.extra_flags (replaces).
-        # build.extra_flags would clobber the arduino-esp32 platform's own
-        # -DESP32 / -DARDUINO_ARCH_ESP32 / -DF_CPU defines, which would break
-        # FastLED's platform auto-detection ("This platform isn't recognized").
-        #
-        # min_spiffs partition scheme + 1.9 MB max app size matches v0.3.02.
-        # Without them the default partition table is too small for the binary.
-        # PlatformIO already uses min_spiffs.csv via board_build.partitions.
-        run: |
-          arduino-cli compile \
-            --fqbn esp32:esp32:esp32 \
-            --output-dir ./build \
-            --warnings default \
-            --build-property "build.partitions=min_spiffs" \
-            --build-property "upload.maximum_size=1966080" \
-            --build-property "compiler.cpp.extra_flags=-DFIRMWARE_VERSION_OVERRIDE=\"${{ steps.version.outputs.version }}\"" \
-            esp32_firmware/esp32_firmware
-
-      - name: Rename output binary
-        run: |
-          cp ./build/esp32_firmware.ino.bin ./firmware.bin
-          echo "Arduino CLI binary size: $(wc -c < firmware.bin) bytes"
-
-      - name: Upload Arduino CLI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-acli
+          name: firmware
           path: esp32_node_firmware/firmware.bin
           retention-days: 30
 
   # ============================================================================
-  # Parity check — only on tag builds. Compares the two firmware.bin sizes.
-  # Deleted at v0.3.04 together with build-arduino-cli.
-  # ============================================================================
-  parity-check:
-    name: Arduino CLI vs PlatformIO binary parity
-    runs-on: ubuntu-latest
-    needs: [build-arduino-cli, build-platformio]
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Download both binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: ./artifacts
-
-      - name: Compare sizes
-        # Parity-check runs at checkout root against downloaded artifacts —
-        # override the project-subfolder default.
-        working-directory: ${{ github.workspace }}
-        run: |
-          ACLI=$(stat -c%s ./artifacts/firmware-acli/firmware.bin)
-          PIO=$(stat -c%s ./artifacts/firmware-pio/firmware-pio.bin)
-          DIFF=$(( ACLI > PIO ? ACLI - PIO : PIO - ACLI ))
-          echo "arduino-cli: ${ACLI} bytes"
-          echo "platformio : ${PIO} bytes"
-          echo "difference : ${DIFF} bytes"
-          # Allow up to 128 KB drift. Observed baseline is ~34 KB which reflects
-          # the combined impact of: different compiler revisions between the two
-          # toolchains, pioarduino pulling slightly newer library versions
-          # (NimBLE 2.5 vs the registry-served version used by Arduino CLI),
-          # and link-flag differences. 128 KB is generous enough to survive
-          # routine library updates but tight enough to catch accidental
-          # inclusion/exclusion of an entire module.
-          if [ "${DIFF}" -gt 131072 ]; then
-            echo "::error::Binary size drift exceeds 128 KB — investigate before v0.3.04 cutover"
-            exit 1
-          fi
-          echo "Parity check passed (within 128 KB tolerance)"
-
-  # ============================================================================
-  # Release — tag builds only. Uses the Arduino CLI binary as the canonical
-  # firmware.bin for v0.3.03 (safe fallback). Switches to PlatformIO at v0.3.04.
+  # Release — tag builds only.
+  # Publishes the PlatformIO-built firmware.bin as the canonical artifact,
+  # attaches it to a GitHub Release, and updates ota.json on gh-pages.
   # ============================================================================
   release:
     name: Publish release assets
     runs-on: ubuntu-latest
-    needs: [parity-check]
+    needs: [build]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -243,10 +106,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Arduino CLI firmware
+      - name: Download firmware artifact
         uses: actions/download-artifact@v4
         with:
-          name: firmware-acli
+          name: firmware
           path: .
 
       - name: Extract firmware version
@@ -264,11 +127,10 @@ jobs:
           body: |
             ## ESP32 Credential Bootstrap Firmware v${{ steps.version.outputs.version }}
 
-            Built with Arduino CLI (canonical) and verified against PlatformIO build.
-            From v0.3.04 the PlatformIO build becomes the canonical artifact.
+            Built with PlatformIO (pioarduino 54.03.21 → arduino-esp32 3.1.1).
 
             ### Installation
-            Flash via Arduino IDE or esptool:
+            Flash via esptool or Arduino IDE:
             ```
             esptool.py --chip esp32 --baud 921600 write_flash 0x10000 firmware.bin
             ```
