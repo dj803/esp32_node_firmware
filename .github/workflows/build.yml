@@ -121,7 +121,7 @@ jobs:
         # MFRC522v2 registry entries are unstable — clone from GitHub instead.
         run: |
           arduino-cli lib update-index
-          arduino-cli lib install "ArduinoJson@7"
+          arduino-cli lib install "ArduinoJson@7" "FastLED"
           mkdir -p ~/Arduino/libraries
           git clone --depth 1 https://github.com/OSSLibraries/Arduino_MFRC522v2.git \
             ~/Arduino/libraries/MFRC522v2
