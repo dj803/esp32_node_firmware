@@ -4,6 +4,8 @@
 #include <ESP32OTAPull.h>
 #include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
 #include "config.h"
+#include "logging.h"
+#include "fwevent.h"
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 #include "led.h"
 
@@ -81,26 +83,25 @@ void otaCheckNow() {
     bool validScheme = (strncmp(otaUrl, "https://", 8) == 0 ||
                         strncmp(otaUrl, "http://",  7) == 0);
     if (!validScheme || strlen(otaUrl) < 10) {
-        Serial.printf("[OTA] Skipping check — invalid OTA JSON URL: '%s'\n", otaUrl);
-        mqttPublishStatus("ota_failed",
+        LOG_E("OTA", "Skipping check - invalid OTA JSON URL: '%s'", otaUrl);
+        mqttPublishStatus(FwEvent::OTA_FAILED,
             "\"error\":\"invalid ota_json_url (missing scheme or empty)\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
         return;
     }
 
-    Serial.println("[OTA] Checking for new firmware... (running: " FIRMWARE_VERSION ")");
-    mqttPublishStatus("ota_checking",
+    LOG_I("OTA", "Checking for new firmware... (running: " FIRMWARE_VERSION ")");
+    mqttPublishStatus(FwEvent::OTA_CHECKING,
                       "\"current_version\":\"" FIRMWARE_VERSION "\"");
 
     ESP32OTAPull ota;
 
-    // Progress callback — logs each 10% increment and publishes nothing
-    // (the ota_downloading MQTT event was already published before this runs).
+    // Progress callback — logs each 10% increment.
     ota.SetCallback([](int offset, int total) {
         static int lastPct = -1;
         int pct = (total > 0) ? (offset * 100 / total) : 0;
         if (pct / 10 != lastPct / 10) {
-            Serial.printf("[OTA] Progress: %d%%\n", pct);
+            LOG_I("OTA", "Progress: %d%%", pct);
             lastPct = pct;
         }
     });
@@ -119,8 +120,8 @@ void otaCheckNow() {
         String candidateVer = ota.GetVersion();
         if (!semverIsNewer(FIRMWARE_VERSION, candidateVer.c_str())) {
             responderSetHealthFlag(2, true);
-            Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
-                          candidateVer.c_str());
+            LOG_I("OTA", "Firmware up to date (running: " FIRMWARE_VERSION ", fetched: %s)",
+                  candidateVer.c_str());
             return;
         }
         // Fall through — update is genuinely available
@@ -129,15 +130,15 @@ void otaCheckNow() {
     if (ret == ESP32OTAPull::NO_UPDATE_AVAILABLE) {
         // JSON fetched successfully — GitHub is reachable (no profile matched)
         responderSetHealthFlag(2, true);
-        Serial.printf("[OTA] Firmware is already up to date (running: " FIRMWARE_VERSION ", fetched: %s)\n",
-                      ota.GetVersion().c_str());
+        LOG_I("OTA", "Firmware up to date (running: " FIRMWARE_VERSION ", fetched: %s)",
+              ota.GetVersion().c_str());
         return;
     }
 
     if (ret == ESP32OTAPull::NO_UPDATE_PROFILE_FOUND) {
         // JSON fetched successfully — GitHub is reachable (no matching profile is not a network error)
         responderSetHealthFlag(2, true);
-        Serial.println("[OTA] No matching profile in OTA JSON");
+        LOG_I("OTA", "No matching profile in OTA JSON");
         return;
     }
 
@@ -145,8 +146,8 @@ void otaCheckNow() {
         // Positive ret values are raw HTTP error codes; negative are library codes.
         // JSON fetch failed — GitHub is not reachable from this node right now.
         responderSetHealthFlag(2, false);
-        Serial.printf("[OTA] JSON fetch failed (code %d)\n", ret);
-        mqttPublishStatus("ota_failed",
+        LOG_W("OTA", "JSON fetch failed (code %d)", ret);
+        mqttPublishStatus(FwEvent::OTA_FAILED,
             "\"error\":\"OTA JSON unreachable\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
 
@@ -156,10 +157,10 @@ void otaCheckNow() {
         // provided URL also fails, we give up rather than asking again.
         static bool _otaRetrying = false;
         if (!_otaRetrying) {
-            Serial.println("[OTA] Asking siblings for a working OTA URL...");
+            LOG_I("OTA", "Asking siblings for a working OTA URL...");
             if (espnowRequestOtaUrl()) {
                 _otaRetrying = true;
-                Serial.println("[OTA] Retrying with sibling-provided URL");
+                LOG_I("OTA", "Retrying with sibling-provided URL");
                 otaCheckNow();
                 _otaRetrying = false;
             }
@@ -172,11 +173,10 @@ void otaCheckNow() {
 
     // ── Update available ─────────────────────────────────────────────────────
     String targetVersion = ota.GetVersion();
-    Serial.printf("[OTA] Update available: %s → %s\n",
-                  FIRMWARE_VERSION, targetVersion.c_str());
+    LOG_I("OTA", "Update available: %s -> %s", FIRMWARE_VERSION, targetVersion.c_str());
 
     String extra = "\"target_version\":\"" + targetVersion + "\"";
-    mqttPublishStatus("ota_downloading", extra.c_str());
+    mqttPublishStatus(FwEvent::OTA_DOWNLOADING, extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
 
     // Shut down MQTT and suppress the task watchdog on async_tcp before the
@@ -208,15 +208,15 @@ void otaCheckNow() {
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);
 
     if (ret == ESP32OTAPull::UPDATE_OK) {
-        Serial.println("[OTA] Flash succeeded — restarting");
-        mqttPublishStatus("ota_success",
+        LOG_I("OTA", "Flash succeeded - restarting");
+        mqttPublishStatus(FwEvent::OTA_SUCCESS,
             ("\"new_version\":\"" + targetVersion + "\"").c_str());
         delay(500);     // Give the MQTT publish time to be sent before disconnect
         ESP.restart();  // Boot into the new firmware
     } else {
-        Serial.printf("[OTA] Flash failed (code %d)\n", ret);
+        LOG_E("OTA", "Flash failed (code %d)", ret);
         { LedEvent e{}; e.type = LedEventType::OTA_DONE; ws2812PostEvent(e); }
-        mqttPublishStatus("ota_failed",
+        mqttPublishStatus(FwEvent::OTA_FAILED,
             ("\"error\":\"flash failed code " + String(ret) +
              "\",\"current_version\":\"" FIRMWARE_VERSION "\"").c_str());
     }

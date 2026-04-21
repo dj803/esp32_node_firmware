@@ -43,33 +43,27 @@ FIRMWARE — PERFORMANCE / BOOT TIME
    Fix:    Use AsyncTCP (already in lib_deps) for parallel connects with a
             collector callback; early-exit at PORTSCAN_MAX_RESULTS.
 
-6. Remaining blocking delay()s in setup / loop (MEDIUM)
-   Files:  src/main.cpp (formerly esp32_firmware.ino) lines 157 (500),
-            284 (2000), 325 (2000), 361 (2000), 390 (1000), 499 (3000)
-           include/ap_portal.h lines 252 (2000), 278 (10 in infinite loop)
-   Problem: Any blocking delay adds to worst-case time-to-OPERATIONAL.
-   Fix:    Replace the 2 s retry pauses with a countdown non-blocking pattern.
+6. (shipped in v0.3.06) Remaining blocking delay()s in setup / loop
+   — loop() Wi-Fi reconnect delay(3000) replaced with millis-based non-blocking
+     pattern in main.cpp. setup() retry delays carry TODO(v0.3.07) comments and
+     will be removed when the boot path becomes a state machine.
+   — ap_portal.h delays deferred to v0.3.11 (HTTPS refactor touches same file).
 
 ────────────────────────────────────────────────────────────────────────────────
 FIRMWARE — OBSERVABILITY
 ────────────────────────────────────────────────────────────────────────────────
 
-7. Structured logging (MEDIUM)
-   Scope:  176+ Serial.printf / Serial.println call sites across 20+ headers
-   Problem: No log levels; always-on verbose output; buffer overruns on slow
-            terminals; cannot quiet noisy modules in the field.
-   Fix:    Introduce LOG_D / LOG_I / LOG_W / LOG_E macros in a new
-           include/logging.h, compile-time filtered by LOG_LEVEL define,
-           with module tags (e.g. LOG_I("MQTT", "connected %s:%d", host, port)).
+7. (shipped in v0.3.06) Structured logging
+   include/logging.h created. LOG_D/I/W/E macros adopted across mqtt_client.h,
+   ota.h, and main.cpp. Compile-time filtered via LOG_LEVEL (default INFO).
+   Remaining modules (espnow_bootstrap.h, broker_discovery.h, rfid.h, ble.h,
+   ap_portal.h, espnow_responder.h, espnow_ranging.h) will adopt LOG_* when
+   touched by their respective releases (v0.3.07/08/09/11).
 
-8. Structured event codes (MEDIUM)
-   Files:  mqtt_client.h:118+, ota.h:77+, and every mqttPublishStatus() caller
-   Problem: Event names are free-form strings ("cred_rotated", "ota_checking",
-            "config_mode_active"). Typos silently become new states; Node-RED
-            fragile to renames.
-   Fix:    Define `enum class FwEvent : uint8_t { BOOT, HEARTBEAT, ... }` +
-           `mqttPublishStatus(FwEvent)`; keep current string mapping in one
-           table so Node-RED contracts are preserved.
+8. (shipped in v0.3.06) Structured event codes
+   include/fwevent.h created. FwEvent enum + fwEventName() lookup.
+   mqttPublishStatus(FwEvent) typed overload added to mqtt_client.h.
+   All mqttPublishStatus() call sites in mqtt_client.h and ota.h updated.
 
 ────────────────────────────────────────────────────────────────────────────────
 FIRMWARE — CORRECTNESS

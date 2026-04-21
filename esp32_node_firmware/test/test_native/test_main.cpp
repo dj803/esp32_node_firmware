@@ -25,6 +25,7 @@
 #include "ranging_math.h"
 #include "mac_utils.h"
 #include "peer_tracker.h"
+#include "fwevent.h"   // FwEvent enum + fwEventName() — dependency-free, compiles on host
 
 // ── Stub out millis() — used inside PeerTracker via setNow() but the test
 //    drives the clock manually, so the real implementation is not needed.
@@ -317,6 +318,47 @@ void test_nvs_bytes_writes_on_length_change() {
 
 
 // =============================================================================
+// fwevent.h tests
+//
+// Verifies that fwEventName() returns the exact string literals that Node-RED
+// flows depend on. If either the enum or the string table drifts, these tests
+// fail at compile/test time — before a firmware release can ship a rename that
+// silently breaks downstream flows.
+// =============================================================================
+
+void test_fwevent_boot_is_retained_string() {
+    // "boot" is the one event published as a retained MQTT message.
+    // The exact string is checked by onMqttConnect's strcmp() retain logic —
+    // any rename here would stop the boot announcement from being retained.
+    TEST_ASSERT_EQUAL_STRING("boot", fwEventName(FwEvent::BOOT));
+}
+
+void test_fwevent_all_known_values() {
+    // Every enum value must map to the string the Node-RED flows expect.
+    // Update both the enum and this test together whenever a new event is added.
+    TEST_ASSERT_EQUAL_STRING("boot",                  fwEventName(FwEvent::BOOT));
+    TEST_ASSERT_EQUAL_STRING("heartbeat",             fwEventName(FwEvent::HEARTBEAT));
+    TEST_ASSERT_EQUAL_STRING("cred_rotate_rejected",  fwEventName(FwEvent::CRED_ROTATE_REJECTED));
+    TEST_ASSERT_EQUAL_STRING("cred_rotated",          fwEventName(FwEvent::CRED_ROTATED));
+    TEST_ASSERT_EQUAL_STRING("config_mode_active",    fwEventName(FwEvent::CONFIG_MODE_ACTIVE));
+    TEST_ASSERT_EQUAL_STRING("restarting",            fwEventName(FwEvent::RESTARTING));
+    TEST_ASSERT_EQUAL_STRING("ota_checking",          fwEventName(FwEvent::OTA_CHECKING));
+    TEST_ASSERT_EQUAL_STRING("ota_downloading",       fwEventName(FwEvent::OTA_DOWNLOADING));
+    TEST_ASSERT_EQUAL_STRING("ota_failed",            fwEventName(FwEvent::OTA_FAILED));
+    TEST_ASSERT_EQUAL_STRING("ota_success",           fwEventName(FwEvent::OTA_SUCCESS));
+}
+
+void test_fwevent_unknown_value_returns_string() {
+    // The default branch must never return nullptr — a nullptr passed to
+    // mqttPublishStatus() would crash the JSON builder.
+    FwEvent unknown = static_cast<FwEvent>(0xFF);
+    const char* name = fwEventName(unknown);
+    TEST_ASSERT_NOT_NULL(name);
+    TEST_ASSERT_EQUAL_STRING("unknown", name);
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -362,6 +404,11 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_nvs_str_writes_on_change);
     RUN_TEST(test_nvs_bytes_skip_on_identical);
     RUN_TEST(test_nvs_bytes_writes_on_length_change);
+
+    // fwevent — string table consistency
+    RUN_TEST(test_fwevent_boot_is_retained_string);
+    RUN_TEST(test_fwevent_all_known_values);
+    RUN_TEST(test_fwevent_unknown_value_returns_string);
 
     return UNITY_END();
 }

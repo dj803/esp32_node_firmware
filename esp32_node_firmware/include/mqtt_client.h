@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>       // JSON parsing for cmd/led and cmd/rfid/whitelist handlers
 #include <esp_wifi.h>          // esp_wifi_get_mac / WIFI_IF_STA
 #include "config.h"
+#include "logging.h"
+#include "fwevent.h"
 #include "credentials.h"
 #include "crypto.h"
 #include "device_id.h"   // Persistent UUID-based device identity
@@ -129,7 +131,7 @@ static void mqttPublish(const char* prefix, const String& payload,
                         uint8_t qos = 0, bool retain = false) {
     if (!_mqttClient.connected()) return;   // Do nothing if not connected
     String topic = mqttTopic(prefix);
-    Serial.printf("[TELEMETRY] %s  %s\n", topic.c_str(), payload.c_str());
+    LOG_D("MQTT", "pub %s  %s", topic.c_str(), payload.c_str());
     _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
 }
 
@@ -164,6 +166,13 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // still sees the last known status. All other events are non-retained.
     bool retain = (strcmp(event, "boot") == 0);
     mqttPublish("status", payload, 1, retain);
+}
+
+// Typed overload — converts a FwEvent enum value to its string representation
+// and delegates to the existing const char* version.
+// Prefer this overload at all new call sites to prevent typos.
+static void mqttPublishStatus(FwEvent ev, const char* extraJson = nullptr) {
+    mqttPublishStatus(fwEventName(ev), extraJson);
 }
 
 
@@ -204,7 +213,7 @@ static void mqttPublishLedState(const char* state,
 static void handleLedCommand(const char* payload, size_t len) {
     JsonDocument doc;
     if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
-        Serial.println("[MQTT] cmd/led: JSON parse error");
+        LOG_W("MQTT", "cmd/led: JSON parse error");
         return;
     }
     const char* cmd = doc["cmd"] | "";
@@ -251,7 +260,7 @@ static void handleLedCommand(const char* payload, size_t len) {
         ws2812PublishState();
 
     } else {
-        Serial.printf("[MQTT] cmd/led: unknown cmd '%s'\n", cmd);
+        LOG_W("MQTT", "cmd/led: unknown cmd '%s'", cmd);
     }
 }
 
@@ -262,7 +271,7 @@ static void handleLedCommand(const char* payload, size_t len) {
 static void handleRfidWhitelist(const char* payload, size_t len) {
     JsonDocument doc;
     if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
-        Serial.println("[MQTT] cmd/rfid/whitelist: JSON parse error");
+        LOG_W("MQTT", "cmd/rfid/whitelist: JSON parse error");
         return;
     }
     const char* cmd = doc["cmd"] | "";
@@ -276,7 +285,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
             if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
           memcpy(uid,buf,RFID_UID_STR_LEN); }
         bool ok = rfidWhitelistAdd(uid);
-        Serial.printf("[MQTT] rfid/whitelist add %s: %s\n", uid, ok ? "ok" : "full");
+        LOG_I("MQTT", "rfid/whitelist add %s: %s", uid, ok ? "ok" : "full");
         String resp = ok
             ? ("{\"event\":\"rfid_whitelist\",\"cmd\":\"add\",\"uid\":\"" + String(uid) + "\",\"result\":\"ok\"}")
             : ("{\"event\":\"rfid_whitelist\",\"cmd\":\"add\",\"uid\":\"" + String(uid) + "\",\"result\":\"error\",\"reason\":\"list full\"}");
@@ -291,7 +300,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
             if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
           memcpy(uid,buf,RFID_UID_STR_LEN); }
         bool ok = rfidWhitelistRemove(uid);
-        Serial.printf("[MQTT] rfid/whitelist remove %s: %s\n", uid, ok ? "ok" : "not found");
+        LOG_I("MQTT", "rfid/whitelist remove %s: %s", uid, ok ? "ok" : "not found");
         String resp = ok
             ? ("{\"event\":\"rfid_whitelist\",\"cmd\":\"remove\",\"uid\":\"" + String(uid) + "\",\"result\":\"ok\"}")
             : ("{\"event\":\"rfid_whitelist\",\"cmd\":\"remove\",\"uid\":\"" + String(uid) + "\",\"result\":\"error\",\"reason\":\"not found\"}");
@@ -299,7 +308,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
 
     } else if (strcmp(cmd, "clear") == 0) {
         rfidWhitelistClear();
-        Serial.println("[MQTT] rfid/whitelist cleared");
+        LOG_I("MQTT", "rfid/whitelist cleared");
         mqttPublish("response",
             String("{\"event\":\"rfid_whitelist\",\"cmd\":\"clear\",\"result\":\"ok\"}"));
 
@@ -319,7 +328,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
         mqttPublish("response", resp);
 
     } else {
-        Serial.printf("[MQTT] cmd/rfid/whitelist: unknown cmd '%s'\n", cmd);
+        LOG_W("MQTT", "cmd/rfid/whitelist: unknown cmd '%s'", cmd);
     }
 }
 
@@ -335,11 +344,11 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
 //   2. Timestamp in the new bundle must be strictly newer than the current one
 //      (prevents replay attacks — replaying an old rotation has no effect)
 static void handleCredRotation(const char* payload, size_t len) {
-    Serial.println("[MQTT] Credential rotation message received");
+    LOG_I("MQTT", "Credential rotation message received");
 
     // Minimum valid size: nonce (12) + at least 1 byte of ciphertext + tag (16)
     if (len <= GCM_NONCE_LEN + GCM_TAG_LEN) {
-        Serial.println("[MQTT] Rotation payload too short — ignoring");
+        LOG_W("MQTT", "Rotation payload too short - ignoring");
         return;
     }
 
@@ -352,16 +361,16 @@ static void handleCredRotation(const char* payload, size_t len) {
     uint8_t plaintext[BUNDLE_PLAINTEXT_MAX];
     size_t  plaintextLen = 0;
     if (!cryptoDecrypt(aesKey, (const uint8_t*)payload, len, plaintext, plaintextLen)) {
-        Serial.println("[MQTT] Rotation decryption/auth failed — ignoring");
-        memset(aesKey, 0, AES_KEY_LEN);            // Wipe key from RAM even on failure
-        mqttPublishStatus("cred_rotate_rejected");  // Let Node-RED know it was rejected
+        LOG_W("MQTT", "Rotation decryption/auth failed - ignoring");
+        memset(aesKey, 0, AES_KEY_LEN);                         // Wipe key from RAM even on failure
+        mqttPublishStatus(FwEvent::CRED_ROTATE_REJECTED);        // Let Node-RED know it was rejected
         return;
     }
     memset(aesKey, 0, AES_KEY_LEN);   // Wipe key from RAM immediately after use
 
     // Verify the decrypted data is exactly the size of a CredentialBundle
     if (plaintextLen != sizeof(CredentialBundle)) {
-        Serial.println("[MQTT] Rotation bundle size mismatch — ignoring");
+        LOG_W("MQTT", "Rotation bundle size mismatch - ignoring");
         return;
     }
 
@@ -374,14 +383,14 @@ static void handleCredRotation(const char* payload, size_t len) {
     // This prevents an attacker who captured a previous rotation message from
     // replaying it to roll credentials back to an older version.
     if (newBundle.timestamp <= _mqttBundle.timestamp) {
-        Serial.printf("[MQTT] Rotation ignored — new ts %llu <= current ts %llu\n",
-                      newBundle.timestamp, _mqttBundle.timestamp);
+        LOG_W("MQTT", "Rotation ignored - new ts %llu <= current ts %llu",
+              newBundle.timestamp, _mqttBundle.timestamp);
         return;
     }
 
     // Save the new bundle to NVS flash so it persists across restarts
     if (!CredentialStore::save(newBundle)) {
-        Serial.println("[MQTT] Failed to write rotated credentials to NVS");
+        LOG_E("MQTT", "Failed to write rotated credentials to NVS");
         return;
     }
 
@@ -389,8 +398,8 @@ static void handleCredRotation(const char* payload, size_t len) {
     // time to be sent without blocking inside the message callback.
     // delay() here would stall AsyncMqttClient's keepalive loop and may cause
     // it to drop the connection before the PUBACK is received.
-    Serial.println("[MQTT] Credentials rotated successfully — restarting in 600 ms");
-    mqttPublishStatus("cred_rotated");
+    LOG_I("MQTT", "Credentials rotated successfully - restarting in 600 ms");
+    mqttPublishStatus(FwEvent::CRED_ROTATED);
     _mqttRestartAtMs = millis() + 600;   // mqttHeartbeat() drives the deferred restart
 }
 
@@ -423,17 +432,17 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd")) {
         // General application command — extend this block to handle
         // device-specific commands (e.g. LED control, sensor reads)
-        Serial.printf("[MQTT] cmd received: %.*s\n", (int)len, payload);
+        LOG_D("MQTT", "cmd received: %.*s", (int)len, payload);
     } else if (t == otaTopic) {
         // OTA check triggered remotely from Node-RED or another MQTT client
-        Serial.println("[MQTT] OTA check triggered via MQTT");
+        LOG_I("MQTT", "OTA check triggered via MQTT");
         otaCheckNow();   // Defined in ota.h (included after this file)
     } else if (t == mqttTopic("cmd/config_mode")) {
         // Start the settings HTTP portal on the device LAN IP.
         // Admin can then browse to http://<device-ip>/settings to update
         // GitHub and MQTT settings without entering AP mode.
-        Serial.println("[MQTT] Config mode triggered — starting settings portal");
-        mqttPublishStatus("config_mode_active",
+        LOG_I("MQTT", "Config mode triggered - starting settings portal");
+        mqttPublishStatus(FwEvent::CONFIG_MODE_ACTIVE,
             (String("\"settings_url\":\"http://") + WiFi.localIP().toString() + "/settings\"").c_str());
         settingsServerStart();
     } else if (t == mqttTopic("cmd/led")) {
@@ -453,7 +462,7 @@ static void onMqttMessage(char* topic, char* payload,
         JsonDocument doc;
         DeserializationError jsonErr = deserializeJson(doc, payload, len);
         if (jsonErr != DeserializationError::Ok) {
-            Serial.printf("[MQTT] cmd/ble/track: JSON parse error — %s\n", jsonErr.c_str());
+            LOG_W("MQTT", "cmd/ble/track: JSON parse error - %s", jsonErr.c_str());
         } else {
             const char* macPtrs[BLE_MAX_TRACKED];
             uint8_t count = 0;
@@ -478,8 +487,8 @@ static void onMqttMessage(char* topic, char* payload,
         // Deferred restart — publish status then let mqttHeartbeat() fire
         // ESP.restart() after 300 ms so the MQTT publish drains without
         // blocking inside this callback.
-        Serial.println("[MQTT] Restart command received — restarting in 300 ms");
-        mqttPublishStatus("restarting");
+        LOG_I("MQTT", "Restart command received - restarting in 300 ms");
+        mqttPublishStatus(FwEvent::RESTARTING);
         _mqttRestartAtMs = millis() + 300;
     }
 }
@@ -489,7 +498,7 @@ static void onMqttMessage(char* topic, char* payload,
 // Called by AsyncMqttClient after a successful broker connection (or reconnect).
 // Sets up all subscriptions and sends the boot announcement.
 static void onMqttConnect(bool sessionPresent) {
-    Serial.println("[MQTT] Connected to broker");
+    LOG_I("MQTT", "Connected to broker");
     _mqttReconnectDelay     = 1000;   // Reset back-off delay after a successful connect
     _mqttReconnectCount     = 0;      // Clear failure counter
     _mqttNeedsRediscovery   = false;  // Clear rediscovery flag if loop() hadn't seen it yet
@@ -521,8 +530,8 @@ static void onMqttConnect(bool sessionPresent) {
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
-    mqttPublishStatus("boot");
-    Serial.println("[MQTT] Boot announcement published (v" FIRMWARE_VERSION ")");
+    mqttPublishStatus(FwEvent::BOOT);
+    LOG_I("MQTT", "Boot announcement published (v" FIRMWARE_VERSION ")");
 
     // Re-publish current LED strip state (retained) so Node-RED re-syncs after
     // a broker restart or reconnect without requiring a reboot.
@@ -559,8 +568,8 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }
 
-    Serial.printf("[MQTT] Disconnected (%s) — retrying in %lu ms\n",
-                  mqttDisconnectReasonStr(reason), _mqttReconnectDelay);
+    LOG_W("MQTT", "Disconnected (%s) - retrying in %lu ms",
+          mqttDisconnectReasonStr(reason), _mqttReconnectDelay);
 
     // Only start the timer if it isn't already running (prevents timer pile-up)
     if (xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
@@ -581,7 +590,7 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 // the main loop's Wi-Fi recovery code will restart the device.
 static void mqttReconnectTimerCb(TimerHandle_t) {
     if (WiFi.isConnected()) {
-        Serial.println("[MQTT] Attempting reconnect...");
+        LOG_I("MQTT", "Attempting reconnect...");
         _mqttConnectStartMs = millis();   // Start watchdog — loop() will restart if no callback arrives
         _mqttClient.connect();            // Triggers onMqttConnect on success, onMqttDisconnect on failure
     }
@@ -619,8 +628,8 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     // Guard against an empty hostname (e.g. stored URL was never set or failed to
     // parse). Connecting with an empty host silently hangs the async TCP layer.
     if (_mqttHost.isEmpty() || port == 0) {
-        Serial.printf("[MQTT] mqttBegin aborted — invalid broker address (host='%s' port=%d)\n",
-                      _mqttHost.c_str(), port);
+        LOG_E("MQTT", "mqttBegin aborted - invalid broker address (host='%s' port=%d)",
+              _mqttHost.c_str(), port);
         return;
     }
 
@@ -629,8 +638,7 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
         broker.method == DiscoveryMethod::MDNS     ? "mDNS"      :
         broker.method == DiscoveryMethod::PORTSCAN ? "port scan" :
                                                      "stored URL";
-    Serial.printf("[MQTT] Broker: %s:%d (via %s)\n",
-                  _mqttHost.c_str(), port, methodStr);
+    LOG_I("MQTT", "Broker: %s:%d (via %s)", _mqttHost.c_str(), port, methodStr);
 
     // Register event callbacks before calling connect()
     _mqttClient.onConnect(onMqttConnect);       // Fired after successful connect
@@ -657,14 +665,15 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     _mqttClient.setClientId(_mqttClientId.c_str());
 
     if (WiFi.isConnected()) {
-        Serial.printf("[MQTT] Connecting to %s:%d as %s\n", _mqttHost.c_str(), port, _mqttClientId.c_str());
+        LOG_I("MQTT", "Connecting to %s:%d as %s",
+              _mqttHost.c_str(), port, _mqttClientId.c_str());
         _mqttConnectStartMs = millis();   // Start watchdog for the initial connect attempt
         _mqttClient.connect();            // Non-blocking — result arrives via callbacks
     } else {
         // WiFi IP was just assigned but the stack is not yet ready — defer via the
         // reconnect timer (which also guards with WiFi.isConnected()) rather than
         // calling connect() blindly.
-        Serial.println("[MQTT] WiFi not ready at mqttBegin — deferring first connect");
+        LOG_W("MQTT", "WiFi not ready at mqttBegin - deferring first connect");
         xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(500), 0);
         xTimerStart(_mqttReconnectTimer, 0);
     }
@@ -697,7 +706,7 @@ bool mqttIsConnected() { return _mqttClient.connected(); }
 // MQTT_RESTART_THRESHOLD so Tier 2 (hard restart) still fires if needed.
 void mqttReinit(const BrokerResult& broker) {
     _mqttHost = String(broker.host);    // module-level — outlives this function
-    Serial.printf("[MQTT] Reinit — broker %s:%d\n", broker.host, broker.port);
+    LOG_I("MQTT", "Reinit - broker %s:%d", broker.host, broker.port);
     _mqttClient.disconnect(true);   // Force-close any lingering TCP connection
     _mqttClient.setServer(_mqttHost.c_str(), broker.port);
     _mqttReconnectDelay = 1000;     // Reset backoff for the fresh address
@@ -728,12 +737,12 @@ void mqttHeartbeat() {
     // loop is not blocked and the outgoing MQTT publish has time to drain.
     if (_mqttRestartAtMs > 0 && millis() >= _mqttRestartAtMs) {
         _mqttRestartAtMs = 0;
-        Serial.println("[MQTT] Deferred restart firing");
+        LOG_I("MQTT", "Deferred restart firing");
         ESP.restart();
     }
 
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        mqttPublishStatus("heartbeat");          // Sends {"mac":..., "event":"heartbeat", ...}
+        mqttPublishStatus(FwEvent::HEARTBEAT);   // Sends {"mac":..., "event":"heartbeat", ...}
         _lastHeartbeat += HEARTBEAT_INTERVAL_MS; // Advance by fixed interval to prevent drift
     }
 }

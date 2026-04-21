@@ -402,6 +402,48 @@ replace_espnow_flow.js / add_espnow_flow.js
 
 
 ────────────────────────────────────────────────────────────────────────────────
+12. Structured logging + FwEvent enum (v0.3.06)
+────────────────────────────────────────────────────────────────────────────────
+
+New files: include/logging.h, include/fwevent.h
+
+[logging.h] Compile-time filtered LOG_D/I/W/E macros
+  214 Serial.printf / Serial.println call-sites across mqtt_client.h, ota.h,
+  and main.cpp converted to LOG_*(tag, fmt, ...) macros. Output format changes
+  from "[MQTT] message" to "[I][MQTT] message" (level prefix added).
+  Level filtering is controlled by LOG_LEVEL in config.h (default: INFO).
+  Build with -DLOG_LEVEL=LOG_LEVEL_WARN to suppress informational output in
+  production without reflashing — zero runtime cost for excluded levels.
+  The tag + fmt arguments are string literals concatenated at compile time;
+  no heap allocation occurs.
+
+[fwevent.h] FwEvent enum replaces free-form mqttPublishStatus() string literals
+  Ten event strings ("boot", "heartbeat", "ota_checking", ...) promoted to
+  enum class FwEvent : uint8_t. fwEventName() provides the string lookup.
+  A typed overload mqttPublishStatus(FwEvent, const char*) added in mqtt_client.h
+  delegates to the existing const char* version so the retain logic
+  (strcmp(event, "boot")) and the Node-RED string contract are both preserved.
+  fwevent.h has no Arduino/FreeRTOS dependencies and can be included in host-side
+  Unity tests directly.
+
+[main.cpp] Non-blocking loop() Wi-Fi recovery
+  Replaced the blocking while/delay(3000) reconnect loop with a static-state
+  pattern: _wifiRecoveryAttempts and _wifiRetryAt track progress across loop()
+  iterations. loop() returns after each failed attempt, allowing MQTT heartbeat,
+  OTA, and RFID/BLE tasks to continue running during the 3-second inter-attempt
+  pause. connectWifi() itself still blocks for up to WIFI_CONNECT_TIMEOUT_MS —
+  full non-blocking WiFi recovery is deferred to v0.3.07.
+
+[test_main.cpp] 3 new Unity tests for fwEventName() (30 total)
+  test_fwevent_boot_is_retained_string — guards the "boot" string that onMqttConnect
+    relies on for its retain-flag strcmp check.
+  test_fwevent_all_known_values — asserts every enum value maps to its expected
+    Node-RED contract string.
+  test_fwevent_unknown_value_returns_string — confirms the default branch never
+    returns nullptr (which would crash the JSON builder).
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

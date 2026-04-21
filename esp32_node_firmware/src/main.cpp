@@ -72,6 +72,7 @@
 #include <esp_now.h>
 
 #include "config.h"
+#include "logging.h"
 #include "led.h"
 #include "credentials.h"
 #include "crypto.h"
@@ -116,8 +117,7 @@ void WiFiEvent(WiFiEvent_t event) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             // DHCP assigned an IP address — we are fully connected
-            Serial.printf("[WiFi] Connected — IP: %s\n",
-                          WiFi.localIP().toString().c_str());
+            LOG_I("WiFi", "Connected - IP: %s", WiFi.localIP().toString().c_str());
             wifiConnected = true;
             break;
 
@@ -127,7 +127,7 @@ void WiFiEvent(WiFiEvent_t event) {
                 // Only log when transitioning from connected → disconnected.
                 // Suppresses repeated events fired by the WiFi stack during
                 // failed association attempts (where we were never connected).
-                Serial.println("[WiFi] Disconnected");
+                LOG_I("WiFi", "Disconnected");
             }
             wifiConnected = false;
             break;
@@ -148,7 +148,7 @@ static bool connectWifi(const CredentialBundle& b) {
     WiFi.onEvent(WiFiEvent);       // Register the event handler for connect/disconnect events
     WiFi.begin(b.wifi_ssid, b.wifi_password);  // Start the association process
 
-    Serial.printf("[WiFi] Connecting to SSID: %s\n", b.wifi_ssid);
+    LOG_I("WiFi", "Connecting to SSID: %s", b.wifi_ssid);
 
     // Poll wifiConnected (set by WiFiEvent) every 100 ms until connected or timeout
     uint32_t deadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
@@ -171,7 +171,8 @@ void setup() {
     ledSetPattern(LedPattern::BOOT);    // Solid ON during initialisation
     ws2812Init();                       // WS2812B strip: FastLED setup, LEDs off, create event queue
     ws2812TaskStart();                  // Spawn strip task on Core 1 — boot animations from here
-    Serial.println("\n[BOOT] ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
+    Serial.println();
+    LOG_I("BOOT", "ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
     // Initialise the persistent device UUID (stored in NVS namespace "esp32id").
     // Must run before any MQTT topic building or status publishing.
@@ -204,16 +205,16 @@ void setup() {
             // If sibling bootstrap fails, the device falls back to its stored
             // credentials or AP mode as normal; the flag will not re-trigger.
             CredentialStore::setCredStale(false);
-            Serial.println("[BOOT] Credentials flagged stale — forcing sibling re-verify");
+            LOG_W("BOOT", "Credentials flagged stale - forcing sibling re-verify");
             currentState = State::BOOTSTRAP_REQUEST;
         } else if (CredentialStore::hasPrimary()) {
             // Admin credentials are in NVS and not stale — load them
-            Serial.println("[BOOT] Admin credentials found — skipping bootstrap");
+            LOG_I("BOOT", "Admin credentials found - skipping bootstrap");
             if (CredentialStore::load(activeBundle)) {
                 currentState = State::WIFI_CONNECT;   // Go straight to Wi-Fi
             } else {
                 // NVS said admin credentials exist but they couldn't be loaded — corrupted?
-                Serial.println("[BOOT] Failed to load admin credentials — entering AP mode");
+                LOG_E("BOOT", "Failed to load admin credentials - entering AP mode");
                 currentState = State::AP_MODE;
             }
         } else {
@@ -231,7 +232,7 @@ void setup() {
     // any existing NVS bundle, or if there is none, go to AP_MODE.
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::BOOTSTRAP_REQUEST) {
-        Serial.println("[BOOTSTRAP] Starting ESP-NOW bootstrap");
+        LOG_I("BOOT", "Starting ESP-NOW bootstrap");
         ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 blink — searching for sibling
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "bootstrap", sizeof(e.animName)); ws2812PostEvent(e); }
@@ -247,8 +248,7 @@ void setup() {
              attempt <= BOOTSTRAP_MAX_ATTEMPTS && !gotBundle;
              attempt++)
         {
-            Serial.printf("[BOOTSTRAP] Attempt %d of %d\n",
-                          attempt, BOOTSTRAP_MAX_ATTEMPTS);
+            LOG_I("BOOT", "Bootstrap attempt %d of %d", attempt, BOOTSTRAP_MAX_ATTEMPTS);
 
             CredentialBundle received;
 #ifdef SIBLING_PRIMARY_SELECTION
@@ -259,8 +259,8 @@ void setup() {
             if (gotResp) {
                 // Reject bundles with an unreasonably far-future timestamp
                 if (received.timestamp > BOOTSTRAP_MAX_TS) {
-                    Serial.printf("[BOOTSTRAP] Received bundle timestamp %llu exceeds cap %llu"
-                                  " — discarding\n", received.timestamp, BOOTSTRAP_MAX_TS);
+                    LOG_W("BOOT", "Received bundle timestamp %llu exceeds cap %llu - discarding",
+                          received.timestamp, BOOTSTRAP_MAX_TS);
                     // Treat as if no response arrived for this attempt
                 } else {
                 // A sibling responded — compare with whatever is already in NVS
@@ -281,10 +281,10 @@ void setup() {
                 if (useReceived) {
                     activeBundle = received;
                     CredentialStore::save(activeBundle);   // Persist for next boot
-                    Serial.println("[BOOTSTRAP] New bundle adopted and saved");
+                    LOG_I("BOOT", "New bundle adopted and saved");
                 } else {
                     activeBundle = stored;
-                    Serial.println("[BOOTSTRAP] Kept existing NVS bundle (newer timestamp)");
+                    LOG_I("BOOT", "Kept existing NVS bundle (newer timestamp)");
                 }
                 gotBundle = true;   // We have credentials — exit the retry loop
                 } // end timestamp cap else
@@ -292,7 +292,8 @@ void setup() {
             } else {
                 // No response this attempt
                 if (attempt < BOOTSTRAP_MAX_ATTEMPTS) {
-                    Serial.println("[BOOTSTRAP] No response — retrying in 2 s");
+                    LOG_I("BOOT", "No response - retrying in 2 s");
+                    // TODO(v0.3.07): remove when bootstrap becomes non-blocking state machine
                     delay(2000);
                 }
             }
@@ -301,11 +302,11 @@ void setup() {
         if (!gotBundle) {
             // All bootstrap attempts failed — fall back to anything in NVS
             if (CredentialStore::load(activeBundle)) {
-                Serial.println("[BOOTSTRAP] No sibling found — using stored NVS bundle");
+                LOG_I("BOOT", "No sibling found - using stored NVS bundle");
                 currentState = State::WIFI_CONNECT;
             } else {
                 // Nothing in NVS either — no choice but to enter AP mode
-                Serial.println("[BOOTSTRAP] No credentials available — entering AP mode");
+                LOG_W("BOOT", "No credentials available - entering AP mode");
                 currentState = State::AP_MODE;
             }
         } else {
@@ -331,10 +332,12 @@ void setup() {
              attempt <= WIFI_MAX_ATTEMPTS && !connected;
              attempt++)
         {
-            Serial.printf("[WiFi] Association attempt %d of %d\n",
-                          attempt, WIFI_MAX_ATTEMPTS);
+            LOG_I("WiFi", "Association attempt %d of %d", attempt, WIFI_MAX_ATTEMPTS);
             connected = connectWifi(activeBundle);
-            if (!connected && attempt < WIFI_MAX_ATTEMPTS) delay(2000);
+            if (!connected && attempt < WIFI_MAX_ATTEMPTS) {
+                // TODO(v0.3.07): replace with non-blocking retry when boot path is refactored
+                delay(2000);
+            }
         }
 
         if (!connected) {
@@ -342,7 +345,7 @@ void setup() {
             // ask siblings for fresh credentials — they may have a newer bundle
             // (e.g. after an admin rotated credentials on the network).
             // WiFi is NOT connected here so it is safe to change the channel.
-            Serial.println("[WiFi] All attempts failed — trying sibling credential re-verify");
+            LOG_W("WiFi", "All attempts failed - trying sibling credential re-verify");
 
             // Timestamp safety cap (same rule as BOOTSTRAP_REQUEST above)
             const uint64_t REVERIFY_MAX_TS = FIRMWARE_BUILD_TIMESTAMP + SIBLING_TS_MAX_FUTURE_S;
@@ -359,52 +362,53 @@ void setup() {
 #endif
                 if (gotFresh) {
                     if (fresh.timestamp > REVERIFY_MAX_TS) {
-                        Serial.printf("[WiFi] Sibling bundle timestamp %llu exceeds cap"
-                                      " — discarding\n", fresh.timestamp);
+                        LOG_W("WiFi", "Sibling bundle timestamp %llu exceeds cap - discarding",
+                              fresh.timestamp);
                     } else if (fresh.timestamp > activeBundle.timestamp) {
                         // Strictly newer credentials received — adopt and retry WiFi
                         activeBundle = fresh;
                         CredentialStore::save(activeBundle);
-                        Serial.println("[WiFi] Fresh credentials from sibling — retrying WiFi");
+                        LOG_I("WiFi", "Fresh credentials from sibling - retrying WiFi");
 
                         for (int ra = 1; ra <= WIFI_MAX_ATTEMPTS && !connected; ra++) {
-                            Serial.printf("[WiFi] Re-verify attempt %d of %d\n", ra, WIFI_MAX_ATTEMPTS);
+                            LOG_I("WiFi", "Re-verify attempt %d of %d", ra, WIFI_MAX_ATTEMPTS);
                             connected = connectWifi(activeBundle);
-                            if (!connected && ra < WIFI_MAX_ATTEMPTS) delay(2000);
+                            if (!connected && ra < WIFI_MAX_ATTEMPTS) {
+                                // TODO(v0.3.07): replace with non-blocking retry
+                                delay(2000);
+                            }
                         }
                         if (connected) {
                             CredentialStore::clearRestartCount();
                             ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow blink — waiting for MQTT
                             currentState = State::OPERATIONAL;
                         } else {
-                            Serial.println("[WiFi] Still failed with fresh sibling credentials");
+                            LOG_W("WiFi", "Still failed with fresh sibling credentials");
                         }
                     } else {
-                        Serial.printf("[WiFi] Sibling bundle not newer (sibling ts=%llu"
-                                      " <= stored ts=%llu) — no retry\n",
-                                      fresh.timestamp, activeBundle.timestamp);
+                        LOG_I("WiFi", "Sibling bundle not newer (ts=%llu <= stored=%llu)",
+                              fresh.timestamp, activeBundle.timestamp);
                     }
                 } else {
-                    Serial.println("[WiFi] No sibling responded to re-verify request");
+                    LOG_W("WiFi", "No sibling responded to re-verify request");
                 }
             }
 
             if (!connected) {
                 // All attempts exhausted including sibling re-verify
                 uint8_t restarts = CredentialStore::incrementRestartCount();
-                Serial.printf("[WiFi] Failed — restart count now %d / %d\n",
-                              restarts, DEVICE_RESTART_MAX);
+                LOG_W("WiFi", "Failed - restart count now %d / %d", restarts, DEVICE_RESTART_MAX);
 
                 if (restarts < DEVICE_RESTART_MAX) {
                     // Still within the restart budget — reboot and try again
-                    Serial.println("[WiFi] Restarting device...");
+                    LOG_W("WiFi", "Restarting device...");
                     ledSetPattern(LedPattern::ERROR);   // 3× flash — visible during 1s delay
                     delay(1000);    // Brief pause so the serial message is transmitted
                     ESP.restart();  // Full hardware restart
                 } else {
                     // Restart budget exhausted — credentials may be wrong or router is down.
                     // Enter AP_MODE so the admin can update credentials.
-                    Serial.println("[WiFi] Restart limit reached — entering AP mode");
+                    LOG_W("WiFi", "Restart limit reached - entering AP mode");
                     currentState = State::AP_MODE;
                 }
             }
@@ -441,7 +445,7 @@ void setup() {
     // After setup() returns, loop() takes over for ongoing tasks.
     // ─────────────────────────────────────────────────────────────────────────
     if (currentState == State::OPERATIONAL) {
-        Serial.println("[OPERATIONAL] Wi-Fi connected — starting services");
+        LOG_I("BOOT", "Wi-Fi connected - starting services");
 
         // Register our credentials with the ESP-NOW responder so that any
         // new node that asks us for credentials gets the active bundle
@@ -500,28 +504,53 @@ void loop() {
 
     // ── Wi-Fi health check ────────────────────────────────────────────────────
     // If the Wi-Fi connection dropped (wifiConnected set to false by WiFiEvent),
-    // try to reconnect. If reconnection fails repeatedly, restart the device.
+    // attempt reconnection without blocking the rest of the loop.
+    //
+    // State is tracked across loop() iterations via static variables:
+    //   _wifiRecoveryAttempts — how many reconnects have been tried this outage
+    //   _wifiRetryAt          — millis() timestamp before which we do not retry
+    //
+    // Note: connectWifi() still blocks for up to WIFI_CONNECT_TIMEOUT_MS per
+    // call. Full non-blocking WiFi recovery (state machine driven from loop())
+    // is deferred to v0.3.07 along with the ESP-NOW channel scan refactor.
     if (!wifiConnected) {
-        Serial.println("[Loop] Wi-Fi lost — attempting reconnect");
-        ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 — reconnecting
-        int attempts = 0;
-        while (!wifiConnected && attempts < WIFI_MAX_ATTEMPTS) {
-            connectWifi(activeBundle);
-            attempts++;
-            if (!wifiConnected) delay(3000);   // Wait 3 s between reconnect attempts
+        static int      _wifiRecoveryAttempts = 0;
+        static uint32_t _wifiRetryAt          = 0;
+
+        if (_wifiRecoveryAttempts == 0) {
+            // First check after losing connection — log and start the recovery sequence
+            LOG_W("Loop", "Wi-Fi lost - attempting reconnect");
+            ledSetPattern(LedPattern::WIFI_CONNECTING);   // 500/500 — reconnecting
         }
 
-        if (!wifiConnected) {
-            // Persistent Wi-Fi failure — flag credentials as stale so the next
-            // boot forces a sibling re-verify before falling back to AP mode.
-            Serial.println("[Loop] Could not reconnect — flagging credentials stale and restarting");
+        if (millis() < _wifiRetryAt) {
+            // Still in the inter-attempt pause — return so other loop tasks can run
+            return;
+        }
+
+        connectWifi(activeBundle);
+        _wifiRecoveryAttempts++;
+
+        if (wifiConnected) {
+            // Reconnected successfully — clear recovery state
+            _wifiRecoveryAttempts = 0;
+            _wifiRetryAt          = 0;
+            // AsyncMqttClient will automatically reconnect to the broker
+            // via its own reconnect timer — no explicit call needed here.
+        } else if (_wifiRecoveryAttempts >= WIFI_MAX_ATTEMPTS) {
+            // All attempts exhausted — flag credentials as stale so next boot
+            // forces a sibling re-verify before falling back to AP mode.
+            LOG_W("Loop", "Could not reconnect - flagging credentials stale and restarting");
             ledSetPattern(LedPattern::ERROR);   // 3× flash before restart
             CredentialStore::setCredStale(true);
             CredentialStore::incrementRestartCount();   // Track this failure
             ESP.restart();
+        } else {
+            // Schedule the next attempt with a 3-second pause.
+            // Return to loop() so MQTT heartbeat and OTA tasks can still run.
+            _wifiRetryAt = millis() + 3000;
+            return;
         }
-        // If we reconnected, the AsyncMqttClient will automatically reconnect
-        // to the broker via its own reconnect timer
     }
 
     // ── MQTT heartbeat ────────────────────────────────────────────────────────
@@ -537,14 +566,14 @@ void loop() {
     // Tier 2: hard restart once MQTT_RESTART_THRESHOLD consecutive failures hit.
     // Tier 1: re-run broker discovery at MQTT_REDISCOVERY_THRESHOLD failures.
     if (mqttIsHung()) {
-        Serial.println("[Loop] MQTT hung (no callback) — restarting device");
+        LOG_W("Loop", "MQTT hung (no callback) - restarting device");
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::incrementRestartCount();
         ESP.restart();
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
         // Sustained MQTT failure — credentials may be wrong (wrong broker URL,
         // bad username/password). Flag as stale so next boot asks siblings.
-        Serial.println("[Loop] MQTT unrecoverable — flagging credentials stale and restarting");
+        LOG_W("Loop", "MQTT unrecoverable - flagging credentials stale and restarting");
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();
@@ -552,7 +581,7 @@ void loop() {
     } else if (mqttNeedsRediscovery()) {
         mqttClearRediscoveryFlag();
         ledSetPattern(LedPattern::WIFI_CONNECTING);   // re-running discovery
-        Serial.println("[Loop] MQTT stuck — re-running broker discovery");
+        LOG_W("Loop", "MQTT stuck - re-running broker discovery");
         BrokerResult broker = discoverBroker(activeBundle.mqtt_broker_url);
         if (broker.found()) saveBrokerToCache(broker.host, broker.port);
         mqttReinit(broker);

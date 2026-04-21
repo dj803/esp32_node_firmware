@@ -36,9 +36,23 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.05-dev"
+#define FIRMWARE_VERSION           "0.3.06-dev"
 #endif
-#define FIRMWARE_BUILD_TIMESTAMP   1745229600ULL   // 2026-04-21 10:40:00 UTC
+#define FIRMWARE_BUILD_TIMESTAMP   1745259600ULL   // 2026-04-21 19:00:00 UTC
+
+
+// -----------------------------------------------------------------------------
+// Logging level
+// Controls which log messages are compiled into the firmware.
+// Set via build_flags in platformio.ini to change per-environment:
+//   build_flags = -DLOG_LEVEL=LOG_LEVEL_WARN    (production — errors + warnings only)
+//   build_flags = -DLOG_LEVEL=LOG_LEVEL_DEBUG   (verbose development output)
+// The default (LOG_LEVEL_INFO) is defined in logging.h and covers normal
+// operational events. Change here to override for all builds that include
+// this config.h.
+// Possible values: LOG_LEVEL_NONE(0), LOG_LEVEL_ERROR(1), LOG_LEVEL_WARN(2),
+//                  LOG_LEVEL_INFO(3), LOG_LEVEL_DEBUG(4)
+// #define LOG_LEVEL LOG_LEVEL_INFO    // uncomment to pin the level explicitly
 
 
 // -----------------------------------------------------------------------------
