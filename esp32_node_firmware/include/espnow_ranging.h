@@ -51,11 +51,27 @@
 // eviction, observe(), expire(), forEach(), and count() in one place.
 static PeerTracker<ESPNOW_MAX_TRACKED> _enrPeers;
 
+// ── Enable / disable flag ─────────────────────────────────────────────────────
+// Controlled via MQTT cmd/espnow/ranging (payload "1" = enable, "0" = disable).
+// Defaults to false — ranging is off until Node-RED explicitly enables it by
+// sending "1" (with retain=true so the state survives device reboots).
+// When false: beacons are not broadcast, RSSI observations are not recorded,
+// and no MQTT publish is made — idle background radio traffic goes to zero.
+static bool _rangingEnabled = false;
+
+// Called from mqtt_client.h's onMqttMessage handler.
+void espnowRangingSetEnabled(bool en) {
+    if (en == _rangingEnabled) return;   // no-op if already in requested state
+    _rangingEnabled = en;
+    Serial.printf("[ESP-NOW Ranging] ranging %s\n", en ? "ENABLED" : "DISABLED");
+}
+
 
 // ── espnowRangingObserve ──────────────────────────────────────────────────────
 // Called by espnow_responder.h's receive dispatcher for EVERY incoming frame.
 // Updates (or creates) the slot for this sender MAC with the current RSSI.
 void espnowRangingObserve(const uint8_t* mac6, int8_t rssi) {
+    if (!_rangingEnabled) return;   // drop observations when ranging is off
     char macStr[18];
     macToString(mac6, macStr);
     float dist = rssiToDistance(rssi, ESPNOW_TX_POWER_DBM, ESPNOW_PATH_LOSS_N);
@@ -97,6 +113,8 @@ static void _enrSendBeacon() {
 static uint32_t _enrLastPublish = 0;
 
 void espnowRangingLoop() {
+    if (!_rangingEnabled) return;   // idle — no beacons, no MQTT publish
+
     uint32_t now = millis();
     _enrPeers.setNow(now);
 
@@ -123,8 +141,7 @@ void espnowRangingLoop() {
         o["mac"]    = p.mac;
         o["rssi"]   = p.rssi;
         o["dist_m"] = String(p.distM, 1);
-        Serial.printf("[ESP-NOW Ranging] %s  rssi=%d  dist=%.1fm\n",
-                      p.mac, p.rssi, p.distM);
+        LOG_D("ESP-NOW Ranging", "%s  rssi=%d  dist=%.1fm", p.mac, p.rssi, p.distM);
     });
 
     mqttPublishJson("espnow", doc);

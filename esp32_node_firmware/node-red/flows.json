@@ -734,7 +734,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Aggregate Device Status",
-    "func": "try {\n    const names = {\n      \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n      \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n      \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices = flow.get(\"hb_devices\") || {};\n    const prev = devices[uuid] || {};\n    const connected = msg.payload === \"Connected\";\n    devices[uuid] = {\n      name:     names[uuid] || uuid.slice(0,8) + \"...\",\n      uuid:     uuid,\n      status:   msg.payload,\n      firmware: connected && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"\\u2014\"),\n      lastSeen: connected ? new Date().toLocaleString() : (prev.lastSeen || \"Never\")\n    };\n    flow.set(\"hb_devices\", devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error(\"Aggregate Device Status: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    const names = {\n      \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n      \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n      \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices = flow.get(\"hb_devices\") || {};\n    const prev = devices[uuid] || {};\n    const connected = msg.payload === \"Connected\";\n    devices[uuid] = {\n      name:     names[uuid] || uuid.slice(0,8) + \"...\",\n      uuid:     uuid,\n      status:   msg.payload,\n      firmware: connected && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"\\u2014\"),\n      lastSeen: connected ? new Date().toLocaleString() : (prev.lastSeen || \"Never\")\n    };\n    flow.set(\"hb_devices\", devices);\n    global.set(\"hb_devices\", devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error(\"Aggregate Device Status: \" + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -818,7 +818,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Publish to All Devices",
-    "func": "try {\n    var base = flow.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var uuids = flow.get(\"knownUuids\") || [];\n    if (uuids.length === 0) {\n        node.warn(\"No known devices yet â€” waiting for first heartbeat\");\n        return null;\n    }\n    uuids.forEach(function(uuid) {\n        node.send({\n            topic: base + uuid + \"/cmd/ota_check\",\n            payload: \"\"\n        });\n    });\n    return null;\n} catch(e) {\n    node.error(\"Publish to All Devices: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var base = flow.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var uuids = Object.keys(flow.get(\"hb_devices\") || {});\n    if (uuids.length === 0) {\n        node.warn(\"No known devices yet â€” waiting for first heartbeat\");\n        return null;\n    }\n    uuids.forEach(function(uuid) {\n        node.send({\n            topic: base + uuid + \"/cmd/ota_check\",\n            payload: \"\"\n        });\n    });\n    return null;\n} catch(e) {\n    node.error(\"Publish to All Devices: \" + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -873,7 +873,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Restart All Devices",
-    "func": "try {\n    var base = flow.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var uuids = flow.get(\"knownUuids\") || [];\n    if (uuids.length === 0) {\n        node.warn(\"No known devices yet â€” waiting for first heartbeat\");\n        return null;\n    }\n    var msgs = [];\n    uuids.forEach(function(uuid) {\n        msgs.push({\n            topic: base + uuid + \"/cmd/restart\",\n            payload: \"\"\n        });\n    });\n    msgs.forEach(function(m) { node.send(m); });\n    return null;\n} catch(e) {\n    node.error(\"Restart All Devices: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var base = flow.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var uuids = Object.keys(flow.get(\"hb_devices\") || {});\n    if (uuids.length === 0) {\n        node.warn(\"No known devices yet â€” waiting for first heartbeat\");\n        return null;\n    }\n    var msgs = [];\n    uuids.forEach(function(uuid) {\n        msgs.push({\n            topic: base + uuid + \"/cmd/restart\",\n            payload: \"\"\n        });\n    });\n    msgs.forEach(function(m) { node.send(m); });\n    return null;\n} catch(e) {\n    node.error(\"Restart All Devices: \" + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -1757,7 +1757,8 @@
     "y": 60,
     "wires": [
       [
-        "espnow_tracking_tpl"
+        "espnow_tracking_tpl",
+        "espnow_ranging_cmd_fn"
       ],
       [
         "espnow_filter_fn"
@@ -1898,7 +1899,8 @@
     "y": 120,
     "wires": [
       [
-        "espnow_tracking_tpl"
+        "espnow_tracking_tpl",
+        "espnow_ranging_cmd_fn"
       ],
       [
         "espnow_dist_chart"
@@ -1954,6 +1956,38 @@
     "statusType": "auto",
     "x": 420,
     "y": 400,
+    "wires": []
+  },
+  {
+    "id": "espnow_ranging_cmd_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Publish Ranging Enable/Disable",
+    "func": "try {\n    var base  = global.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var devs  = global.get(\"hb_devices\") || {};\n    var uuids = Object.keys(devs);\n    if (uuids.length === 0) {\n        node.warn(\"ESP-NOW ranging cmd: no known devices yet\");\n        return null;\n    }\n    var enable = (msg.payload && msg.payload.tracking) ? \"1\" : \"0\";\n    uuids.forEach(function(uuid) {\n        node.send({\n            topic:   base + uuid + \"/cmd/espnow/ranging\",\n            payload: enable,\n            retain:  true,\n            qos:     1\n        });\n    });\n    return null;\n} catch(e) {\n    node.error(\"ESP-NOW ranging cmd: \" + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 540,
+    "y": 180,
+    "wires": [
+      [
+        "espnow_mqtt_out_ranging"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_mqtt_out_ranging",
+    "type": "mqtt out",
+    "z": "espnow_flow",
+    "name": "ESP-NOW Ranging Cmd",
+    "topic": "",
+    "qos": "1",
+    "retain": "true",
+    "broker": "mqtt_broker",
+    "x": 770,
+    "y": 180,
     "wires": []
   }
 ]

@@ -441,6 +441,11 @@ static void handleCredRotation(const char* payload, size_t len) {
 }
 
 
+// Forward declaration — defined in espnow_ranging.h, which is included AFTER
+// mqtt_client.h in main.cpp. This avoids a circular include while still letting
+// onMqttMessage call the function. The linker resolves it within the same TU.
+void espnowRangingSetEnabled(bool en);
+
 // ── Message receive callback ───────────────────────────────────────────────────
 // Called by AsyncMqttClient whenever a subscribed topic receives a message.
 // Routes the message to the appropriate handler based on the topic string.
@@ -520,6 +525,14 @@ static void onMqttMessage(char* topic, char* payload,
             if (count > 0) bleSetTrackedMacs(macPtrs, count);
         }
 #endif
+    } else if (t == mqttTopic("cmd/espnow/ranging")) {
+        // Enable or disable ESP-NOW ranging from Node-RED.
+        // Payload "1" = enable, "0" (or anything else) = disable.
+        // Node-RED publishes with retain=true so the device re-receives the
+        // state on reconnect and doesn't silently revert to disabled after reboot.
+        bool enable = (len > 0 && payload[0] == '1');
+        espnowRangingSetEnabled(enable);
+        LOG_I("MQTT", "ESP-NOW ranging %s via MQTT", enable ? "enabled" : "disabled");
     } else if (t == mqttTopic("cmd/restart")) {
         // Deferred restart — publish status then let mqttHeartbeat() fire
         // ESP.restart() after 300 ms so the MQTT publish drains without
@@ -563,7 +576,8 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/ble/clear").c_str(),     1);   // BLE: clear tracked beacon
     _mqttClient.subscribe(mqttTopic("cmd/ble/list").c_str(),      1);   // BLE: re-publish last results
 #endif
-    _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),      0);   // Remote restart — QoS 0 prevents re-delivery loop on reconnect
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/ranging").c_str(), 1);  // ESP-NOW ranging on/off — QoS 1 + retain so state survives reboot
+    _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),        0);  // Remote restart — QoS 0 prevents re-delivery loop on reconnect
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
