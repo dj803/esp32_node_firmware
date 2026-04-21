@@ -41,11 +41,15 @@
 //   │  • Serving credentials to siblings via ESP-NOW                       │
 //   │  • Sending heartbeats and checking for OTA updates                   │
 //   │  • Listening for credential rotation and OTA trigger commands        │
+//   │  • WiFi loss → exponential backoff reconnect, never restarts (0.3.15)│
 //   └─────────────────────────────────────────────────────────────────────┘
 //
 //   AP_MODE  (entered from any state on unrecoverable failure):
 //   │  Hosts a Wi-Fi access point + HTTP portal for manual configuration.  │
-//   │  NEVER returns — calls ESP.restart() after credentials are saved.    │
+//   │  Since v0.3.15 the radio also runs STA: every 30 s the firmware      │
+//   │  scans for the configured SSID; when the router returns the device   │
+//   │  auto-restarts into OPERATIONAL. Admin-idle gated so form entry is   │
+//   │  never interrupted. Still exits via ESP.restart() after Save.        │
 //
 // BOOT SEQUENCE:
 //   setup():  Serial, LED, ws2812, WiFi.mode(), WiFiEvent, DeviceId, AppConfig,
@@ -80,6 +84,7 @@
 #include "crypto.h"
 #include "espnow_bootstrap.h"
 #include "espnow_responder.h"
+#include "wifi_recovery.h"   // pure helpers — backoff index, auth-fail classifier
 #include "ap_portal.h"
 #include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
@@ -111,11 +116,22 @@ static CredentialBundle activeBundle;               // The credential bundle cur
 // so it is read from the main task in connectWifi() and loop().
 static bool wifiConnected = false;
 
+// Last STA_DISCONNECTED reason code seen by the WiFiEvent callback. Read by
+// the OPERATIONAL recovery loop to distinguish "router offline" (keep
+// backing off forever) from "auth failed" (fall to AP mode after
+// WIFI_AUTH_FAIL_CYCLES consecutive cycles). See wifi_recovery.h for the
+// classifier — added v0.3.15.
+static volatile uint8_t wifiLastDisconnectReason = 0;
+
 
 // ── WiFiEvent ─────────────────────────────────────────────────────────────────
 // Arduino Wi-Fi event handler — called asynchronously by the Wi-Fi stack.
 // We only care about two events: got IP (connected) and disconnected.
-void WiFiEvent(WiFiEvent_t event) {
+//
+// The two-argument signature (v0.3.15) gives us the reason code on
+// STA_DISCONNECTED so the recovery loop can tell "router power-cycled"
+// from "password is wrong."
+void WiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             // DHCP assigned an IP address — we are fully connected
@@ -124,12 +140,16 @@ void WiFiEvent(WiFiEvent_t event) {
             break;
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            // Lost the connection — could be a temporary blip or a permanent drop
+            // Lost the connection — could be a temporary blip or a permanent drop.
+            // Capture the reason code before we zero wifiConnected so the
+            // OPERATIONAL recovery path can discriminate transient vs. terminal.
+            wifiLastDisconnectReason = info.wifi_sta_disconnected.reason;
             if (wifiConnected) {
                 // Only log when transitioning from connected → disconnected.
                 // Suppresses repeated events fired by the WiFi stack during
                 // failed association attempts (where we were never connected).
-                LOG_I("WiFi", "Disconnected");
+                LOG_I("WiFi", "Disconnected (reason=%u)",
+                      (unsigned)wifiLastDisconnectReason);
             }
             wifiConnected = false;
             break;
@@ -258,7 +278,11 @@ void setup() {
         ledSetPattern(LedPattern::AP_MODE);
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "ap_mode", sizeof(e.animName)); ws2812PostEvent(e); }
-        apPortalStart();   // never returns
+        // Pass activeBundle so apPortalStart can run the APSTA background scan
+        // if creds are loaded. On truly-first-boot (no NVS bundle) this branch
+        // is not reached — the BOOTSTRAP_REQUEST path enters AP_MODE via the
+        // null-bundle fall-through below. (v0.3.15)
+        apPortalStart(&activeBundle);   // never returns
     }
 }
 
@@ -428,15 +452,23 @@ void loop() {
         }
 
         if (!connected) {
-            uint8_t restarts = CredentialStore::incrementRestartCount();
-            LOG_W("WiFi", "Failed — restart count %d / %d", restarts, DEVICE_RESTART_MAX);
-            if (restarts < DEVICE_RESTART_MAX) {
+            // Route through the wifi-outage counter (v0.3.15) — router blips
+            // no longer exhaust DEVICE_RESTART_MAX. AP mode is still reachable
+            // via WIFI_OUTAGE_RESTART_MAX, but from there the new background
+            // STA scan in ap_portal.h recovers automatically when the router
+            // returns, so the user no longer has to manually reset.
+            uint8_t restarts = CredentialStore::incrementRestartCount(RestartReason::WIFI_OUTAGE);
+            LOG_W("WiFi", "Failed — wifi-outage restart count %d / %d",
+                  restarts, WIFI_OUTAGE_RESTART_MAX);
+            if (restarts < WIFI_OUTAGE_RESTART_MAX) {
                 LOG_W("WiFi", "Restarting device...");
                 ledSetPattern(LedPattern::ERROR);
                 delay(1000);
                 ESP.restart();
             } else {
-                LOG_W("WiFi", "Restart limit reached — entering AP mode");
+                LOG_W("WiFi", "Wifi-outage restart limit reached — entering AP mode "
+                              "(background STA scan will retry every %d ms)",
+                      AP_STA_SCAN_INTERVAL_MS);
                 currentState = State::AP_MODE;
             }
         }
@@ -451,7 +483,11 @@ void loop() {
         ledSetPattern(LedPattern::AP_MODE);
         { LedEvent e{}; e.type = LedEventType::BOOT_STATE;
           strlcpy(e.animName, "ap_mode", sizeof(e.animName)); ws2812PostEvent(e); }
-        apPortalStart();   // never returns — calls ESP.restart() after credentials saved
+        // Pass activeBundle so apPortalStart can run the APSTA background scan
+        // if creds are loaded. On truly-first-boot (no NVS bundle) this branch
+        // is not reached — the BOOTSTRAP_REQUEST path enters AP_MODE via the
+        // null-bundle fall-through below. (v0.3.15)
+        apPortalStart(&activeBundle);   // never returns — calls ESP.restart() after credentials saved or router returns
         return;
     }
 
@@ -499,59 +535,77 @@ void loop() {
     }
 
     // ── Wi-Fi health check ────────────────────────────────────────────────────
-    // Tracks transitions between connected and disconnected, then drives a
-    // non-blocking reconnection sequence (WiFi.begin() + millis() deadline).
+    // Exponential-backoff reconnect. Never restarts for WiFi loss alone — the
+    // ESP-IDF WiFi stack re-associates automatically when the router returns.
+    // The old 3-strike-then-restart loop was actively sabotaging that recovery:
+    // a ~5-min router outage would cascade through DEVICE_RESTART_MAX (=3)
+    // reboots and pin the whole fleet into AP mode within ~2.5 min. (v0.3.15)
+    //
+    // Auth-fail fast path: if the STA_DISCONNECTED reason code looks like a
+    // bad password (classifier in wifi_recovery.h) across WIFI_AUTH_FAIL_CYCLES
+    // consecutive backoff cycles, flag creds stale and fall to AP mode — where
+    // the background STA scan will still retry if the user corrects the
+    // password via admin provisioning.
     {
-        static bool     _wifiWasConnected    = true;   // true = assume connected at startup
-        static int      _wifiRecovAttempts   = 0;
-        static uint32_t _wifiRetryAt         = 0;
-        static uint32_t _wifiAttemptDeadline = 0;
-        static bool     _wifiAttemptStarted  = false;
+        static bool     _wifiWasConnected   = true;   // true = assume connected at startup
+        static uint8_t  _wifiBackoffIdx     = 0;
+        static uint32_t _wifiNextAttemptMs  = 0;
+        static uint32_t _wifiOutageStartMs  = 0;
+        static uint8_t  _wifiAuthFailCycles = 0;
 
         if (wifiConnected && !_wifiWasConnected) {
-            // Just re-established connection — reset recovery state
+            // Just re-established connection — reset recovery state and log
+            // the outage duration so operators can see how long the gap was.
+            uint32_t outageMs = millis() - _wifiOutageStartMs;
             _wifiWasConnected   = true;
-            _wifiRecovAttempts  = 0;
-            _wifiRetryAt        = 0;
-            _wifiAttemptStarted = false;
-            LOG_I("Loop", "Wi-Fi reconnected");
+            _wifiBackoffIdx     = 0;
+            _wifiNextAttemptMs  = 0;
+            _wifiAuthFailCycles = 0;
+            CredentialStore::clearWifiOutageCount();   // outage survived → clear budget
+            LOG_I("Loop", "Wi-Fi reconnected after %u ms outage", (unsigned)outageMs);
             ledSetPattern(LedPattern::WIFI_CONNECTED);
         }
 
         if (!wifiConnected) {
             if (_wifiWasConnected) {
-                _wifiWasConnected = false;
-                LOG_W("Loop", "Wi-Fi lost — attempting reconnect");
+                _wifiWasConnected   = false;
+                _wifiBackoffIdx     = 0;
+                _wifiNextAttemptMs  = 0;
+                _wifiOutageStartMs  = millis();
+                _wifiAuthFailCycles = 0;
+                LOG_W("Loop", "Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)");
                 ledSetPattern(LedPattern::WIFI_CONNECTING);
             }
 
-            if (!_wifiAttemptStarted) {
-                if (millis() < _wifiRetryAt) return;   // cooling-down pause
-                // Start a new reconnect attempt
-                WiFi.disconnect(true);
-                WiFi.mode(WIFI_STA);
-                WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
-                _wifiAttemptDeadline  = millis() + WIFI_CONNECT_TIMEOUT_MS;
-                _wifiAttemptStarted   = true;
-                _wifiRecovAttempts++;
-                LOG_I("Loop", "WiFi recovery attempt %d of %d",
-                      _wifiRecovAttempts, WIFI_MAX_ATTEMPTS);
-                return;
+            if (millis() < _wifiNextAttemptMs) return;   // still backing off
+
+            // Fire an attempt. Schedule the next one at the current backoff
+            // step, then advance the index (saturating at the last slot).
+            uint32_t waitMs = WIFI_BACKOFF_STEPS_MS[_wifiBackoffIdx];
+            LOG_I("Loop", "WiFi reconnect attempt (next backoff step %u ms)",
+                  (unsigned)waitMs);
+            WiFi.reconnect();   // cheaper than disconnect+begin; keeps saved config
+            _wifiNextAttemptMs = millis() + waitMs;
+            _wifiBackoffIdx    = wifiBackoffAdvance(_wifiBackoffIdx,
+                                                    (uint8_t)WIFI_BACKOFF_STEPS_COUNT);
+
+            // Auth-fail fast path — but only once we've seen at least one
+            // failed attempt (reason was captured on the disconnect event).
+            if (wifiReasonIsAuthFail(wifiLastDisconnectReason)) {
+                if (++_wifiAuthFailCycles >= WIFI_AUTH_FAIL_CYCLES) {
+                    LOG_W("Loop", "WiFi disconnect reason %u suggests bad credentials "
+                                  "across %u cycles — flagging stale and restarting",
+                          (unsigned)wifiLastDisconnectReason,
+                          (unsigned)_wifiAuthFailCycles);
+                    ledSetPattern(LedPattern::ERROR);
+                    CredentialStore::setCredStale(true);
+                    CredentialStore::incrementRestartCount(RestartReason::CRED_BAD);
+                    delay(500);
+                    ESP.restart();
+                }
+            } else {
+                _wifiAuthFailCycles = 0;   // non-auth reason clears the streak
             }
-
-            if (millis() < _wifiAttemptDeadline) return;   // waiting for this attempt
-
-            // Attempt timed out
-            _wifiAttemptStarted = false;
-
-            if (_wifiRecovAttempts >= WIFI_MAX_ATTEMPTS) {
-                LOG_W("Loop", "Could not reconnect — flagging credentials stale and restarting");
-                ledSetPattern(LedPattern::ERROR);
-                CredentialStore::setCredStale(true);
-                CredentialStore::incrementRestartCount();
-                ESP.restart();
-            }
-            _wifiRetryAt = millis() + 3000;   // 3-second pause before next attempt
             return;
         }
     }

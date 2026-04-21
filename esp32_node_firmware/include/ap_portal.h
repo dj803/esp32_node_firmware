@@ -17,6 +17,7 @@
 #include "credentials.h"
 #include "app_config.h"
 #include "device_id.h"
+#include "wifi_recovery.h"   // apStaScanShouldRun() — background STA scan gate
 
 // =============================================================================
 // ap_portal.h  —  Configuration portals (HTTPS)
@@ -76,6 +77,42 @@ static httpd_handle_t _httpsServer = nullptr;
 
 static char _tlsCertPem[PORTAL_TLS_CERT_MAXLEN];
 static char _tlsKeyPem [PORTAL_TLS_PKEY_MAXLEN];
+
+
+// ── AP-mode background STA scan (v0.3.15) ─────────────────────────────────────
+// While the HTTPS portal is running, the radio sits in APSTA and we
+// periodically scan for the configured SSID. When the router returns we
+// re-associate and restart into OPERATIONAL — no admin intervention needed.
+//
+// The scan is skipped whenever an admin HTTPS handler ran within the last
+// AP_ADMIN_IDLE_MS, so form entry is never interrupted by the radio briefly
+// switching channels.
+//
+// volatile because _lastAdminActivityMs is written from the httpd worker
+// task and read from the main apPortalStart() loop on the main task.
+static volatile uint32_t _lastAdminActivityMs = 0;
+static bool              _apShouldExit        = false;
+static uint32_t          _apExitAtMs          = 0;
+static CredentialBundle  _apStaBundle         = {};   // copy taken by apPortalStart()
+
+// Called from every admin HTTPS handler on entry. Bumping this timestamp
+// suppresses the background STA scan for AP_ADMIN_IDLE_MS so that an admin
+// filling in the setup form isn't knocked offline by a scan mid-submit.
+static inline void apTouchAdminActivity() {
+    _lastAdminActivityMs = millis();
+}
+
+// One-shot WiFi event handler attached by apPortalStart(). On GOT_IP we set
+// the exit flag; the main loop polls it and restarts after the grace period
+// (cleanest path back to OPERATIONAL — no portal/HTTPS teardown complexity).
+static void apStaGotIpHandler(WiFiEvent_t event, WiFiEventInfo_t /*info*/) {
+    if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        _apShouldExit = true;
+        _apExitAtMs   = millis() + AP_STA_RECONNECT_GRACE_MS;
+        LOG_I("AP Portal", "STA got IP — scheduling restart in %d ms",
+              AP_STA_RECONNECT_GRACE_MS);
+    }
+}
 
 
 // Loads TLS credentials from NVS. Returns true on success.
@@ -480,6 +517,7 @@ static const char PAGE_STYLE[] =
 
 // ── Locate — POST /locate: flash LED so the device can be found physically ──────
 static esp_err_t apHandleLocate(httpd_req_t* req) {
+    apTouchAdminActivity();
     ledFlashLocate();
     httpd_resp_send(req, "ok", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -490,6 +528,7 @@ static esp_err_t apHandleLocate(httpd_req_t* req) {
 // Returns a JSON snapshot: device ID, MAC, firmware version, timestamp, IP,
 // OTA JSON URL. Useful for Node-RED dashboards and physical device identification.
 static esp_err_t apHandleStatus(httpd_req_t* req) {
+    apTouchAdminActivity();
     char buf[512];
     snprintf(buf, sizeof(buf),
         "{\"device_id\":\"%s\","
@@ -515,6 +554,7 @@ static esp_err_t apHandleStatus(httpd_req_t* req) {
 
 // ── GET / — Full setup form (AP mode only) ────────────────────────────────────
 static esp_err_t apHandleRoot(httpd_req_t* req) {
+    apTouchAdminActivity();
     char tokenBuf[33];
     generateCsrfTokenApRing(tokenBuf);   // Fresh token into an available ring slot
 
@@ -597,6 +637,7 @@ static esp_err_t apHandleRoot(httpd_req_t* req) {
 
 // ── POST /save — Full setup, save all fields, restart ─────────────────────────
 static esp_err_t apHandleSave(httpd_req_t* req) {
+    apTouchAdminActivity();
     if (!readPostBody(req)) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "text/plain");
@@ -717,17 +758,43 @@ static esp_err_t apHandleSave(httpd_req_t* req) {
 }
 
 
-// ── apPortalStart — AP mode, blocks forever ────────────────────────────────────
+// ── apPortalStart — AP mode, blocks forever (with STA scan in v0.3.15) ─────────
 // Starts HTTPS on port 443, registers AP-mode URI handlers, and blocks in a
-// simple loop. The httpd server runs in its own FreeRTOS task.
-void apPortalStart() {
+// loop that periodically scans for the configured SSID. On reconnect the
+// device restarts into OPERATIONAL automatically — no manual reset required.
+//
+// staBundle: if non-null and AP_MODE_STA_ENABLED is set, the portal runs in
+// APSTA mode and scans for staBundle->wifi_ssid every AP_STA_SCAN_INTERVAL_MS
+// while no admin session is active. Pass nullptr (or leave scan disabled) for
+// the legacy "AP only" behavior used on genuinely unprovisioned first boots.
+//
+// The httpd server runs in its own FreeRTOS task.
+void apPortalStart(const CredentialBundle* staBundle = nullptr) {
     String deviceId  = getDeviceId();
     String uuidSuffix = deviceId.length() >= 12
                         ? deviceId.substring(deviceId.length() - 12)
                         : deviceId;
     String ssid = String(AP_SSID_PREFIX) + uuidSuffix;
 
+#if AP_MODE_STA_ENABLED
+    // APSTA so the radio can keep a soft-AP up AND scan/associate with the
+    // configured router. When the router returns the GOT_IP handler sets
+    // _apShouldExit and the main loop below restarts into OPERATIONAL.
+    bool staEnabled = (staBundle != nullptr) && (staBundle->wifi_ssid[0] != '\0');
+    if (staEnabled) {
+        _apStaBundle = *staBundle;
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.onEvent(apStaGotIpHandler);
+        LOG_I("AP Portal", "APSTA mode — will rescan for SSID \"%s\" every %d ms",
+              _apStaBundle.wifi_ssid, AP_STA_SCAN_INTERVAL_MS);
+    } else {
+        WiFi.mode(WIFI_AP);
+        LOG_I("AP Portal", "AP-only mode — no stored SSID to rescan for");
+    }
+#else
+    (void)staBundle;
     WiFi.mode(WIFI_AP);
+#endif
     WiFi.softAP(ssid.c_str(), AP_PASSWORD);
     LOG_I("AP Portal", "SSID: %s  IP: %s", ssid.c_str(), AP_LOCAL_IP);
 
@@ -771,9 +838,41 @@ void apPortalStart() {
     const char* scheme = tlsOk ? "https" : "http";
     LOG_I("AP Portal", "Waiting for admin — browse to %s://192.168.4.1/", scheme);
 
-    // The httpd task handles connections. Block here so setup() never returns
-    // to a firmware that isn't provisioned yet.
-    while (true) delay(100);
+    // The httpd task handles connections. This main-task loop does two jobs:
+    //   1. Poll _apShouldExit (set by apStaGotIpHandler when the background
+    //      scan re-associated with the router) and restart after the grace
+    //      period so OPERATIONAL can resume cleanly.
+    //   2. Every AP_STA_SCAN_INTERVAL_MS, if the admin is idle and no exit
+    //      is pending, kick off a WiFi.begin() to poke the STA side into
+    //      trying again. The ESP-IDF WiFi stack handles scan/associate
+    //      internally — we just need to nudge it periodically.
+    uint32_t lastScanMs = 0;
+    while (true) {
+        uint32_t now = millis();
+
+        if (_apShouldExit && (int32_t)(now - _apExitAtMs) >= 0) {
+            LOG_I("AP Portal", "STA reconnected — restarting to resume OPERATIONAL");
+            delay(200);            // let any in-flight HTTPS response drain
+            ESP.restart();
+        }
+
+#if AP_MODE_STA_ENABLED
+        if (staEnabled && !_apShouldExit &&
+            apStaScanShouldRun(now, _lastAdminActivityMs, lastScanMs,
+                               AP_ADMIN_IDLE_MS, AP_STA_SCAN_INTERVAL_MS)) {
+            lastScanMs = now;
+            LOG_I("AP Portal", "STA rescan — trying SSID \"%s\"",
+                  _apStaBundle.wifi_ssid);
+            // WiFi.begin() in APSTA mode kicks an implicit scan+associate
+            // sequence. If the router is now reachable we'll get GOT_IP
+            // inside AP_STA_RECONNECT_GRACE_MS and _apShouldExit will fire
+            // on the next tick. If not, the stack quietly gives up and we
+            // try again on the next interval.
+            WiFi.begin(_apStaBundle.wifi_ssid, _apStaBundle.wifi_password);
+        }
+#endif
+        delay(100);
+    }
 }
 
 

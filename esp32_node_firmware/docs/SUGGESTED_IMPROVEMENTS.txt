@@ -59,3 +59,45 @@ of them cheap to bundle in.
              Revisit if deployment moves off a trusted wire segment.
    Note:     config.h has a one-line comment next to BROKER_DISCOVERY_ENABLED
              documenting this decision so it isn't quietly forgotten.
+
+────────────────────────────────────────────────────────────────────────────────
+v0.3.15 — AP-mode recovery (rejected alternatives)         (flagged 2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+Context: v0.3.15 addressed a real incident where a router power-cycle pinned
+all ESP32 nodes in AP mode until manually reset. The shipped fix was a
+three-part change — indefinite exponential Wi-Fi backoff in OPERATIONAL,
+background STA scan + auto-reconnect in AP mode, and a separate wifi-outage
+restart counter. Three alternative approaches were considered and rejected
+during planning; recording them here so the reasoning isn't lost.
+
+8. Sibling ESP-NOW "come back online" broadcast
+   IDEA:     When a node regains Wi-Fi, send an ESP-NOW hint so siblings
+             stuck on lost-Wi-Fi can abort their backoff and retry.
+   REJECTED: Fatal flaw against the observed incident — all siblings fell to
+             AP mode simultaneously. ESP-NOW is deinit'd in AP mode; soft-AP
+             locks the radio to the AP channel, not the router's Wi-Fi
+             channel. No sibling is listening when any other sibling
+             reconnects. Only helps staggered-recovery cases — the rarest
+             failure mode. Shipped fix (C + A) already handles the common
+             and LAN-wide scenarios without the complexity.
+
+9. Time-limited AP mode → reboot
+   IDEA:     Hard timeout on AP mode (e.g. 1 h); reboot unconditionally to
+             retry OPERATIONAL.
+   REJECTED: (A) — the background STA scan — already exits AP mode
+             automatically when the router returns, with zero user
+             disruption. A timer-based reboot interrupts admin provisioning
+             mid-edit, regenerates the HTTPS cert on every cycle, churns
+             ESP-NOW siblings, and papers over rather than fixes the root
+             cause. Could be added later as a ~1 h last-ditch safety net
+             if field data shows (A) is insufficient.
+
+10. "Has ever successfully connected" NVS flag
+    IDEA:    Distinguish first-boot unprovisioned devices from provisioned
+             devices that are just having a bad Wi-Fi day, and delay AP
+             entry for the latter.
+    REJECTED: Subsumed by (C). With indefinite backoff in OPERATIONAL,
+             provisioned devices very rarely reach AP mode from a router
+             outage at all — the flag is solving a problem the primary fix
+             already removed. Adds NVS state + a new code branch for
+             negligible benefit.

@@ -26,6 +26,19 @@ enum class CredSource : uint8_t {
 };
 
 
+// Why the firmware is restarting. Added in v0.3.15 so that router-outage
+// reboots no longer exhaust DEVICE_RESTART_MAX — router blips used to push
+// every node into AP mode within ~2.5 min. Wi-Fi-outage reboots now use a
+// separate NVS counter (see incrementRestartCount below).
+enum class RestartReason : uint8_t {
+    GENERIC      = 0,   // Default — counts toward DEVICE_RESTART_MAX
+    WIFI_OUTAGE  = 1,   // Router unreachable during OPERATIONAL or WIFI_CONNECT
+                        // — counts toward WIFI_OUTAGE_RESTART_MAX only
+    CRED_BAD     = 2,   // Auth failure reason code across multiple cycles —
+                        // caller should set CredStale(true) and fall to AP mode
+};
+
+
 // In-memory credential bundle.
 // Field sizes are generous to accommodate long passwords and URLs.
 // IMPORTANT: Never log, print, or transmit this struct in plaintext.
@@ -132,29 +145,44 @@ public:
     // the write is skipped, which matters because this is called on every
     // successful WiFi connect (potentially many times a day under flapping
     // network conditions).
+    //
+    // Also clears the wifi-outage counter (added v0.3.15) so that a
+    // successful reconnect after a transient router outage doesn't carry
+    // forward stale "we nearly gave up" state into the next cycle.
     static void clearRestartCount() {
         Preferences prefs;
         if (!prefs.begin(NVS_NAMESPACE, false)) return;
-        NvsPutIfChanged(prefs, "restarts", (uint8_t)0);
+        NvsPutIfChanged(prefs, "restarts",         (uint8_t)0);
+        NvsPutIfChanged(prefs, NVS_KEY_WIFI_OUTAGE, (uint8_t)0);
         prefs.end();
     }
 
 
-    // Add 1 to the stored restart counter and return the new value.
-    // Called when a Wi-Fi connection fails after all attempts are exhausted,
-    // just before calling ESP.restart(). When this counter reaches
-    // DEVICE_RESTART_MAX the firmware gives up restarting and enters AP mode.
-    static uint8_t incrementRestartCount() {
+    // Add 1 to the appropriate restart counter and return the new value.
+    //
+    // `reason` selects WHICH counter to bump (v0.3.15):
+    //   GENERIC      → "restarts" (DEVICE_RESTART_MAX threshold)
+    //   WIFI_OUTAGE  → "wifi_outage" (WIFI_OUTAGE_RESTART_MAX threshold)
+    //   CRED_BAD     → "restarts" (treat like GENERIC — caller should also
+    //                              call setCredStale(true))
+    //
+    // Router-outage reboots no longer exhaust the generic counter; they have
+    // their own budget. Callers check the return value against the
+    // threshold constant that matches the reason they passed in.
+    static uint8_t incrementRestartCount(RestartReason reason = RestartReason::GENERIC) {
         Preferences prefs;
         if (!prefs.begin(NVS_NAMESPACE, false)) return 0;
-        uint8_t n = prefs.getUChar("restarts", 0) + 1;  // read, increment, write back
-        prefs.putUChar("restarts", n);
+        const char* key = (reason == RestartReason::WIFI_OUTAGE)
+                          ? NVS_KEY_WIFI_OUTAGE
+                          : "restarts";
+        uint8_t n = prefs.getUChar(key, 0) + 1;  // read, increment, write back
+        prefs.putUChar(key, n);
         prefs.end();
         return n;
     }
 
 
-    // Read the current restart counter without changing it.
+    // Read the current generic restart counter without changing it.
     // Used at the start of WIFI_CONNECT state to check if we are already
     // close to the restart limit before attempting to connect.
     static uint8_t getRestartCount() {
@@ -163,6 +191,31 @@ public:
         uint8_t n = prefs.getUChar("restarts", 0);
         prefs.end();
         return n;
+    }
+
+
+    // Read the current wifi-outage restart counter without changing it.
+    // Parallel to getRestartCount() but tracks router-outage reboots
+    // separately so a long router outage can't poison DEVICE_RESTART_MAX.
+    static uint8_t getWifiOutageCount() {
+        Preferences prefs;
+        if (!prefs.begin(NVS_NAMESPACE, true)) return 0;
+        uint8_t n = prefs.getUChar(NVS_KEY_WIFI_OUTAGE, 0);
+        prefs.end();
+        return n;
+    }
+
+
+    // Reset the wifi-outage counter to zero without touching the generic
+    // counter. clearRestartCount() already does both — this exists for
+    // call sites that want to clear only the outage budget (e.g. when the
+    // device has just been power-cycled and we want the next router blip
+    // to start from a clean slate).
+    static void clearWifiOutageCount() {
+        Preferences prefs;
+        if (!prefs.begin(NVS_NAMESPACE, false)) return;
+        NvsPutIfChanged(prefs, NVS_KEY_WIFI_OUTAGE, (uint8_t)0);
+        prefs.end();
     }
 
 

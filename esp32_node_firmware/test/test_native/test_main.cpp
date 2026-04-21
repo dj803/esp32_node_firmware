@@ -29,6 +29,7 @@
 #include "semver.h"        // semverIsNewer() + semverParse() — extracted from ota.h
 #include "rate_limit.h"    // rateClampRefill() — extracted from espnow_responder.h
 #include "wire_bundle.h"   // WireBundle struct — extracted from espnow_bootstrap.h
+#include "wifi_recovery.h" // backoff index advance, auth-fail classifier, scan gate (v0.3.15)
 
 #include <math.h>
 #include <stddef.h>  // offsetof
@@ -661,6 +662,81 @@ void test_semverparse_rejects_missing_components() {
 
 
 // =============================================================================
+// wifi_recovery.h tests (v0.3.15 — AP-mode recovery after router outage)
+// =============================================================================
+
+// ── wifiBackoffAdvance — saturates at the last slot so the slowest step repeats
+void test_wifi_backoff_advance_from_zero() {
+    // Fresh outage — first advance moves from step 0 to step 1.
+    TEST_ASSERT_EQUAL_UINT8(1, wifiBackoffAdvance(0, 6));
+}
+
+void test_wifi_backoff_advance_saturates_at_cap() {
+    // Count = 6 → cap index = 5. Advancing from the cap stays at the cap.
+    TEST_ASSERT_EQUAL_UINT8(5, wifiBackoffAdvance(5, 6));
+    TEST_ASSERT_EQUAL_UINT8(5, wifiBackoffAdvance(10, 6)); // above cap also clamps
+}
+
+void test_wifi_backoff_advance_empty_schedule_safe() {
+    // Pathological: stepsCount == 0 must not underflow (0 - 1 == UINT8_MAX).
+    TEST_ASSERT_EQUAL_UINT8(0, wifiBackoffAdvance(3, 0));
+}
+
+void test_wifi_backoff_advance_walks_full_schedule() {
+    // Walk 0 → 1 → 2 → 3 → 4 → 5 → 5 (saturate) over 6 steps.
+    uint8_t idx = 0;
+    for (int i = 0; i < 10; i++) idx = wifiBackoffAdvance(idx, 6);
+    TEST_ASSERT_EQUAL_UINT8(5, idx);
+}
+
+
+// ── wifiReasonIsAuthFail — only the four auth-related reason codes trigger fast path
+void test_wifi_reason_auth_fail_codes_flagged() {
+    // 2 AUTH_EXPIRE, 15 4WAY_HANDSHAKE_TIMEOUT, 202 AUTH_FAIL, 204 HANDSHAKE_TIMEOUT
+    TEST_ASSERT_TRUE(wifiReasonIsAuthFail(2));
+    TEST_ASSERT_TRUE(wifiReasonIsAuthFail(15));
+    TEST_ASSERT_TRUE(wifiReasonIsAuthFail(202));
+    TEST_ASSERT_TRUE(wifiReasonIsAuthFail(204));
+}
+
+void test_wifi_reason_transient_codes_not_flagged() {
+    // Router-gone codes must NOT fast-path to AP — they're the outage case.
+    TEST_ASSERT_FALSE(wifiReasonIsAuthFail(200));   // BEACON_TIMEOUT
+    TEST_ASSERT_FALSE(wifiReasonIsAuthFail(201));   // NO_AP_FOUND
+    TEST_ASSERT_FALSE(wifiReasonIsAuthFail(0));     // no disconnect yet
+    TEST_ASSERT_FALSE(wifiReasonIsAuthFail(8));     // ASSOC_LEAVE
+}
+
+
+// ── apStaScanShouldRun — both gates (admin idle + scan-interval due) must hold
+void test_ap_sta_scan_runs_when_idle_and_due() {
+    // now=70_000, admin touched at t=0 (70 s ago > 60 s idle)
+    // lastScan at t=0 (70 s ago > 30 s interval) → scan runs.
+    TEST_ASSERT_TRUE(apStaScanShouldRun(70000, 0, 0, 60000, 30000));
+}
+
+void test_ap_sta_scan_blocked_by_recent_admin() {
+    // Admin touched 10 s ago — under 60 s idle window → suppress scan.
+    TEST_ASSERT_FALSE(apStaScanShouldRun(70000, 60000, 0, 60000, 30000));
+}
+
+void test_ap_sta_scan_blocked_by_recent_scan() {
+    // Admin idle for 70 s (OK), but last scan only 10 s ago → not yet due.
+    TEST_ASSERT_FALSE(apStaScanShouldRun(70000, 0, 60000, 60000, 30000));
+}
+
+void test_ap_sta_scan_survives_millis_wrap() {
+    // millis() wrapped — now just past 0, lastAdmin + lastScan near UINT32_MAX.
+    // Unsigned subtraction gives the correct elapsed values.
+    uint32_t wrappedNow      = 100000;         // 100 s after wrap
+    uint32_t preWrapAdmin    = 0xFFFFFFFF - 30000; // admin touched 130 s ago across wrap
+    uint32_t preWrapLastScan = 0xFFFFFFFF - 60000; // last scan 160 s ago across wrap
+    TEST_ASSERT_TRUE(apStaScanShouldRun(wrappedNow, preWrapAdmin, preWrapLastScan,
+                                        60000, 30000));
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -749,6 +825,18 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_semverparse_accepts_well_formed);
     RUN_TEST(test_semverparse_rejects_trailing_garbage);
     RUN_TEST(test_semverparse_rejects_missing_components);
+
+    // wifi_recovery — backoff + auth-fail + AP scan gate (v0.3.15)
+    RUN_TEST(test_wifi_backoff_advance_from_zero);
+    RUN_TEST(test_wifi_backoff_advance_saturates_at_cap);
+    RUN_TEST(test_wifi_backoff_advance_empty_schedule_safe);
+    RUN_TEST(test_wifi_backoff_advance_walks_full_schedule);
+    RUN_TEST(test_wifi_reason_auth_fail_codes_flagged);
+    RUN_TEST(test_wifi_reason_transient_codes_not_flagged);
+    RUN_TEST(test_ap_sta_scan_runs_when_idle_and_due);
+    RUN_TEST(test_ap_sta_scan_blocked_by_recent_admin);
+    RUN_TEST(test_ap_sta_scan_blocked_by_recent_scan);
+    RUN_TEST(test_ap_sta_scan_survives_millis_wrap);
 
     return UNITY_END();
 }

@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.14-dev"
+#define FIRMWARE_VERSION           "0.3.15-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -79,6 +79,63 @@
                                            // falls through to AP mode instead.
                                            // Prevents an infinite restart loop when
                                            // credentials are wrong or the router is down.
+
+// -----------------------------------------------------------------------------
+// WiFi-outage recovery (v0.3.15)
+//
+// When the router disappears during OPERATIONAL, the firmware no longer gives
+// up after 3 attempts + restart — instead it reconnects on an exponential
+// backoff schedule indefinitely. The ESP-IDF WiFi stack re-associates
+// automatically when the AP returns; the previous 3-strike restart loop was
+// actively sabotaging that recovery.
+//
+// WIFI_BACKOFF_STEPS_MS is the schedule of wait durations between reconnect
+// attempts. The last value is used forever — a 30-min outage ends up polling
+// every 10 min until the router returns.
+//
+// WIFI_OUTAGE_RESTART_MAX is a SEPARATE counter (NVS key "wifi_outage") from
+// DEVICE_RESTART_MAX. Router blips no longer burn through the generic counter;
+// only firmware-panic / MQTT-unrecoverable paths count toward DEVICE_RESTART_MAX.
+// -----------------------------------------------------------------------------
+static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
+    15000, 30000, 60000, 120000, 300000, 600000
+};
+#define WIFI_BACKOFF_STEPS_COUNT \
+    (sizeof(WIFI_BACKOFF_STEPS_MS)/sizeof(WIFI_BACKOFF_STEPS_MS[0]))
+
+#define WIFI_OUTAGE_RESTART_MAX    10      // Max reboots caused specifically by WiFi
+                                           // outage before falling to AP mode.
+                                           // Kept high because (A) below recovers
+                                           // transparently — reaching this limit is
+                                           // rare; it's a safety net, not a design path.
+
+// How many consecutive backoff cycles the OPERATIONAL recovery loop must see
+// an AUTH_EXPIRE / HANDSHAKE_TIMEOUT disconnect reason before treating the
+// credentials as truly wrong and falling to AP mode. Two cycles avoids false
+// positives from rare transient auth failures (e.g. CPU-starved WPA handshake).
+#define WIFI_AUTH_FAIL_CYCLES       2
+
+// NVS key holding the wifi-outage restart counter.
+#define NVS_KEY_WIFI_OUTAGE         "wifi_outage"
+
+// -----------------------------------------------------------------------------
+// AP-mode background STA scan (v0.3.15 — fixes "stuck in AP after router
+// returns")
+//
+// While in AP mode, the radio runs in APSTA. Every AP_STA_SCAN_INTERVAL_MS
+// the device scans for its configured SSID; on a hit it fires WiFi.begin()
+// and, on GOT_IP, restarts into OPERATIONAL after a short grace period.
+// Scans are skipped while an admin HTTPS session is active (prevents
+// interrupting form entry).
+//
+// Feature-flagged so the entire behavior can be reverted by setting
+// AP_MODE_STA_ENABLED to 0 if a router is found that mis-behaves under APSTA.
+// -----------------------------------------------------------------------------
+#define AP_MODE_STA_ENABLED         1       // 1 = scan for SSID in AP mode; 0 = old behavior
+#define AP_STA_SCAN_INTERVAL_MS     30000   // How often to scan for the configured SSID
+#define AP_STA_RECONNECT_GRACE_MS   5000    // Settle time between GOT_IP and ESP.restart()
+#define AP_ADMIN_IDLE_MS            60000   // Skip scan if admin HTTPS handler ran within
+                                            // this window
 
 
 // -----------------------------------------------------------------------------
