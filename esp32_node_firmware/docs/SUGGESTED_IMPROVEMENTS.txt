@@ -101,3 +101,55 @@ during planning; recording them here so the reasoning isn't lost.
              outage at all — the flag is solving a problem the primary fix
              already removed. Adds NVS state + a new code branch for
              negligible benefit.
+
+
+================================================================================
+RFID PLAYGROUND — v0.3.17 follow-ups
+================================================================================
+
+Tracked here because they were explicitly listed in the v0.3.17 plan's
+"Explicitly NOT in scope" section. Pick these up as individual features once a
+concrete use case emerges — the profile layer in include/rfid_types.h keeps
+each one small and additive.
+
+11. NTAG21x write support (NTAG213 / NTAG215 / NTAG216)
+    Currently the profile string is recognised and can appear in telemetry,
+    but the firmware's _rfidExecuteProgram() rejects non-MIFARE-Classic
+    profiles with status "write_failed". Wire up MIFARE_Ultralight_Write on
+    the 4-byte-page path and expose a page_size=4 entry in the Node-RED
+    profile dropdown.
+
+12. NTAG424 DNA secure messaging (AES)
+    Separate feature branch — the MFRC522 transparent channel + AES-CCM
+    secure-messaging framing is nontrivial. Rough effort: 1 sprint for a
+    minimal read/write-page handler, plus key-derivation / session-state
+    bookkeeping.
+
+13. UID-clone / "Chinese backdoor" MIFARE support
+    No MFRC522Hack, no sector-0 overwrite. Dangerous for non-experts and the
+    library calls only work on specific clone silicon. Park here unless a
+    clear use case appears.
+
+14. Per-sector key rotation from Node-RED (cmd/rfid/set_key)
+    v0.3.17 writes data blocks only; sector trailers are hard-refused by the
+    trailer_guard. Re-keying tags is a separate security story — needs
+    audit + careful UI (one mis-entered access-bit byte bricks a tag).
+
+15. NDEF encoding / decoding helpers
+    Ship a small encoder that builds NDEF TLV records (URI, Text, MIME) and
+    a decoder for the scan feed so Node-RED can present smartphone-readable
+    tags natively. Layers cleanly on top of the ntag21x profile once (11)
+    lands.
+
+16. Preset "program this kind of tag" forms
+    Operator ID / Machine ID / Free-form label / NDEF URL templates on top
+    of the raw hex editor. Ship after a real operational pattern emerges —
+    premature templates usually don't fit the actual workflow.
+
+17. LF 125 kHz support (HID, EM4100, T5577)
+    Different radio — requires an RDM6300 or similar. Not the MFRC522.
+    Would live behind a compile-time LF_ENABLED flag mirroring RFID_ENABLED.
+
+18. NFC phone / card emulation
+    ESP32 (Xtensa) cannot emulate ISO 14443A as a tag. ESP32-S3 + host card
+    emulation could — out of scope for this firmware.

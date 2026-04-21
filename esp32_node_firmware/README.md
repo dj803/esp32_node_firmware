@@ -109,7 +109,11 @@ All topics follow the ISA-95 / Unified Namespace pattern:
 | `cmd`            | MQTT → Device | General commands                 |
 | `cmd/cred_rotate`| MQTT → Device | Credential rotation bundle       |
 | `cmd/ota_check`  | MQTT → Device | Trigger immediate OTA check      |
-| `response`       | Device → MQTT | Command acknowledgements         |
+| `cmd/rfid/program` | MQTT → Device | Arm next scan for a raw-hex multi-block write (see [docs/rfid_tag_profiles.md](docs/rfid_tag_profiles.md)) |
+| `cmd/rfid/read_block` | MQTT → Device | Arm next scan for a single-block read |
+| `cmd/rfid/cancel` | MQTT → Device | Cancel any pending arm           |
+| `telemetry/rfid` | Device → MQTT | Scan event — uid, profile, card_type, authorized |
+| `response`       | Device → MQTT | Command acknowledgements (incl. RFID program/read outcomes) |
 
 ---
 

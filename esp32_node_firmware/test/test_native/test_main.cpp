@@ -30,9 +30,11 @@
 #include "rate_limit.h"    // rateClampRefill() — extracted from espnow_responder.h
 #include "wire_bundle.h"   // WireBundle struct — extracted from espnow_bootstrap.h
 #include "wifi_recovery.h" // backoff index advance, auth-fail classifier, scan gate (v0.3.15)
+#include "rfid_types.h"    // RFID playground profile mapper, trailer guard, hex helpers (v0.3.17)
 
 #include <math.h>
 #include <stddef.h>  // offsetof
+#include <initializer_list>  // ranged-for over {...} literals in the v0.3.17 RFID tests
 
 // ── Stub out millis() — used inside PeerTracker via setNow() but the test
 //    drives the clock manually, so the real implementation is not needed.
@@ -737,6 +739,79 @@ void test_ap_sta_scan_survives_millis_wrap() {
 
 
 // =============================================================================
+// rfid_types.h tests (v0.3.17 — RFID playground)
+// Profile mapper is MFRC522-dependent so not covered here; the pieces exercised
+// here are the ones a malicious Node-RED payload could drive (block numbers,
+// hex decoding, profile-aware block size) so regression coverage matters most
+// on these. Host-only — no Arduino / MFRC522 link required.
+// =============================================================================
+void test_rfid_trailer_guard_refuses_classic_trailers() {
+    // MIFARE Classic 1K sector trailers: blocks 3, 7, 11, 15, 19, ... 63.
+    // Pattern: (block % 4) == 3.
+    for (uint16_t block : {3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63}) {
+        TEST_ASSERT_TRUE_MESSAGE(rfidIsSectorTrailer(RFID_PROFILE_MIFARE_CLASSIC_1K, block),
+                                 "classic 1K trailer should be refused");
+    }
+    // MIFARE Classic 4K extends the pattern — also trailers at 67, 71, ..., 255.
+    TEST_ASSERT_TRUE(rfidIsSectorTrailer(RFID_PROFILE_MIFARE_CLASSIC_4K, 67));
+    TEST_ASSERT_TRUE(rfidIsSectorTrailer(RFID_PROFILE_MIFARE_CLASSIC_4K, 255));
+}
+
+void test_rfid_trailer_guard_allows_classic_data_blocks() {
+    // Data blocks (0..2, 4..6, 8..10, ...) must pass through.
+    for (uint16_t block : {0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 62}) {
+        TEST_ASSERT_FALSE_MESSAGE(rfidIsSectorTrailer(RFID_PROFILE_MIFARE_CLASSIC_1K, block),
+                                  "data block must NOT be flagged as trailer");
+    }
+}
+
+void test_rfid_trailer_guard_ignores_non_classic_profiles() {
+    // NTAG21x / Ultralight have no sector-trailer concept — guard always false.
+    TEST_ASSERT_FALSE(rfidIsSectorTrailer(RFID_PROFILE_NTAG21X,   3));
+    TEST_ASSERT_FALSE(rfidIsSectorTrailer(RFID_PROFILE_NTAG21X, 255));
+    TEST_ASSERT_FALSE(rfidIsSectorTrailer(RFID_PROFILE_MIFARE_UL, 7));
+    TEST_ASSERT_FALSE(rfidIsSectorTrailer("unknown",              7));
+    TEST_ASSERT_FALSE(rfidIsSectorTrailer(nullptr,                7));
+}
+
+void test_rfid_profile_block_size_mifare_is_16() {
+    TEST_ASSERT_EQUAL_UINT8(16, rfidProfileBlockSize(RFID_PROFILE_MIFARE_CLASSIC_1K));
+    TEST_ASSERT_EQUAL_UINT8(16, rfidProfileBlockSize(RFID_PROFILE_MIFARE_CLASSIC_4K));
+    // Defensive default for unknown / null — fall back to classic width.
+    TEST_ASSERT_EQUAL_UINT8(16, rfidProfileBlockSize(nullptr));
+}
+
+void test_rfid_profile_block_size_ntag_is_4() {
+    TEST_ASSERT_EQUAL_UINT8(4, rfidProfileBlockSize(RFID_PROFILE_NTAG21X));
+    TEST_ASSERT_EQUAL_UINT8(4, rfidProfileBlockSize(RFID_PROFILE_MIFARE_UL));
+}
+
+void test_rfid_hex_roundtrip_16_bytes() {
+    const uint8_t in[16] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+                            0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
+    char hex[33];
+    rfidHexEncode(in, 16, hex);
+    TEST_ASSERT_EQUAL_STRING("00112233445566778899AABBCCDDEEFF", hex);
+
+    uint8_t out[16] = {};
+    size_t n = rfidHexDecode(hex, out, sizeof(out));
+    TEST_ASSERT_EQUAL_size_t(16, n);
+    TEST_ASSERT_EQUAL_MEMORY(in, out, 16);
+}
+
+void test_rfid_hex_decode_rejects_odd_length() {
+    uint8_t out[8] = {};
+    TEST_ASSERT_EQUAL_size_t(0, rfidHexDecode("ABC", out, sizeof(out)));
+}
+
+void test_rfid_hex_decode_rejects_non_hex_chars() {
+    uint8_t out[8] = {};
+    TEST_ASSERT_EQUAL_size_t(0, rfidHexDecode("ZZ", out, sizeof(out)));
+    TEST_ASSERT_EQUAL_size_t(0, rfidHexDecode("1G", out, sizeof(out)));
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -837,6 +912,16 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_ap_sta_scan_blocked_by_recent_admin);
     RUN_TEST(test_ap_sta_scan_blocked_by_recent_scan);
     RUN_TEST(test_ap_sta_scan_survives_millis_wrap);
+
+    // rfid_types — v0.3.17 playground: profile mapper, trailer guard, hex codec
+    RUN_TEST(test_rfid_trailer_guard_refuses_classic_trailers);
+    RUN_TEST(test_rfid_trailer_guard_allows_classic_data_blocks);
+    RUN_TEST(test_rfid_trailer_guard_ignores_non_classic_profiles);
+    RUN_TEST(test_rfid_profile_block_size_mifare_is_16);
+    RUN_TEST(test_rfid_profile_block_size_ntag_is_4);
+    RUN_TEST(test_rfid_hex_roundtrip_16_bytes);
+    RUN_TEST(test_rfid_hex_decode_rejects_odd_length);
+    RUN_TEST(test_rfid_hex_decode_rejects_non_hex_chars);
 
     return UNITY_END();
 }

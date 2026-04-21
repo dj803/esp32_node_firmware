@@ -588,7 +588,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Detect Heartbeat & Timeout",
-    "func": "try {\n    var event = msg.payload && msg.payload.event;\n    if (event !== \"heartbeat\" && event !== \"boot\") return null;\n    var uuid = msg.topic.split(\"/\")[6];\n    if (!uuid) return null;\n    var timeouts = context.get(\"timeouts\") || {};\n    if (timeouts[uuid]) clearTimeout(timeouts[uuid]);\n    node.status({ fill: \"green\", shape: \"dot\", text: uuid + \" connected\" });\n    timeouts[uuid] = setTimeout(function () {\n        node.status({ fill: \"red\", shape: \"ring\", text: uuid + \" disconnected\" });\n        node.send({ payload: \"Disconnected\", uuid: uuid, firmware_version: \"\", uptime_s: 0 });\n    }, 90000);\n    context.set(\"timeouts\", timeouts);\n    msg.uuid             = uuid;\n    msg.firmware_version = msg.payload.firmware_version || \"\";\n    msg.uptime_s         = msg.payload.uptime_s || 0;\n    msg.payload          = \"Connected\";\n    return msg;\n} catch(e) {\n    node.error(\"Detect Heartbeat: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var event = msg.payload && msg.payload.event;\n    if (event !== \"heartbeat\" && event !== \"boot\") return null;\n    var uuid = msg.topic.split(\"/\")[6];\n    if (!uuid) return null;\n    var timeouts = context.get(\"timeouts\") || {};\n    if (timeouts[uuid]) clearTimeout(timeouts[uuid]);\n    node.status({ fill: \"green\", shape: \"dot\", text: uuid + \" connected\" });\n    timeouts[uuid] = setTimeout(function () {\n        node.status({ fill: \"red\", shape: \"ring\", text: uuid + \" disconnected\" });\n        node.send({ payload: \"Disconnected\", uuid: uuid, firmware_version: \"\", uptime_s: 0, rfid_enabled: false });\n    }, 90000);\n    context.set(\"timeouts\", timeouts);\n    msg.uuid             = uuid;\n    msg.firmware_version = msg.payload.firmware_version || \"\";\n    msg.uptime_s         = msg.payload.uptime_s || 0;\n    msg.rfid_enabled     = msg.payload.rfid_enabled === true;\n    msg.payload          = \"Connected\";\n    return msg;\n} catch(e) {\n    node.error(\"Detect Heartbeat: \" + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -734,7 +734,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Aggregate Device Status",
-    "func": "try {\n    const names = {\n      \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n      \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n      \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices = flow.get(\"hb_devices\") || {};\n    const prev = devices[uuid] || {};\n    const connected = msg.payload === \"Connected\";\n    devices[uuid] = {\n      name:     names[uuid] || uuid.slice(0,8) + \"...\",\n      uuid:     uuid,\n      status:   msg.payload,\n      firmware: connected && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"\\u2014\"),\n      lastSeen: connected ? new Date().toLocaleString() : (prev.lastSeen || \"Never\")\n    };\n    flow.set(\"hb_devices\", devices);\n    global.set(\"hb_devices\", devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error(\"Aggregate Device Status: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    const names = {\n      \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n      \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n      \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices = flow.get(\"hb_devices\") || {};\n    const prev = devices[uuid] || {};\n    const connected = msg.payload === \"Connected\";\n    devices[uuid] = {\n      name:     names[uuid] || uuid.slice(0,8) + \"...\",\n      uuid:     uuid,\n      status:   msg.payload,\n      firmware: connected && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"\\u2014\"),\n      lastSeen: connected ? new Date().toLocaleString() : (prev.lastSeen || \"Never\"),\n      rfid_enabled: connected ? (msg.rfid_enabled === true) : (prev.rfid_enabled === true)\n    };\n    flow.set(\"hb_devices\", devices);\n    global.set(\"hb_devices\", devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error(\"Aggregate Device Status: \" + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -1995,7 +1995,11 @@
     "type": "inject",
     "z": "0cc8e394107eb034",
     "name": "Trigger version badges",
-    "props": [{"p": "payload"}],
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
     "repeat": "",
     "crontab": "",
     "once": true,
@@ -2009,7 +2013,8 @@
       [
         "hb_ver_tpl",
         "espnow_ver_tpl",
-        "ble_ver_tpl"
+        "ble_ver_tpl",
+        "rfid_ver_tpl"
       ]
     ]
   },
@@ -2038,7 +2043,9 @@
     "templateScope": "local",
     "x": 600,
     "y": 700,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "espnow_ver_group",
@@ -2065,7 +2072,9 @@
     "templateScope": "local",
     "x": 600,
     "y": 220,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
   },
   {
     "id": "ble_ver_group",
@@ -2092,6 +2101,422 @@
     "templateScope": "local",
     "x": 600,
     "y": 460,
-    "wires": [[]]
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rfid_playground_flow",
+    "type": "tab",
+    "label": "RFID Playground",
+    "disabled": false,
+    "info": "",
+    "env": []
+  },
+  {
+    "id": "rfid_ui_page",
+    "type": "ui-page",
+    "name": "RFID Playground",
+    "ui": "45a25337ec9ca43a",
+    "path": "/rfid",
+    "icon": "mdi-nfc",
+    "layout": "notebook",
+    "theme": "alpha_ble_theme",
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": 0,
+        "cols": 3
+      },
+      {
+        "name": "Tablet",
+        "px": 576,
+        "cols": 6
+      },
+      {
+        "name": "Desktop",
+        "px": 1024,
+        "cols": 12
+      }
+    ],
+    "order": 4,
+    "visible": true,
+    "disabled": false
+  },
+  {
+    "id": "rfid_scan_group",
+    "type": "ui-group",
+    "name": "Live Scan Feed",
+    "page": "rfid_ui_page",
+    "width": "12",
+    "order": 1,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "rfid_assignment_group",
+    "type": "ui-group",
+    "name": "Tag Registry",
+    "page": "rfid_ui_page",
+    "width": "12",
+    "order": 2,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "rfid_program_group",
+    "type": "ui-group",
+    "name": "Raw Hex Program / Read",
+    "page": "rfid_ui_page",
+    "width": "12",
+    "order": 3,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "rfid_ver_group",
+    "type": "ui-group",
+    "name": "Flow Version",
+    "page": "rfid_ui_page",
+    "width": "12",
+    "order": 4,
+    "showTitle": false,
+    "groupType": "default"
+  },
+  {
+    "id": "rfid_init_inj",
+    "type": "inject",
+    "z": "rfid_playground_flow",
+    "name": "Load tag registry",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.2,
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 140,
+    "y": 80,
+    "wires": [
+      [
+        "rfid_init_file_in"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_init_file_in",
+    "type": "file in",
+    "z": "rfid_playground_flow",
+    "name": "Read rfid_tags.json",
+    "filename": "/data/rfid_tags.json",
+    "filenameType": "str",
+    "format": "utf8",
+    "chunk": false,
+    "sendError": false,
+    "encoding": "none",
+    "allProps": false,
+    "x": 380,
+    "y": 80,
+    "wires": [
+      [
+        "rfid_init_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_init_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Seed global.rfid_tags",
+    "func": "try {\n    var tags = {};\n    if (msg.payload && typeof msg.payload === 'string' && msg.payload.trim().length) {\n        try { tags = JSON.parse(msg.payload) || {}; }\n        catch(e) { node.warn('rfid_tags.json parse: ' + e.message); tags = {}; }\n    }\n    global.set('rfid_tags', tags);\n    return null;\n} catch(e) { node.error('rfid_init_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 620,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rfid_scan_mqtt_in",
+    "type": "mqtt in",
+    "z": "rfid_playground_flow",
+    "name": "telemetry/rfid (all)",
+    "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/telemetry/rfid",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": false,
+    "inputs": 0,
+    "x": 150,
+    "y": 160,
+    "wires": [
+      [
+        "rfid_scan_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_scan_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Scan feed + registry upsert",
+    "func": "try {\n    var uuid = msg.topic.split('/')[6] || '';\n    var p = msg.payload || {};\n    var uid = p.uid || '';\n    if (!uid) return null;\n    var feed = flow.get('rfid_feed') || [];\n    var devices = global.get('hb_devices') || {};\n    var reader = (devices[uuid] && devices[uuid].name) || (uuid.slice(0,8) + '...');\n    feed.unshift({\n        ts: new Date().toLocaleString(),\n        uid: uid,\n        profile: p.profile || 'unknown',\n        card_type: p.card_type || '',\n        authorized: p.authorized === true,\n        reader: reader,\n        reader_uuid: uuid\n    });\n    if (feed.length > 50) feed.length = 50;\n    flow.set('rfid_feed', feed);\n    // upsert registry\n    var tags = global.get('rfid_tags') || {};\n    var now = new Date().toISOString();\n    var prev = tags[uid] || { first_seen: now, label: '', notes: '' };\n    tags[uid] = {\n        label:      prev.label || '',\n        notes:      prev.notes || '',\n        profile:    p.profile || prev.profile || 'unknown',\n        first_seen: prev.first_seen || now,\n        last_seen:  now,\n        last_reader: reader\n    };\n    global.set('rfid_tags', tags);\n    node.send([{ payload: feed }, { payload: tags }]);\n    return null;\n} catch(e) { node.error('rfid_scan_fn: ' + e.message, msg); return null; }",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 160,
+    "wires": [
+      [
+        "rfid_scan_tpl"
+      ],
+      [
+        "rfid_assign_tpl",
+        "rfid_tags_file_out"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_tags_file_out",
+    "type": "file",
+    "z": "rfid_playground_flow",
+    "name": "Persist rfid_tags.json",
+    "filename": "/data/rfid_tags.json",
+    "filenameType": "str",
+    "appendNewline": false,
+    "createDir": true,
+    "overwriteFile": "true",
+    "encoding": "utf8",
+    "x": 720,
+    "y": 220,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rfid_scan_tpl",
+    "type": "ui-template",
+    "z": "rfid_playground_flow",
+    "group": "rfid_scan_group",
+    "name": "Scan Feed Table",
+    "order": 1,
+    "width": "12",
+    "height": 8,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No scans yet — present a tag to any reader-equipped node.\n    </div>\n    <table v-else style=\"width:100%;border-collapse:collapse;font-size:12px\">\n      <thead>\n        <tr style=\"color:#78909c;text-align:left;border-bottom:1px solid #263238\">\n          <th style=\"padding:4px 6px\">Time</th>\n          <th style=\"padding:4px 6px\">UID</th>\n          <th style=\"padding:4px 6px\">Profile</th>\n          <th style=\"padding:4px 6px\">Reader</th>\n          <th style=\"padding:4px 6px\">Auth</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-for=\"(r, i) in msg.payload\" :key=\"i\"\n            style=\"border-bottom:1px solid #1e272e\">\n          <td style=\"padding:4px 6px;color:#78909c\">{{ r.ts }}</td>\n          <td style=\"padding:4px 6px;font-family:monospace;color:#eceff1\">{{ r.uid }}</td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ r.profile }}</td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ r.reader }}</td>\n          <td style=\"padding:4px 6px;font-weight:bold\"\n              :style=\"{ color: r.authorized ? '#00c853' : '#ff9800' }\">\n            {{ r.authorized ? 'OK' : 'unknown' }}\n          </td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 710,
+    "y": 160,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rfid_assign_tpl",
+    "type": "ui-template",
+    "z": "rfid_playground_flow",
+    "group": "rfid_assignment_group",
+    "name": "Tag Registry Editor",
+    "order": 1,
+    "width": "12",
+    "height": 8,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || Object.keys(msg.payload).length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No known tags yet.\n    </div>\n    <table v-else style=\"width:100%;border-collapse:collapse;font-size:12px\">\n      <thead>\n        <tr style=\"color:#78909c;text-align:left;border-bottom:1px solid #263238\">\n          <th style=\"padding:4px 6px\">UID</th>\n          <th style=\"padding:4px 6px\">Label</th>\n          <th style=\"padding:4px 6px\">Notes</th>\n          <th style=\"padding:4px 6px\">Profile</th>\n          <th style=\"padding:4px 6px\">Last Seen</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-for=\"uid in Object.keys(msg.payload).sort()\" :key=\"uid\"\n            style=\"border-bottom:1px solid #1e272e\">\n          <td style=\"padding:4px 6px;font-family:monospace;color:#eceff1\">{{ uid }}</td>\n          <td style=\"padding:4px 6px\">\n            <input :value=\"msg.payload[uid].label\"\n                   @change=\"send({ topic:'edit', payload:{ uid: uid, field:'label', value: $event.target.value } })\"\n                   style=\"width:95%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:4px\"/>\n          </td>\n          <td style=\"padding:4px 6px\">\n            <input :value=\"msg.payload[uid].notes\"\n                   @change=\"send({ topic:'edit', payload:{ uid: uid, field:'notes', value: $event.target.value } })\"\n                   style=\"width:95%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:4px\"/>\n          </td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ msg.payload[uid].profile }}</td>\n          <td style=\"padding:4px 6px;color:#78909c\">{{ msg.payload[uid].last_seen }}</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 710,
+    "y": 220,
+    "wires": [
+      [
+        "rfid_assign_edit_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_assign_edit_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Apply label/notes edit",
+    "func": "try {\n    if (!msg || msg.topic !== 'edit' || !msg.payload || !msg.payload.uid) return null;\n    var tags = global.get('rfid_tags') || {};\n    var t = tags[msg.payload.uid];\n    if (!t) return null;\n    if (msg.payload.field === 'label') t.label = String(msg.payload.value || '');\n    if (msg.payload.field === 'notes') t.notes = String(msg.payload.value || '');\n    tags[msg.payload.uid] = t;\n    global.set('rfid_tags', tags);\n    return { payload: tags };\n} catch(e) { node.error('rfid_assign_edit_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 960,
+    "y": 220,
+    "wires": [
+      [
+        "rfid_tags_file_out"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_program_tpl",
+    "type": "ui-template",
+    "z": "rfid_playground_flow",
+    "group": "rfid_program_group",
+    "name": "Raw Hex Program Form",
+    "order": 1,
+    "width": "12",
+    "height": 10,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div style=\"display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px\">\n      <div style=\"flex:1 1 200px\">\n        <label style=\"display:block;color:#78909c;font-size:11px\">Reader</label>\n        <select v-model=\"reader_uuid\" style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px\">\n          <option v-for=\"r in readers\" :key=\"r.uuid\" :value=\"r.uuid\">{{ r.name }}</option>\n        </select>\n      </div>\n      <div style=\"flex:1 1 200px\">\n        <label style=\"display:block;color:#78909c;font-size:11px\">Profile</label>\n        <select v-model=\"profile\" style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px\">\n          <option value=\"mifare_classic_1k\">MIFARE Classic 1K</option>\n          <option value=\"mifare_classic_4k\">MIFARE Classic 4K</option>\n        </select>\n      </div>\n      <div style=\"flex:1 1 120px\">\n        <label style=\"display:block;color:#78909c;font-size:11px\">Block</label>\n        <input type=\"number\" v-model.number=\"block\" min=\"0\" max=\"255\"\n               style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px\"/>\n      </div>\n      <div style=\"flex:1 1 200px\">\n        <label style=\"display:block;color:#78909c;font-size:11px\">Key A (hex, 12 chars)</label>\n        <input v-model=\"key_a_hex\" maxlength=\"12\" placeholder=\"FFFFFFFFFFFF\"\n               style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px;font-family:monospace\"/>\n      </div>\n    </div>\n    <div style=\"margin-bottom:8px\">\n      <label style=\"display:block;color:#78909c;font-size:11px\">Data (hex, 32 chars for Classic / 8 for NTAG)</label>\n      <input v-model=\"data_hex\" placeholder=\"00112233445566778899AABBCCDDEEFF\"\n             style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px;font-family:monospace\"/>\n    </div>\n    <div style=\"display:flex;gap:8px;margin-bottom:8px\">\n      <button @click=\"doRead\"  style=\"background:#00838f;color:white;border:none;padding:8px 16px;cursor:pointer\">Read</button>\n      <button @click=\"doWrite\" style=\"background:#e65100;color:white;border:none;padding:8px 16px;cursor:pointer\">Write</button>\n      <button @click=\"doCancel\" style=\"background:#455a64;color:white;border:none;padding:8px 16px;cursor:pointer\">Cancel</button>\n    </div>\n    <div :style=\"{ padding:'8px 12px', borderRadius:'4px', background:'#1e272e', color: statusColor, fontFamily:'monospace', fontSize:'12px', minHeight:'20px' }\">\n      {{ status }}\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() {\n    return {\n      reader_uuid: '',\n      profile: 'mifare_classic_1k',\n      block: 4,\n      key_a_hex: 'FFFFFFFFFFFF',\n      data_hex: '',\n      request_id: '',\n      status: 'idle',\n      statusColor: '#b0bec5'\n    };\n  },\n  computed: {\n    readers() {\n      var d = (this.$store && this.$store.state && this.$store.state.data) || {};\n      var raw = this.msg && this.msg._rfid_readers;\n      return raw || [];\n    }\n  },\n  watch: {\n    msg(nv) {\n      if (!nv || !nv.payload) return;\n      if (nv.topic === 'readers') {\n        this._readers = nv.payload;\n      } else if (nv.topic === 'response' && nv.payload.request_id === this.request_id) {\n        this.status = nv.payload.event + ': ' + nv.payload.status +\n                      (nv.payload.data_hex ? ' data=' + nv.payload.data_hex : '');\n        this.statusColor = nv.payload.status === 'ok' ? '#00c853' : '#ff5252';\n        if (nv.payload.event === 'rfid_read_block' && nv.payload.status === 'ok' && nv.payload.data_hex) {\n          this.data_hex = nv.payload.data_hex;\n        }\n      }\n    }\n  },\n  methods: {\n    _newId(prefix) {\n      this.request_id = prefix + '-' + Date.now() + '-' + Math.floor(Math.random()*1e4);\n      return this.request_id;\n    },\n    doRead() {\n      if (!this.reader_uuid) { this.status='pick a reader'; this.statusColor='#ff9800'; return; }\n      this.status = 'armed: reading …'; this.statusColor='#03a9f4';\n      this.send({ topic: 'read', payload: {\n        reader_uuid: this.reader_uuid, profile: this.profile,\n        block: this.block, key_a_hex: this.key_a_hex,\n        request_id: this._newId('rfid-read')\n      }});\n    },\n    doWrite() {\n      if (!this.reader_uuid) { this.status='pick a reader'; this.statusColor='#ff9800'; return; }\n      this.status = 'armed: writing …'; this.statusColor='#ff9800';\n      this.send({ topic: 'write', payload: {\n        reader_uuid: this.reader_uuid, profile: this.profile,\n        block: this.block, key_a_hex: this.key_a_hex,\n        data_hex: this.data_hex,\n        request_id: this._newId('rfid-prog')\n      }});\n    },\n    doCancel() {\n      if (!this.reader_uuid) return;\n      this.status = 'cancel sent'; this.statusColor='#b0bec5';\n      this.send({ topic: 'cancel', payload: { reader_uuid: this.reader_uuid } });\n    }\n  }\n};\n</script>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 410,
+    "y": 340,
+    "wires": [
+      [
+        "rfid_program_encode_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_readers_inj",
+    "type": "inject",
+    "z": "rfid_playground_flow",
+    "name": "Refresh readers",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "10",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 140,
+    "y": 400,
+    "wires": [
+      [
+        "rfid_readers_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_readers_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Build reader list",
+    "func": "try {\n    var d = global.get('hb_devices') || {};\n    var readers = Object.keys(d).filter(function(u){ return d[u] && d[u].rfid_enabled === true; })\n        .map(function(u){ return { uuid: u, name: d[u].name || u.slice(0,8) + '...' }; });\n    readers.sort(function(a,b){ return a.name.localeCompare(b.name); });\n    return { topic: 'readers', payload: readers };\n} catch(e) { node.error('rfid_readers_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 400,
+    "wires": [
+      [
+        "rfid_program_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_program_encode_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Encode cmd/rfid/*",
+    "func": "try {\n    var p = msg.payload || {};\n    var uuid = p.reader_uuid;\n    if (!uuid) return null;\n    var base = (global.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/') + uuid + '/';\n    if (msg.topic === 'write') {\n        return { topic: base + 'cmd/rfid/program', payload: {\n            profile: p.profile,\n            writes: [{ block: p.block, data_hex: String(p.data_hex||'').toUpperCase(),\n                       key_a_hex: String(p.key_a_hex||'FFFFFFFFFFFF').toUpperCase() }],\n            timeout_ms: 15000,\n            request_id: p.request_id\n        }};\n    }\n    if (msg.topic === 'read') {\n        return { topic: base + 'cmd/rfid/read_block', payload: {\n            profile: p.profile, block: p.block,\n            key_a_hex: String(p.key_a_hex||'FFFFFFFFFFFF').toUpperCase(),\n            timeout_ms: 15000,\n            request_id: p.request_id\n        }};\n    }\n    if (msg.topic === 'cancel') {\n        return { topic: base + 'cmd/rfid/cancel', payload: {} };\n    }\n    return null;\n} catch(e) { node.error('rfid_program_encode_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 670,
+    "y": 340,
+    "wires": [
+      [
+        "rfid_cmd_mqtt_out"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_cmd_mqtt_out",
+    "type": "mqtt out",
+    "z": "rfid_playground_flow",
+    "name": "cmd/rfid/* (retain=false)",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "mqtt_broker",
+    "x": 920,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "rfid_resp_mqtt_in",
+    "type": "mqtt in",
+    "z": "rfid_playground_flow",
+    "name": "response (all)",
+    "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/response",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": false,
+    "inputs": 0,
+    "x": 140,
+    "y": 460,
+    "wires": [
+      [
+        "rfid_response_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_response_fn",
+    "type": "function",
+    "z": "rfid_playground_flow",
+    "name": "Filter rfid_* responses",
+    "func": "try {\n    var p = msg.payload || {};\n    if (p.event !== 'rfid_program' && p.event !== 'rfid_read_block') return null;\n    return { topic: 'response', payload: p };\n} catch(e) { node.error('rfid_response_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 460,
+    "wires": [
+      [
+        "rfid_program_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "rfid_ver_tpl",
+    "type": "ui-template",
+    "z": "rfid_playground_flow",
+    "group": "rfid_ver_group",
+    "name": "Flow Version Badge",
+    "order": 1,
+    "width": "12",
+    "height": 1,
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.17 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 600,
+    "y": 560,
+    "wires": [
+      []
+    ]
   }
 ]

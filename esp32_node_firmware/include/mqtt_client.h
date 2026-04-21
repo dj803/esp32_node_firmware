@@ -29,6 +29,16 @@ bool    rfidWhitelistRemove(const char* uid);
 void    rfidWhitelistClear();
 void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 
+// RFID playground API (v0.3.17). The struct types are hardware-independent and
+// live in rfid_types.h so the MQTT handlers below can populate them without
+// pulling in MFRC522v2. rfid.h defines the implementations.
+#ifdef RFID_ENABLED
+#include "rfid_types.h"
+void rfidArmProgram(const RfidProgramRequest& req);
+void rfidArmRead(const RfidReadRequest& req);
+void rfidCancelPending();
+#endif
+
 // BLE API — ble.h is included AFTER mqtt_client.h.
 #ifdef BLE_ENABLED
 void bleTriggerScan();
@@ -148,6 +158,16 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // on every heartbeat (30 s cadence). 512 B is sized to fit the longest
     // observed `event` + `extraJson` tail by a comfortable margin; on overflow
     // snprintf truncates rather than corrupts, and we log a warning.
+    // Capability flags advertised on every status message so Node-RED can
+    // auto-discover which nodes expose optional subsystems without needing a
+    // separate handshake. Read from the retained boot announcement on
+    // subscribe, then refreshed on every heartbeat.
+#ifdef RFID_ENABLED
+    const char* rfidEnabledStr = "true";
+#else
+    const char* rfidEnabledStr = "false";
+#endif
+
     char buf[512];
     int n;
     if (extraJson && *extraJson) {
@@ -157,12 +177,14 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_version\":\"" FIRMWARE_VERSION "\","
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
+            "\"rfid_enabled\":%s,"
             "\"event\":\"%s\","
             "%s}",
             DeviceId::get().c_str(),
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
+            rfidEnabledStr,
             event, extraJson);
     } else {
         n = snprintf(buf, sizeof(buf),
@@ -171,11 +193,13 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_version\":\"" FIRMWARE_VERSION "\","
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
+            "\"rfid_enabled\":%s,"
             "\"event\":\"%s\"}",
             DeviceId::get().c_str(),
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
+            rfidEnabledStr,
             event);
     }
     if (n < 0 || n >= (int)sizeof(buf)) {
@@ -370,6 +394,106 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
 }
 
 
+#ifdef RFID_ENABLED
+// ── RFID playground handlers (v0.3.17) ────────────────────────────────────────
+// cmd/rfid/program     arms a multi-block write on the NEXT card scanned
+// cmd/rfid/read_block  arms a one-shot block read on the NEXT card scanned
+// cmd/rfid/cancel      clears any armed request and returns the reader to idle
+//
+// All three publish their outcome on the .../response topic. The schema
+// (status values, request_id pairing) is documented in docs/rfid_tag_profiles.md
+// and enforced by the response publishers in rfid.h.
+static void handleRfidProgram(const char* payload, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        LOG_W("MQTT", "cmd/rfid/program: JSON parse error");
+        return;
+    }
+
+    RfidProgramRequest req = {};
+    strlcpy(req.profile, doc["profile"] | RFID_PROFILE_MIFARE_CLASSIC_1K,
+            sizeof(req.profile));
+    strlcpy(req.request_id, doc["request_id"] | "", sizeof(req.request_id));
+    req.timeout_ms = doc["timeout_ms"] | 0u;
+
+    JsonArray writes = doc["writes"].as<JsonArray>();
+    uint8_t n = 0;
+    if (writes) {
+        for (JsonVariant v : writes) {
+            if (n >= RFID_MAX_WRITE_BLOCKS) break;
+            RfidWriteBlock& w = req.writes[n];
+            w.block = (uint16_t)(v["block"] | 0);
+
+            const char* dataHex = v["data_hex"] | "";
+            uint8_t blockSize = rfidProfileBlockSize(req.profile);
+            size_t decoded = rfidHexDecode(dataHex, w.data, sizeof(w.data));
+            if (decoded != blockSize) {
+                LOG_W("MQTT", "cmd/rfid/program: writes[%u] data_hex length %u != "
+                              "profile block size %u — rejecting batch",
+                      (unsigned)n, (unsigned)decoded, (unsigned)blockSize);
+                return;
+            }
+
+            const char* keyHex = v["key_a_hex"] | "";
+            if (keyHex && *keyHex) {
+                if (rfidHexDecode(keyHex, w.keyA, sizeof(w.keyA)) != RFID_KEY_SIZE) {
+                    LOG_W("MQTT", "cmd/rfid/program: writes[%u] key_a_hex must be 12 hex chars",
+                          (unsigned)n);
+                    return;
+                }
+                w.has_key_a = true;
+            } else {
+                w.has_key_a = false;
+            }
+            n++;
+        }
+    }
+    if (n == 0) {
+        LOG_W("MQTT", "cmd/rfid/program: no writes[] entries — rejecting");
+        return;
+    }
+    req.write_count = n;
+
+    LOG_I("MQTT", "cmd/rfid/program: arming %u block(s) on %s (req=%s)",
+          (unsigned)n, req.profile, req.request_id);
+    rfidArmProgram(req);
+}
+
+static void handleRfidReadBlock(const char* payload, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        LOG_W("MQTT", "cmd/rfid/read_block: JSON parse error");
+        return;
+    }
+
+    RfidReadRequest req = {};
+    strlcpy(req.profile, doc["profile"] | RFID_PROFILE_MIFARE_CLASSIC_1K,
+            sizeof(req.profile));
+    strlcpy(req.request_id, doc["request_id"] | "", sizeof(req.request_id));
+    req.timeout_ms = doc["timeout_ms"] | 0u;
+    req.block      = (uint16_t)(doc["block"] | 0);
+
+    const char* keyHex = doc["key_a_hex"] | "";
+    if (keyHex && *keyHex) {
+        if (rfidHexDecode(keyHex, req.keyA, sizeof(req.keyA)) != RFID_KEY_SIZE) {
+            LOG_W("MQTT", "cmd/rfid/read_block: key_a_hex must be 12 hex chars");
+            return;
+        }
+        req.has_key_a = true;
+    }
+
+    LOG_I("MQTT", "cmd/rfid/read_block: arming block %u on %s (req=%s)",
+          (unsigned)req.block, req.profile, req.request_id);
+    rfidArmRead(req);
+}
+
+static void handleRfidCancel(const char* /*payload*/, size_t /*len*/) {
+    LOG_I("MQTT", "cmd/rfid/cancel: clearing any armed request");
+    rfidCancelPending();
+}
+#endif // RFID_ENABLED
+
+
 // ── Credential rotation handler ────────────────────────────────────────────────
 // Called when a message arrives on .../cmd/cred_rotate or the broadcast topic.
 // The payload is a raw binary AES-128-GCM encrypted CredentialBundle:
@@ -493,6 +617,17 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd/rfid/whitelist")) {
         // RFID UID whitelist management
         handleRfidWhitelist(payload, len);
+#ifdef RFID_ENABLED
+    } else if (t == mqttTopic("cmd/rfid/program")) {
+        // v0.3.17 playground: arm a multi-block write on the next scanned card
+        handleRfidProgram(payload, len);
+    } else if (t == mqttTopic("cmd/rfid/read_block")) {
+        // v0.3.17 playground: arm a one-shot block read on the next scanned card
+        handleRfidReadBlock(payload, len);
+    } else if (t == mqttTopic("cmd/rfid/cancel")) {
+        // v0.3.17 playground: clear any pending program/read arm
+        handleRfidCancel(payload, len);
+#endif
 #ifdef BLE_ENABLED
     } else if (t == mqttTopic("cmd/ble/scan")) {
         bleTriggerScan();
@@ -570,6 +705,11 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
     _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
     _mqttClient.subscribe(mqttTopic("cmd/rfid/whitelist").c_str(), 1);  // RFID whitelist management
+#ifdef RFID_ENABLED
+    _mqttClient.subscribe(mqttTopic("cmd/rfid/program").c_str(),    1); // RFID playground: arm write
+    _mqttClient.subscribe(mqttTopic("cmd/rfid/read_block").c_str(), 1); // RFID playground: arm read
+    _mqttClient.subscribe(mqttTopic("cmd/rfid/cancel").c_str(),     1); // RFID playground: cancel arm
+#endif
 #ifdef BLE_ENABLED
     _mqttClient.subscribe(mqttTopic("cmd/ble/scan").c_str(),      1);   // BLE: trigger scan
     _mqttClient.subscribe(mqttTopic("cmd/ble/track").c_str(),     1);   // BLE: set tracked beacon

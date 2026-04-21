@@ -48,9 +48,11 @@
 #include <MFRC522DriverPinSimple.h>
 #include <MFRC522Debug.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
 #include "config.h"
 #include "led.h"
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
+#include "rfid_types.h"  // RfidMode, RfidProgramRequest, RfidReadRequest, guards
 
 static MFRC522DriverPinSimple _rfidSsPin(RFID_SS_PIN);
 static MFRC522DriverPinSimple _rfidRstPin(RFID_RST_PIN);
@@ -71,6 +73,17 @@ static uint32_t               _rfidQuietUntilMs = 0;     // Suppress re-arm unti
 // All external UIDs (colon-separated or mixed case) are normalised before use.
 static char    _rfidWhitelist[RFID_MAX_WHITELIST][RFID_UID_STR_LEN] = {};
 static uint8_t _rfidWhitelistCount = 0;
+
+// ── Playground state (v0.3.17) ───────────────────────────────────────────────
+// The module spends virtually all its time in RfidMode::IDLE. A single
+// cmd/rfid/program or cmd/rfid/read_block transitions it into a transient
+// armed state; the next IRQ is routed through the write / read path instead
+// of the normal telemetry publish, and the mode returns to IDLE on
+// completion / timeout / cancellation.
+static RfidMode            _rfidMode          = RfidMode::IDLE;
+static RfidProgramRequest  _rfidProgramReq    = {};
+static RfidReadRequest     _rfidReadReq       = {};
+static uint32_t            _rfidModeDeadlineMs = 0;   // 0 when idle
 
 
 // ── rfidNormaliseUid ──────────────────────────────────────────────────────────
@@ -257,6 +270,235 @@ void rfidInit() {
 }
 
 
+// ── Profile mapper ────────────────────────────────────────────────────────────
+// Translates the MFRC522v2 PICC_Type enum (decoded from SAK on SELECT) into the
+// wire profile string used by the RFID playground. Published alongside the
+// existing `card_type` field in telemetry/rfid and echoed in response JSON.
+static const char* rfidPiccToProfile(MFRC522::PICC_Type t) {
+    using PT = MFRC522Constants::PICC_Type;
+    switch (t) {
+        case PT::PICC_TYPE_MIFARE_MINI:
+        case PT::PICC_TYPE_MIFARE_1K:    return RFID_PROFILE_MIFARE_CLASSIC_1K;
+        case PT::PICC_TYPE_MIFARE_4K:    return RFID_PROFILE_MIFARE_CLASSIC_4K;
+        case PT::PICC_TYPE_MIFARE_UL:    return RFID_PROFILE_NTAG21X;   // NTAG21x shares the Ultralight SAK
+        default:                         return RFID_PROFILE_UNKNOWN;
+    }
+}
+
+
+// ── Public arm / cancel API ───────────────────────────────────────────────────
+// Callable from mqtt_client.h's cmd/rfid/* handlers. Overwrites any pending
+// request — the playground is single-user, and stacking arms is intentionally
+// unsupported (each operator press of Write/Read replaces the previous one).
+void rfidArmProgram(const RfidProgramRequest& req) {
+    _rfidProgramReq    = req;
+    _rfidMode          = RfidMode::PROGRAMMING;
+    uint32_t to = req.timeout_ms ? req.timeout_ms : RFID_PROGRAM_TIMEOUT_MS;
+    _rfidModeDeadlineMs = millis() + to;
+    Serial.printf("[RFID] ARMED PROGRAM  profile=%s  blocks=%u  timeout=%ums  req=%s\n",
+                  req.profile, (unsigned)req.write_count, (unsigned)to, req.request_id);
+}
+
+void rfidArmRead(const RfidReadRequest& req) {
+    _rfidReadReq       = req;
+    _rfidMode          = RfidMode::READING_BLOCK;
+    uint32_t to = req.timeout_ms ? req.timeout_ms : RFID_PROGRAM_TIMEOUT_MS;
+    _rfidModeDeadlineMs = millis() + to;
+    Serial.printf("[RFID] ARMED READ  profile=%s  block=%u  timeout=%ums  req=%s\n",
+                  req.profile, (unsigned)req.block, (unsigned)to, req.request_id);
+}
+
+void rfidCancelPending() {
+    if (_rfidMode == RfidMode::IDLE) return;
+    Serial.println("[RFID] Pending request cancelled");
+    _rfidMode           = RfidMode::IDLE;
+    _rfidModeDeadlineMs = 0;
+}
+
+RfidMode rfidGetMode() { return _rfidMode; }
+
+
+// ── Response publishers ───────────────────────────────────────────────────────
+// Publish to .../response with the schema agreed with Node-RED — see
+// docs/rfid_tag_profiles.md. `status` is one of:
+//   ok | auth_failed | write_failed | trailer_guard | timeout | cancelled
+static void _rfidPublishProgramResponse(const char* status,
+                                        const char* uid,
+                                        const uint8_t* blocksWritten, uint8_t n) {
+    JsonDocument doc;
+    doc["event"]      = "rfid_program";
+    doc["request_id"] = _rfidProgramReq.request_id;
+    doc["uid"]        = uid ? uid : "";
+    doc["profile"]    = _rfidProgramReq.profile;
+    doc["status"]     = status;
+    JsonArray arr = doc["blocks_written"].to<JsonArray>();
+    for (uint8_t i = 0; i < n; i++) arr.add(blocksWritten[i]);
+    String payload; serializeJson(doc, payload);
+    mqttPublish("response", payload, 1, false);
+}
+
+static void _rfidPublishReadResponse(const char* status,
+                                     const char* uid,
+                                     const uint8_t* data, uint8_t len) {
+    JsonDocument doc;
+    doc["event"]      = "rfid_read_block";
+    doc["request_id"] = _rfidReadReq.request_id;
+    doc["uid"]        = uid ? uid : "";
+    doc["profile"]    = _rfidReadReq.profile;
+    doc["block"]      = _rfidReadReq.block;
+    doc["status"]     = status;
+    if (data && len > 0) {
+        char hex[2 * RFID_BLOCK_SIZE + 1];
+        rfidHexEncode(data, len, hex);
+        doc["data_hex"] = hex;
+    }
+    String payload; serializeJson(doc, payload);
+    mqttPublish("response", payload, 1, false);
+}
+
+
+// ── Write path ────────────────────────────────────────────────────────────────
+// Authenticate each block with its Key A (Key A only — no Key B path in v0.3.17)
+// and write 16 B via MIFARE_Write. Sector-trailer guard is enforced here: any
+// write targeting a trailer block aborts the whole batch with status
+// "trailer_guard" regardless of how many blocks preceded it.
+//
+// NTAG21x / Ultralight path uses MIFARE_Ultralight_Write (4-byte pages) and
+// skips authentication — page 0..3 are factory-read-only, the library returns
+// STATUS_ERROR which we surface as write_failed.
+static void _rfidExecuteProgram(const String& uidColon) {
+    const RfidProgramRequest& req = _rfidProgramReq;
+
+    // Sector-trailer guard — refuse up front before touching the reader.
+    for (uint8_t i = 0; i < req.write_count; i++) {
+        if (rfidIsSectorTrailer(req.profile, req.writes[i].block)) {
+            Serial.printf("[RFID] trailer_guard: refusing block %u on %s\n",
+                          (unsigned)req.writes[i].block, req.profile);
+            _rfidPublishProgramResponse("trailer_guard", uidColon.c_str(), nullptr, 0);
+            return;
+        }
+    }
+
+    const bool isMifareClassic =
+        strcmp(req.profile, RFID_PROFILE_MIFARE_CLASSIC_1K) == 0 ||
+        strcmp(req.profile, RFID_PROFILE_MIFARE_CLASSIC_4K) == 0;
+    const bool isUltralight =
+        strcmp(req.profile, RFID_PROFILE_NTAG21X) == 0 ||
+        strcmp(req.profile, RFID_PROFILE_MIFARE_UL) == 0;
+
+    if (!isMifareClassic && !isUltralight) {
+        Serial.printf("[RFID] unsupported profile for write: %s\n", req.profile);
+        _rfidPublishProgramResponse("write_failed", uidColon.c_str(), nullptr, 0);
+        return;
+    }
+
+    uint8_t written[RFID_MAX_WRITE_BLOCKS];
+    uint8_t nWritten = 0;
+
+    for (uint8_t i = 0; i < req.write_count; i++) {
+        const RfidWriteBlock& w = req.writes[i];
+
+        if (isMifareClassic) {
+            // Authenticate the target sector with Key A (default 0xFFx6 unless
+            // the request supplied one).
+            MFRC522::MIFARE_Key key;
+            if (w.has_key_a) memcpy(key.keyByte, w.keyA, 6);
+            else             memset(key.keyByte, 0xFF, 6);
+
+            auto st = _rfid.PCD_Authenticate(
+                MFRC522Constants::PICC_Command::PICC_CMD_MF_AUTH_KEY_A,
+                (byte)w.block, &key, &_rfid.uid);
+            if (st != MFRC522Constants::StatusCode::STATUS_OK) {
+                Serial.printf("[RFID] auth_failed at block %u (status=%d)\n",
+                              (unsigned)w.block, (int)st);
+                _rfidPublishProgramResponse("auth_failed", uidColon.c_str(),
+                                            written, nWritten);
+                _rfid.PCD_StopCrypto1();
+                return;
+            }
+
+            st = _rfid.MIFARE_Write((byte)w.block, (byte*)w.data, RFID_BLOCK_SIZE);
+            if (st != MFRC522Constants::StatusCode::STATUS_OK) {
+                Serial.printf("[RFID] write_failed at block %u (status=%d)\n",
+                              (unsigned)w.block, (int)st);
+                _rfidPublishProgramResponse("write_failed", uidColon.c_str(),
+                                            written, nWritten);
+                _rfid.PCD_StopCrypto1();
+                return;
+            }
+
+            written[nWritten++] = (uint8_t)w.block;
+        } else {
+            // Ultralight / NTAG21x — 4-byte page write, no auth in the
+            // unprotected region. The library's page write expects a 4-byte
+            // buffer; we pass the first 4 bytes of data[].
+            auto st = _rfid.MIFARE_Ultralight_Write((byte)w.block,
+                                                    (byte*)w.data, 4);
+            if (st != MFRC522Constants::StatusCode::STATUS_OK) {
+                Serial.printf("[RFID] ul write_failed at page %u (status=%d)\n",
+                              (unsigned)w.block, (int)st);
+                _rfidPublishProgramResponse("write_failed", uidColon.c_str(),
+                                            written, nWritten);
+                return;
+            }
+            written[nWritten++] = (uint8_t)w.block;
+        }
+    }
+
+    if (isMifareClassic) _rfid.PCD_StopCrypto1();
+
+    Serial.printf("[RFID] program ok — %u block(s) written to %s\n",
+                  (unsigned)nWritten, uidColon.c_str());
+    _rfidPublishProgramResponse("ok", uidColon.c_str(), written, nWritten);
+}
+
+
+// ── Read path ─────────────────────────────────────────────────────────────────
+static void _rfidExecuteRead(const String& uidColon) {
+    const RfidReadRequest& req = _rfidReadReq;
+
+    const bool isMifareClassic =
+        strcmp(req.profile, RFID_PROFILE_MIFARE_CLASSIC_1K) == 0 ||
+        strcmp(req.profile, RFID_PROFILE_MIFARE_CLASSIC_4K) == 0;
+
+    // MIFARE_Read returns 16 data bytes + 2 CRC bytes → library needs an
+    // 18-byte buffer. We forward the first `page_size` bytes.
+    uint8_t buf[18] = {};
+    byte   size    = sizeof(buf);
+
+    if (isMifareClassic) {
+        MFRC522::MIFARE_Key key;
+        if (req.has_key_a) memcpy(key.keyByte, req.keyA, 6);
+        else               memset(key.keyByte, 0xFF, 6);
+
+        auto st = _rfid.PCD_Authenticate(
+            MFRC522Constants::PICC_Command::PICC_CMD_MF_AUTH_KEY_A,
+            (byte)req.block, &key, &_rfid.uid);
+        if (st != MFRC522Constants::StatusCode::STATUS_OK) {
+            Serial.printf("[RFID] read auth_failed at block %u (status=%d)\n",
+                          (unsigned)req.block, (int)st);
+            _rfidPublishReadResponse("auth_failed", uidColon.c_str(), nullptr, 0);
+            _rfid.PCD_StopCrypto1();
+            return;
+        }
+    }
+
+    auto st = _rfid.MIFARE_Read((byte)req.block, buf, &size);
+    if (isMifareClassic) _rfid.PCD_StopCrypto1();
+    if (st != MFRC522Constants::StatusCode::STATUS_OK) {
+        Serial.printf("[RFID] read failed at block %u (status=%d)\n",
+                      (unsigned)req.block, (int)st);
+        _rfidPublishReadResponse("write_failed", uidColon.c_str(), nullptr, 0);
+        return;
+    }
+
+    uint8_t outLen = rfidProfileBlockSize(req.profile);
+    Serial.printf("[RFID] read ok — %u byte(s) from block %u of %s\n",
+                  (unsigned)outLen, (unsigned)req.block, uidColon.c_str());
+    _rfidPublishReadResponse("ok", uidColon.c_str(), buf, outLen);
+}
+
+
 // ── rfidLoop ──────────────────────────────────────────────────────────────────
 // Called every loop() iteration. Non-blocking — returns immediately if idle.
 //
@@ -274,6 +516,21 @@ void rfidLoop() {
     if (!_rfidReady) return;   // Reader not detected at init — skip all SPI work
 
     uint32_t now = millis();
+
+    // Playground state machine — fire a timeout response if the operator armed
+    // a program/read and then walked away. Runs before the quiet-period check so
+    // timeouts still fire during the post-read suppression window.
+    if (_rfidMode != RfidMode::IDLE && _rfidModeDeadlineMs &&
+        (int32_t)(now - _rfidModeDeadlineMs) >= 0) {
+        Serial.println("[RFID] armed request timed out");
+        if (_rfidMode == RfidMode::PROGRAMMING) {
+            _rfidPublishProgramResponse("timeout", "", nullptr, 0);
+        } else {
+            _rfidPublishReadResponse("timeout", "", nullptr, 0);
+        }
+        _rfidMode           = RfidMode::IDLE;
+        _rfidModeDeadlineMs = 0;
+    }
 
     // Post-read quiet period: discard any spurious IRQ triggered by a card still in
     // the field after PICC_HaltA() and hold off re-arming until the window expires.
@@ -329,6 +586,31 @@ void rfidLoop() {
     // returns __FlashStringHelper* — wrap in String() to use as a regular string.
     MFRC522::PICC_Type piccType = _rfid.PICC_GetType(_rfid.uid.sak);
     String typeName = String(MFRC522Debug::PICC_GetTypeName(piccType));
+    const char* profile = rfidPiccToProfile(piccType);
+
+    // ── Armed-request path ───────────────────────────────────────────────────
+    // If Node-RED armed a program or read, this card is the target. Auto-
+    // publish on telemetry/rfid is paused so the operator doesn't get a
+    // spurious "unauthorised card" buzz during programming. The response on
+    // .../response is the only observable outcome.
+    if (_rfidMode == RfidMode::PROGRAMMING) {
+        _rfidMode           = RfidMode::IDLE;
+        _rfidModeDeadlineMs = 0;
+        _rfidExecuteProgram(uid);
+        _rfid.PICC_HaltA();
+        _rfidQuietUntilMs = millis() + RFID_POST_READ_QUIET_MS;
+        Serial.println("[RFID] Waiting for next tag...");
+        return;
+    }
+    if (_rfidMode == RfidMode::READING_BLOCK) {
+        _rfidMode           = RfidMode::IDLE;
+        _rfidModeDeadlineMs = 0;
+        _rfidExecuteRead(uid);
+        _rfid.PICC_HaltA();
+        _rfidQuietUntilMs = millis() + RFID_POST_READ_QUIET_MS;
+        Serial.println("[RFID] Waiting for next tag...");
+        return;
+    }
 
     // Whitelist check — use compact form (strip colons from colon-separated uid)
     String uidCompact = uid;
@@ -338,8 +620,8 @@ void rfidLoop() {
     rfidNormaliseUid(uidCompactBuf);   // enforce uppercase, remove any stray separators
     bool authorized = rfidWhitelistContains(uidCompactBuf);
 
-    Serial.printf("[RFID] Tag scanned: %s  type=%s  size=%d bytes  authorized=%s  uptime=%lus\n",
-                  uid.c_str(), typeName.c_str(), _rfid.uid.size,
+    Serial.printf("[RFID] Tag scanned: %s  type=%s  profile=%s  size=%d bytes  authorized=%s  uptime=%lus\n",
+                  uid.c_str(), typeName.c_str(), profile, _rfid.uid.size,
                   authorized ? "YES" : "NO", millis() / 1000);
 
     // Post WS2812 strip event — green for authorized, red for unknown
@@ -349,9 +631,12 @@ void rfidLoop() {
         ws2812PostEvent(e);
     }
 
+    // Include new `profile` field (v0.3.17) alongside the existing schema — pure
+    // additive change; any Node-RED flow that ignores unknown fields is unaffected.
     String payload = "{\"uid\":\""         + uid
                    + "\",\"uid_size\":"    + String(_rfid.uid.size)
                    + ",\"card_type\":\""   + typeName
+                   + "\",\"profile\":\""   + String(profile)
                    + "\",\"authorized\":"  + (authorized ? "true" : "false") + "}";
 
     if (!mqttIsConnected()) {

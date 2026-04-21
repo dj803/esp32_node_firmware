@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.16-dev"
+#define FIRMWARE_VERSION           "0.3.17-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -234,6 +234,22 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
                                         // > RFID_REARM_MS so re-arming resumes naturally.
 #define RFID_DEBOUNCE_MS        2000    // Min ms between publishes for the same card UID
                                         // Different cards are always processed immediately
+
+// RFID Playground (v0.3.17) — programmatic read/write via MQTT
+//   cmd/rfid/program   arms the next card for a multi-block write
+//   cmd/rfid/read_block arms the next card for a single-block read
+//   cmd/rfid/cancel    clears any armed request
+// While armed the firmware enters a transient state (see RfidMode in rfid.h):
+// auto-publish on telemetry/rfid is paused until the action completes, times
+// out, or is cancelled. RFID_PROGRAM_TIMEOUT_MS is the default timeout — the
+// Node-RED request can override it on a per-request basis.
+#define RFID_PROGRAM_TIMEOUT_MS 15000   // Default idle timeout after arming (ms).
+                                        // If no tag is presented within this window
+                                        // the request auto-cancels with status="timeout".
+#define RFID_MAX_WRITE_BLOCKS      8    // Upper bound on writes[] in a single
+                                        // cmd/rfid/program payload — sized so the
+                                        // response JSON fits comfortably in the
+                                        // mqtt_client.h stack buffers.
 
 
 // -----------------------------------------------------------------------------
