@@ -34,3 +34,28 @@ of them cheap to bundle in.
    CI was the only signal. Run `pip install platformio` on the dev machine and
    confirm `pio run -e esp32dev` + `pio test -e native` both pass locally, so
    future iterations don't round-trip through CI for trivial syntax errors.
+
+6. OTA HTTPS certificate pinning                       (flagged 2026-04-21 review)
+   WHERE:    include/ota.h (ESP32-OTA-Pull + HTTPClient stack)
+   Current:  HTTPS encryption in transit but no root-CA verification. Trust
+             anchor is implicit in whoever hosts the JSON filter file
+             (GitHub Pages / Releases in current deployment).
+   Fix:      Embed the GitHub root CA PEM as a build-time constant and pass
+             to HTTPClient.setCACert() before calling the OTA-Pull library.
+             Needs a CA-rotation story — GitHub has rotated before.
+   Decided:  Left as-is for internal-IoT threat model. Revisit if the OTA
+             origin moves off github.com or if a CA-rotation automation
+             is in place.
+
+7. MQTT-over-TLS to the broker                         (flagged 2026-04-21 review)
+   WHERE:    include/mqtt_client.h + include/broker_discovery.h
+   Current:  Plaintext CONNECT on LAN. Username/password on the wire.
+             Credential-rotation payload is AES-128-GCM encrypted at the
+             application layer, so the crown jewels are still safe, but
+             the first-boot credentials are not.
+   Fix:      Switch to AsyncMqttClient::setSecure(true) + a pinned CA.
+             Requires broker TLS config + Node-RED reconfig. Not free.
+   Decided:  Private LAN, same rationale as WONT_DO item 1 (AP password).
+             Revisit if deployment moves off a trusted wire segment.
+   Note:     config.h has a one-line comment next to BROKER_DISCOVERY_ENABLED
+             documenting this decision so it isn't quietly forgotten.

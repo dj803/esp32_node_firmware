@@ -48,6 +48,18 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
+
+// ── NimBLE-Arduino 2.x API guard ──────────────────────────────────────────────
+// The callback shape, start() signature, and setScanCallbacks() name above all
+// depend on 2.x. A silent downgrade to 1.x (e.g. via platformio.ini edit) would
+// still compile most of ble.h because 1.x symbols partially overlap — but
+// `pScan->start(5, false)` has different argument semantics in 1.x and would
+// produce subtle runtime breakage (scans never completing, callbacks firing on
+// stack-allocated values). Fail the build instead.
+#if !defined(NIMBLE_CPP_VERSION_MAJOR) || NIMBLE_CPP_VERSION_MAJOR < 2
+#  error "ble.h requires NimBLE-Arduino 2.x. Bump lib_deps to >=2.0.0 or remove BLE_ENABLED."
+#endif
+
 #include "config.h"
 #include "ranging_math.h"   // rssiToDistance() — shared with espnow_ranging.h
 

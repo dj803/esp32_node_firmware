@@ -165,3 +165,86 @@ All firmware audit items have now shipped (1–14) or been resolved (2, 3).
 Items 15, 16, 17, 18 shipped 2026-04-21.
 Items 2, 19, 20, 21, 22 moved to WONT_DO.txt / SUGGESTED_IMPROVEMENTS.txt.
 This backlog is now fully closed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+APPENDIX — 2026-04-21 SENIOR-DEV REVIEW (v0.3.12 / 0.3.13 / 0.3.14)
+────────────────────────────────────────────────────────────────────────────────
+
+A fresh senior-dev audit after v0.3.11 surfaced 23 findings across security,
+robustness, and testability. They were grouped into three shippable packages:
+
+Package A — v0.3.12 "Portal hardening" 🔴
+  A1. XSS via unescaped HTML attribute interpolation (ap_portal.h).
+      Fixed: htmlEscape() applied to every gAppConfig/DeviceId interpolation
+      in both AP and Settings HTML builders.
+  A2. Sibling-provided OTA URL writes to NVS without strict validation.
+      Fixed: isSafeOtaUrl() in espnow_responder.h rejects non-http(s),
+      over-length (>APPCFG_URL_MAX), or control-char inputs before NVS save.
+  A3. CSRF single-global token race with httpd concurrent workers.
+      Fixed: 2-slot token ring guarded by portMUX_TYPE; each /settings GET
+      consumes a free slot; POST verifies and retires by token value.
+  A4. Blocking mbedtls_rsa_gen_key watchdog risk (~10 s on first boot).
+      Fixed: esp_task_wdt_reset() calls around the keygen + ctr_drbg_seed
+      + pk_setup critical section in _generateTlsCreds.
+
+Package B — v0.3.13 "Build reproducibility + network robustness" 🟡
+  B1. Unpinned GitHub lib_deps (4 libraries).
+      Fixed: pinned to exact commit SHAs (MFRC522v2, async-mqtt-client,
+      AsyncTCP) and release tag (ESP32-OTA-Pull#v1.0.2) in platformio.ini.
+      NimBLE-Arduino tightened from ^2.0.0 to ~2.0.0.
+  B2. Task-WDT downgrade on OTA failure (async_tcp unsubscribed forever).
+      Fixed: _otaReaddAsyncTcpToWdt() helper called on every failure path
+      in otaCheckNow(); recursive-retry guard replaced with explicit
+      isSiblingRetry parameter instead of function-static bool.
+  B3. Rate-limit refill overflow smell (`tokens + raw` before clamp).
+      Fixed: extracted to rate_limit.h as rateClampRefill(cur, elapsedMs)
+      with pre-add headroom clamp; unit-tested in test_native.
+  B4. Port-scan use-after-free risk (AsyncTCP callbacks fire after delete).
+      Fixed: onConnect/onError/onDisconnect detached before close+delete.
+  B5. RFID UID normalisation duplicated verbatim in add/remove handlers.
+      Fixed: rfidNormalizeUid() helper in mqtt_client.h; both handlers
+      call the shared helper.
+  B6. String-concat JSON status builders (heap-fragmentation).
+      Fixed: mqttPublishStatus and mqttPublishLedState use stack-allocated
+      snprintf (512 B and 192 B buffers respectively).
+  B7. NimBLE-Arduino silent 1.x downgrade risk.
+      Fixed: #if !defined(NIMBLE_CPP_VERSION_MAJOR) || < 2 #error guard in
+      ble.h; build fails loudly if someone reverts the lib pin.
+  B8. Logging consistency — Serial.printf stragglers.
+      Fixed: ~30 Serial.printf/println call sites in espnow_bootstrap.h
+      migrated to LOG_D/I/W/E macros (completes the v0.3.06 migration).
+
+Package C — v0.3.14 "Test coverage + observability" 🟢
+  C1. semverIsNewer() silent-tolerant parser.
+      Added: semverParse(s, maj, min, pat) strict overload — returns false
+      on nullptr / malformed / missing-component / trailing-garbage / negative.
+      Legacy tolerant API preserved for the OTA retry path.
+  C2. WireBundle LE/pack contract undocumented.
+      Added: doc comment in wire_bundle.h explaining the #pragma pack(1)
+      requirement (LX6 inserts 7 B pad otherwise) and the LE-only endianness
+      contract for timestamp. Struct extracted to include/wire_bundle.h so
+      the on-wire contract is host-testable (176 B, version byte at offset 0,
+      field round-trip via byte buffer).
+  C3. bootstrap task stack size (8 KB) undocumented.
+      Added: comment on espnowBootstrapBegin() citing the observed ~5.5 KB
+      high-water mark, giving ~30% headroom.
+  C4. MQTT plaintext-on-LAN design choice undocumented.
+      Added: one-line comment in config.h next to BROKER_DISCOVERY_ENABLED
+      cross-referencing SUGGESTED_IMPROVEMENTS.txt §7.
+  C5. Test coverage thin on critical invariants.
+      Added: 14 host tests in test/test_native/test_main.cpp
+        • peer_tracker re-observe-when-full + partial expire (2)
+        • rateClampRefill at cap / below cap / huge elapsed / zero (4)
+        • WireBundle size / version-byte offset / byte round-trip (3)
+        • ranging_math extreme RSSI finite / rssi > tx clamp (2)
+        • semverParse accept / reject trailing garbage / reject missing (3)
+      Total now ~54 tests (was 40).
+
+Explicitly NOT in scope (documented in SUGGESTED_IMPROVEMENTS.txt):
+  • OTA HTTPS cert pinning (§6) — same rationale as AP password in WONT_DO.
+  • MQTT-over-TLS to broker (§7) — private LAN; config.h notes the decision.
+
+Appendix items all shipped 2026-04-21. Backlog remains closed; only
+SUGGESTED_IMPROVEMENTS.txt §1 (Node 24 CI upgrade, deadline June 2026)
+remains as a scheduled future-work item.

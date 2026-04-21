@@ -11,6 +11,7 @@
 #include <mbedtls/rsa.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/oid.h>
+#include "esp_task_wdt.h"               // esp_task_wdt_reset() — keep WDT fed during keygen
 #include "config.h"
 #include "logging.h"
 #include "credentials.h"
@@ -129,16 +130,28 @@ static bool _generateTlsCreds() {
 
     LOG_I("AP Portal", "Generating RSA-2048 self-signed cert (~10 s)...");
 
+    // The whole keygen call blocks the task long enough (up to ~15 s on slow
+    // entropy) that the task watchdog — if the caller is a WDT-subscribed task —
+    // will bite. Feed it around each long step. esp_task_wdt_reset() is a no-op
+    // for tasks that aren't subscribed, so this is safe from setup() too.
+    esp_task_wdt_reset();
+
     const char* pers = "esp32_portal_cert";
     ret = mbedtls_ctr_drbg_seed(&rng, mbedtls_entropy_func, &entropy,
                                  (const unsigned char*)pers, strlen(pers));
     if (ret) { LOG_E("AP Portal", "ctr_drbg_seed: -0x%04X", -ret); goto cleanup; }
+    esp_task_wdt_reset();
 
     ret = mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
     if (ret) { LOG_E("AP Portal", "pk_setup: -0x%04X", -ret); goto cleanup; }
 
+    // mbedtls_rsa_gen_key has no progress callback in the current lwIP/mbedtls
+    // build, so we can only feed the WDT immediately before and after. Keeping
+    // a generous task WDT timeout (>15 s) is still required.
+    esp_task_wdt_reset();
     ret = mbedtls_rsa_gen_key(mbedtls_pk_rsa(pk),
                               mbedtls_ctr_drbg_random, &rng, 2048, 65537);
+    esp_task_wdt_reset();
     if (ret) { LOG_E("AP Portal", "rsa_gen_key: -0x%04X", -ret); goto cleanup; }
     LOG_I("AP Portal", "RSA-2048 key generated");
 
@@ -233,21 +246,31 @@ static bool loadOrGenerateTlsCreds() {
 
 
 // ── CSRF token storage ─────────────────────────────────────────────────────────
-// Each portal mode keeps its own token. A fresh token is generated on every GET
-// and embedded in the form as a hidden field. The POST handler verifies the
-// submitted field value matches the last generated token.
+// Each portal mode keeps a small ring of recently-issued tokens. A fresh token
+// is generated on every GET and embedded in the form as a hidden field. The
+// POST handler accepts any unexpired slot and clears it on success (single-use).
 //
 // 128-bit token (32 lowercase hex chars) via esp_random() — unguessable on a
-// per-session basis. Token is one-shot: the next GET replaces it.
+// per-session basis. Ring size 2 avoids the race that existed with a single
+// global slot: two concurrent GETs no longer invalidate each other's token,
+// which would cause a spurious 403 when the admin finally submitted the form.
+//
+// A portMUX guards all read/modify/write so concurrent httpd worker tasks
+// cannot tear a half-generated token.
 //
 // SameSite=Strict cookie set on GET prevents the browser from attaching the
 // cookie on any cross-origin POST, blocking drive-by CSRF from malicious pages
 // the admin happens to visit while the portal is open.
 
-static char _csrfTokenAp[33]       = {};   // Token for POST /save (AP mode)
-static char _csrfTokenSettings[33] = {};   // Token for POST /settings (Settings mode)
+#define CSRF_RING_SLOTS 2
+static char _csrfTokensAp[CSRF_RING_SLOTS][33]       = {};  // Tokens for POST /save
+static char _csrfTokensSettings[CSRF_RING_SLOTS][33] = {};  // Tokens for POST /settings
+static uint8_t _csrfNextAp       = 0;
+static uint8_t _csrfNextSettings = 0;
+static portMUX_TYPE _csrfMux = portMUX_INITIALIZER_UNLOCKED;
 
-static void generateCsrfToken(char* out) {
+// Generate a fresh token into an arbitrary 33-byte buffer.
+static void _generateCsrfRaw(char* out) {
     // Four 32-bit words from the hardware RNG → 128 bits of entropy
     uint8_t bytes[16];
     for (int i = 0; i < 4; i++) {
@@ -258,6 +281,91 @@ static void generateCsrfToken(char* out) {
         snprintf(out + i * 2, 3, "%02x", bytes[i]);
     }
     out[32] = '\0';
+}
+
+// Allocate the next slot for mode M (AP or Settings), copy the token into `out`.
+// `ring` points to the per-mode token array; `next` is the per-mode round-robin index.
+static void generateCsrfTokenApRing(char* out) {
+    portENTER_CRITICAL(&_csrfMux);
+    uint8_t slot = _csrfNextAp;
+    _csrfNextAp = (uint8_t)((_csrfNextAp + 1) % CSRF_RING_SLOTS);
+    _generateCsrfRaw(_csrfTokensAp[slot]);
+    memcpy(out, _csrfTokensAp[slot], 33);
+    portEXIT_CRITICAL(&_csrfMux);
+}
+
+static void generateCsrfTokenSettingsRing(char* out) {
+    portENTER_CRITICAL(&_csrfMux);
+    uint8_t slot = _csrfNextSettings;
+    _csrfNextSettings = (uint8_t)((_csrfNextSettings + 1) % CSRF_RING_SLOTS);
+    _generateCsrfRaw(_csrfTokensSettings[slot]);
+    memcpy(out, _csrfTokensSettings[slot], 33);
+    portEXIT_CRITICAL(&_csrfMux);
+}
+
+// Match the submitted token against any ring slot. On match, clear that slot
+// (single-use) and return true. Empty slots (first byte NUL) never match.
+static bool verifyAndConsumeCsrfAp(const char* submitted) {
+    if (!submitted || submitted[0] == '\0') return false;
+    bool ok = false;
+    portENTER_CRITICAL(&_csrfMux);
+    for (int i = 0; i < CSRF_RING_SLOTS; i++) {
+        if (_csrfTokensAp[i][0] != '\0' &&
+            strncmp(_csrfTokensAp[i], submitted, 32) == 0) {
+            _csrfTokensAp[i][0] = '\0';   // invalidate — single-use
+            ok = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&_csrfMux);
+    return ok;
+}
+
+static bool verifyAndConsumeCsrfSettings(const char* submitted) {
+    if (!submitted || submitted[0] == '\0') return false;
+    bool ok = false;
+    portENTER_CRITICAL(&_csrfMux);
+    for (int i = 0; i < CSRF_RING_SLOTS; i++) {
+        if (_csrfTokensSettings[i][0] != '\0' &&
+            strncmp(_csrfTokensSettings[i], submitted, 32) == 0) {
+            _csrfTokensSettings[i][0] = '\0';
+            ok = true;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&_csrfMux);
+    return ok;
+}
+
+
+// ── htmlEscape ────────────────────────────────────────────────────────────────
+// Escape the five HTML special characters so a value interpolated into a
+// double-quoted attribute (e.g. value="...") cannot break out of the attribute,
+// close the tag, or inject a <script>.
+//
+// Values go through this helper on every GET to /settings and / (AP). Sources:
+//   - gAppConfig.* fields, persisted in NVS and writable by anyone who
+//     compromises NVS or the OTA_URL_RESPONSE ESP-NOW path.
+//   - DeviceId::get() (UUID — safe but defensive escaping costs nothing).
+//   - POST success echo (cfg.* values just written to NVS).
+//
+// Returns an Arduino String for ergonomic concatenation with the existing
+// `String + String` HTML builders.
+static String htmlEscape(const char* in) {
+    if (!in) return String();
+    String out;
+    out.reserve(strlen(in) + 8);
+    for (const char* p = in; *p; p++) {
+        switch (*p) {
+            case '&':  out += "&amp;";  break;
+            case '<':  out += "&lt;";   break;
+            case '>':  out += "&gt;";   break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&#39;";  break;
+            default:   out += *p;       break;
+        }
+    }
+    return out;
 }
 
 
@@ -407,8 +515,12 @@ static esp_err_t apHandleStatus(httpd_req_t* req) {
 
 // ── GET / — Full setup form (AP mode only) ────────────────────────────────────
 static esp_err_t apHandleRoot(httpd_req_t* req) {
-    generateCsrfToken(_csrfTokenAp);   // Fresh token on every GET
+    char tokenBuf[33];
+    generateCsrfTokenApRing(tokenBuf);   // Fresh token into an available ring slot
 
+    // All gAppConfig.* values are HTML-escaped: a value containing " or > would
+    // otherwise break out of the value="…" attribute and allow HTML/JS injection
+    // via a NVS writer or a crafted ESP-NOW OTA_URL_RESPONSE.
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -425,7 +537,7 @@ static esp_err_t apHandleRoot(httpd_req_t* req) {
         "</button>"
 
         "<form method='POST' action='/save'>"
-        "<input type='hidden' name='csrf' value='" + String(_csrfTokenAp) + "'>"
+        "<input type='hidden' name='csrf' value='" + String(tokenBuf) + "'>"
 
         "<h3>Wi-Fi</h3>"
         "<label>SSID *</label>"
@@ -445,23 +557,23 @@ static esp_err_t apHandleRoot(httpd_req_t* req) {
         "<p class='note'>Required for automatic firmware updates. "
             "Paste the stable GitHub Pages URL for the ota.json filter file.</p>"
         "<label>OTA JSON URL *</label>"
-        "<input name='ota_json_url' value='" + String(gAppConfig.ota_json_url) + "' required "
+        "<input name='ota_json_url' value='" + htmlEscape(gAppConfig.ota_json_url) + "' required "
                "placeholder='https://owner.github.io/repo/ota.json'>"
 
         "<h3>MQTT Topic Hierarchy</h3>"
         "<p class='note'>ISA-95 path: Enterprise/Site/Area/Line/Cell/DeviceType/DeviceId/...</p>"
         "<label>Enterprise</label>"
-        "<input name='mq_enterprise' value='" + String(gAppConfig.mqtt_enterprise) + "'>"
+        "<input name='mq_enterprise' value='" + htmlEscape(gAppConfig.mqtt_enterprise) + "'>"
         "<label>Site</label>"
-        "<input name='mq_site' value='" + String(gAppConfig.mqtt_site) + "'>"
+        "<input name='mq_site' value='" + htmlEscape(gAppConfig.mqtt_site) + "'>"
         "<label>Area</label>"
-        "<input name='mq_area' value='" + String(gAppConfig.mqtt_area) + "'>"
+        "<input name='mq_area' value='" + htmlEscape(gAppConfig.mqtt_area) + "'>"
         "<label>Line</label>"
-        "<input name='mq_line' value='" + String(gAppConfig.mqtt_line) + "'>"
+        "<input name='mq_line' value='" + htmlEscape(gAppConfig.mqtt_line) + "'>"
         "<label>Cell</label>"
-        "<input name='mq_cell' value='" + String(gAppConfig.mqtt_cell) + "'>"
+        "<input name='mq_cell' value='" + htmlEscape(gAppConfig.mqtt_cell) + "'>"
         "<label>Device Type</label>"
-        "<input name='mq_devtype' value='" + String(gAppConfig.mqtt_device_type) + "'>"
+        "<input name='mq_devtype' value='" + htmlEscape(gAppConfig.mqtt_device_type) + "'>"
 
         "<h3>Security</h3>"
         "<label>Rotation Key <span class='note'>(32 hex chars = 16 bytes, optional)</span></label>"
@@ -475,7 +587,7 @@ static esp_err_t apHandleRoot(httpd_req_t* req) {
     // Set CSRF cookie for defence-in-depth (SameSite=Strict blocks cross-origin POST)
     char cookieBuf[72];
     snprintf(cookieBuf, sizeof(cookieBuf),
-             "csrf=%s; SameSite=Strict; HttpOnly", _csrfTokenAp);
+             "csrf=%s; SameSite=Strict; HttpOnly", tokenBuf);
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Set-Cookie", cookieBuf);
     httpd_resp_send(req, html.c_str(), (ssize_t)html.length());
@@ -493,9 +605,9 @@ static esp_err_t apHandleSave(httpd_req_t* req) {
     }
 
     // ── CSRF check ────────────────────────────────────────────────────────────
+    // Try every ring slot; on match the slot is cleared so the token is single-use.
     String csrfArg = formArg("csrf");
-    if (_csrfTokenAp[0] == '\0' || csrfArg.isEmpty() ||
-        csrfArg != String(_csrfTokenAp)) {
+    if (!verifyAndConsumeCsrfAp(csrfArg.c_str())) {
         LOG_W("AP Portal", "POST /save rejected — CSRF check failed");
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "text/plain");
@@ -504,8 +616,6 @@ static esp_err_t apHandleSave(httpd_req_t* req) {
             HTTPD_RESP_USE_STRLEN);
         return ESP_OK;
     }
-    // Invalidate the token — each token is single-use.
-    _csrfTokenAp[0] = '\0';
 
     String ssid       = formArg("wifi_ssid");
     String murl       = formArg("mqtt_broker_url");
@@ -683,30 +793,34 @@ inline bool settingsServerIsRunning() { return _settingsServerRunning; }
 
 // ── GET /settings — Settings-only form (STA mode) ────────────────────────────
 static esp_err_t settingsHandleGet(httpd_req_t* req) {
-    generateCsrfToken(_csrfTokenSettings);   // Fresh token on every GET
+    char tokenBuf[33];
+    generateCsrfTokenSettingsRing(tokenBuf);   // Fresh token into ring slot
 
     String ip   = WiFi.localIP().toString();
+    // gAppConfig.* and DeviceId::get() are HTML-escaped so a malicious value
+    // (e.g. a poisoned ota_json_url arriving via ESP-NOW) cannot break out of
+    // the value="…" attribute and inject HTML/JS into the admin's browser.
     String html = String("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>ESP32 Settings</title>"
         "<style>") + PAGE_STYLE + "</style></head><body>"
         "<h2>ESP32 Settings</h2>"
-        "<p class='note'>Device ID: " + DeviceId::get() + "<br>"
-                         "IP: " + ip + "</p>"
+        "<p class='note'>Device ID: " + htmlEscape(DeviceId::get().c_str()) + "<br>"
+                         "IP: " + htmlEscape(ip.c_str()) + "</p>"
 
         "<form method='POST' action='/settings'>"
-        "<input type='hidden' name='csrf' value='" + String(_csrfTokenSettings) + "'>"
+        "<input type='hidden' name='csrf' value='" + String(tokenBuf) + "'>"
 
         "<h3>OTA Firmware Updates</h3>"
         "<label>OTA JSON URL *</label>"
-        "<input name='ota_json_url' value='" + String(gAppConfig.ota_json_url) + "' required "
+        "<input name='ota_json_url' value='" + htmlEscape(gAppConfig.ota_json_url) + "' required "
                "placeholder='https://owner.github.io/repo/ota.json'>"
 
         "<h3>MQTT Broker</h3>"
         "<p class='note'>Changing these requires a restart to reconnect to the broker.</p>"
         "<label>Broker URL *</label>"
-        "<input name='mqtt_broker_url' value='" + String("") + "' "
+        "<input name='mqtt_broker_url' value='' "
                "placeholder='leave blank to keep current' >"
         "<label>Username</label>"
         "<input name='mqtt_username' placeholder='leave blank to keep current'>"
@@ -716,17 +830,17 @@ static esp_err_t settingsHandleGet(httpd_req_t* req) {
         "<h3>MQTT Topic Hierarchy</h3>"
         "<p class='note'>ISA-95: Enterprise/Site/Area/Line/Cell/DeviceType/DeviceId/...</p>"
         "<label>Enterprise</label>"
-        "<input name='mq_enterprise' value='" + String(gAppConfig.mqtt_enterprise) + "'>"
+        "<input name='mq_enterprise' value='" + htmlEscape(gAppConfig.mqtt_enterprise) + "'>"
         "<label>Site</label>"
-        "<input name='mq_site'       value='" + String(gAppConfig.mqtt_site)       + "'>"
+        "<input name='mq_site'       value='" + htmlEscape(gAppConfig.mqtt_site)       + "'>"
         "<label>Area</label>"
-        "<input name='mq_area'       value='" + String(gAppConfig.mqtt_area)       + "'>"
+        "<input name='mq_area'       value='" + htmlEscape(gAppConfig.mqtt_area)       + "'>"
         "<label>Line</label>"
-        "<input name='mq_line'       value='" + String(gAppConfig.mqtt_line)       + "'>"
+        "<input name='mq_line'       value='" + htmlEscape(gAppConfig.mqtt_line)       + "'>"
         "<label>Cell</label>"
-        "<input name='mq_cell'       value='" + String(gAppConfig.mqtt_cell)       + "'>"
+        "<input name='mq_cell'       value='" + htmlEscape(gAppConfig.mqtt_cell)       + "'>"
         "<label>Device Type</label>"
-        "<input name='mq_devtype'    value='" + String(gAppConfig.mqtt_device_type)+ "'>"
+        "<input name='mq_devtype'    value='" + htmlEscape(gAppConfig.mqtt_device_type)+ "'>"
 
         "<button type='submit'>Save Settings</button>"
         "</form>"
@@ -741,7 +855,7 @@ static esp_err_t settingsHandleGet(httpd_req_t* req) {
 
     char cookieBuf[72];
     snprintf(cookieBuf, sizeof(cookieBuf),
-             "csrf=%s; SameSite=Strict; HttpOnly", _csrfTokenSettings);
+             "csrf=%s; SameSite=Strict; HttpOnly", tokenBuf);
     httpd_resp_set_type(req, "text/html");
     httpd_resp_set_hdr(req, "Set-Cookie", cookieBuf);
     httpd_resp_send(req, html.c_str(), (ssize_t)html.length());
@@ -759,9 +873,9 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
     }
 
     // ── CSRF check ────────────────────────────────────────────────────────────
+    // Try every ring slot; on match the slot is cleared so the token is single-use.
     String csrfArg = formArg("csrf");
-    if (_csrfTokenSettings[0] == '\0' || csrfArg.isEmpty() ||
-        csrfArg != String(_csrfTokenSettings)) {
+    if (!verifyAndConsumeCsrfSettings(csrfArg.c_str())) {
         LOG_W("Settings", "POST /settings rejected — CSRF check failed");
         httpd_resp_set_status(req, "403 Forbidden");
         httpd_resp_set_type(req, "text/plain");
@@ -770,7 +884,6 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
             HTTPD_RESP_USE_STRLEN);
         return ESP_OK;
     }
-    _csrfTokenSettings[0] = '\0';   // single-use
 
     String otaJsonUrl = formArg("ota_json_url");
     if (otaJsonUrl.isEmpty()) {
@@ -845,11 +958,17 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
         return ESP_OK;
     }
 
+    // Echo the saved values — escape every field since cfg.* mirrors NVS and can
+    // carry attacker-controlled strings (ESP-NOW OTA_URL_RESPONSE path) that we
+    // don't want interpolated as raw HTML in the admin's browser.
     String msg = String("<div class='ok'>Settings saved.<br>")
-               + "OTA JSON URL: " + cfg.ota_json_url + "<br>"
-               + "MQTT hierarchy: " + cfg.mqtt_enterprise + "/" + cfg.mqtt_site
-               + "/" + cfg.mqtt_area + "/" + cfg.mqtt_line + "/" + cfg.mqtt_cell
-               + "/" + cfg.mqtt_device_type;
+               + "OTA JSON URL: "  + htmlEscape(cfg.ota_json_url)    + "<br>"
+               + "MQTT hierarchy: " + htmlEscape(cfg.mqtt_enterprise)
+               + "/" + htmlEscape(cfg.mqtt_site)
+               + "/" + htmlEscape(cfg.mqtt_area)
+               + "/" + htmlEscape(cfg.mqtt_line)
+               + "/" + htmlEscape(cfg.mqtt_cell)
+               + "/" + htmlEscape(cfg.mqtt_device_type);
     if (mqttChanged) msg += "<br>MQTT broker credentials updated — restart required.";
     msg += "</div>";
 

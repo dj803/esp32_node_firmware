@@ -718,6 +718,124 @@ Files: node-red/flows.json (Heartbeats, Alpha BLE Scanner, ESP-NOW Tracking tabs
 
 
 ────────────────────────────────────────────────────────────────────────────────
+12. Portal hardening (v0.3.12 — 2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+[ap_portal.h] XSS in settings/AP portals via unescaped HTML attribute values
+  Cause: gAppConfig fields (ota_json_url, mqtt_enterprise/site/area/line/cell/
+         device_type) and DeviceId strings were concatenated directly into
+         `value="..."` HTML attributes using String +. A value containing
+         " or > broke the attribute boundary.
+  Attack path: sibling sends malicious OTA URL via ESP-NOW → written to NVS
+               → rendered unescaped in /settings → admin browser executes JS.
+  Fix: htmlEscape(in, out, n) helper (escapes & < > " ') applied to every
+       user-controlled value in both buildApHtml() and buildSettingsHtml().
+
+[espnow_responder.h] Sibling-provided OTA URL written to NVS without validation
+  Fix: isSafeOtaUrl(s, nBytes) validates scheme (must be http:// or https://),
+       length (<= APPCFG_URL_MAX), and absence of control characters (< 0x20 or
+       0x7F) before any NVS write. Malformed URLs are LOG_W'd and dropped.
+
+[ap_portal.h] CSRF token race with httpd concurrent worker tasks
+  Fix: _csrfTokenSettings[2] 2-slot ring guarded by portMUX_TYPE. Each GET
+       /settings allocates the next free slot; POST verifies by token value
+       and marks the slot free. Two concurrent GETs can coexist safely.
+
+[ap_portal.h] Blocking mbedtls_rsa_gen_key (~10 s) with no watchdog kicks
+  Fix: esp_task_wdt_reset() calls added around mbedtls_ctr_drbg_seed,
+       mbedtls_pk_setup, and mbedtls_rsa_gen_key in _generateTlsCreds.
+       Prevents a stalled entropy source from triggering task-WDT reset
+       before keygen completes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+13. Build reproducibility + network robustness (v0.3.13 — 2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+[platformio.ini] Unpinned GitHub lib_deps — upstream change silently breaks build
+  Four libraries had no tag/SHA pins. Pinned:
+    MFRC522v2     → #f8b1eeef77176dfa064efea466bed13919dc5efc
+    async-mqtt-client → #3d93fc7f662e65366f8e2b0d88b108f874f035b9
+    AsyncTCP      → #ef448a8a1dffe4ec1b72326dd5a26211ff227b49
+    ESP32-OTA-Pull → #v1.0.2
+    NimBLE-Arduino: ^2.0.0 → ~2.0.0 (blocks silent 2.x minor-API drift)
+
+[ota.h] Task-WDT downgrade on OTA flash failure
+  Cause: esp_task_wdt_delete(async_tcp) is called before the OTA download.
+         If the flash step fails, the task was never re-added; async_tcp ran
+         for the rest of the session without WDT supervision.
+  Fix: _otaReaddAsyncTcpToWdt() called on every failure path before return.
+       Static _otaRetrying replaced with explicit otaCheckNow(bool isSiblingRetry)
+       parameter — makes the recursive-retry guard explicit and eliminates the
+       latent "forgot to clear flag" risk.
+
+[espnow_responder.h] Rate-limit refill overflow code smell
+  Cause: toAdd = elapsed / RATE_REFILL_MS computed before clamp; if CAP were
+         raised to ≥200 the add could overflow uint8_t before the post-add clamp.
+  Fix: Extracted to include/rate_limit.h as rateClampRefill(cur, elapsedMs).
+       Clamps the addend against remaining headroom (RATE_BUCKET_CAP - cur)
+       before the add. Overflow is structurally impossible regardless of CAP.
+
+[broker_discovery.h] Port-scan AsyncTCP callbacks potentially fire after delete
+  Cause: tryPortScan() cleanup called client->close(true) and delete without
+         detaching callbacks first. A queued lwIP event could write to freed memory.
+  Fix: onConnect(nullptr,nullptr) / onError / onDisconnect detached for each
+       slot before close + delay(30) + delete.
+
+[mqtt_client.h] RFID UID normalisation duplicated verbatim in add/remove handlers
+  Fix: rfidNormalizeUid(in, out, outLen) helper extracted; both handlers call it.
+
+[mqtt_client.h] String-concat JSON status builders
+  Fix: mqttPublishStatus and mqttPublishLedState rewritten with snprintf on
+       512-byte and 192-byte stack buffers; truncation is LOG_W'd.
+
+[ble.h] Silent NimBLE 1.x downgrade risk
+  Fix: #if !defined(NIMBLE_CPP_VERSION_MAJOR) || NIMBLE_CPP_VERSION_MAJOR < 2
+       #error guard; build fails loudly if the library is inadvertently downgraded.
+
+[espnow_bootstrap.h] Serial.printf stragglers
+  Fix: ~30 remaining Serial.printf/println in onEspNowReceive and the
+       SIBLING_PRIMARY_SELECTION block migrated to LOG_D/I/W/E.
+       Completes the logging migration started in v0.3.06.
+
+
+────────────────────────────────────────────────────────────────────────────────
+14. Test coverage + observability (v0.3.14 — 2026-04-21)
+────────────────────────────────────────────────────────────────────────────────
+
+[semver.h] semverIsNewer() tolerant-parse has no strict sibling
+  Fix: semverParse(s, maj, min, pat) strict overload added. Returns false for
+       nullptr, malformed strings, missing components, trailing garbage, or
+       negative components. Leaves output parameters untouched on failure.
+       Existing semverIsNewer() preserved unchanged for the OTA retry path.
+
+[wire_bundle.h] WireBundle struct extracted from espnow_bootstrap.h
+  WireBundle, ESPNOW_WIRE_VERSION, and static_assert(sizeof==176) now live
+  in include/wire_bundle.h. Depends only on <stdint.h> — safe for host unit
+  tests. espnow_bootstrap.h and test_main.cpp both include it.
+  Doc comment added explaining the #pragma pack(1) requirement (prevents 7-byte
+  LX6 alignment padding before uint64 timestamp) and the LE-only constraint.
+
+[espnow_bootstrap.h] 8 KB bootstrap task stack size undocumented
+  Fix: comment on espnowBootstrapBegin() citing the observed ~5.5 KB
+       high-water mark, giving ~30% headroom for future stack growth.
+
+[config.h] MQTT plaintext-on-LAN design choice not recorded
+  Fix: one-line comment next to BROKER_DISCOVERY_ENABLED cross-referencing
+       SUGGESTED_IMPROVEMENTS.txt §7 so the decision isn't quietly forgotten.
+
+[test_main.cpp] Host test count raised from 40 → ~54
+  New tests:
+    peer_tracker  — re-observe-when-full + partial expire (2 tests)
+    rate_limit    — at cap / proportional refill / huge elapsed / zero (4 tests)
+    wire_bundle   — 176-byte size / version-byte offset / byte round-trip (3)
+    ranging_math  — extreme RSSI finite / rssi-above-tx clamp floor (2)
+    semverParse   — accept well-formed / reject trailing garbage /
+                    reject missing components / nullptr (3)
+  All exercised via `pio test -e native` (requires gcc on build host).
+
+
+────────────────────────────────────────────────────────────────────────────────
 MISC REMINDERS
 ────────────────────────────────────────────────────────────────────────────────
 

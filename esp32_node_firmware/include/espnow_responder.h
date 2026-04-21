@@ -89,6 +89,8 @@ static char          _receivedOtaUrl[201] = {0};   // max 200 chars + null
 #define RATE_REFILL_MS    60000   // One token refills per 60 s
 #define RATE_MAC_SLOTS    8       // Track up to 8 distinct requesters
 
+#include "rate_limit.h"   // rateClampRefill() — host-testable refill math
+
 static struct {
     uint8_t  mac[6];
     uint8_t  tokens;        // Current token count (0 … RATE_BUCKET_CAP)
@@ -107,12 +109,9 @@ static bool responderIsRateLimited(const uint8_t* mac) {
         if (memcmp(_rateBuckets[i].mac, mac, 6) != 0) continue;
 
         // Found — top up tokens based on elapsed time
-        uint32_t elapsed  = now - _rateBuckets[i].lastRefillMs;
-        uint8_t  toAdd    = (uint8_t)(elapsed / RATE_REFILL_MS);
-        if (toAdd > 0) {
-            uint8_t refilled          = _rateBuckets[i].tokens + toAdd;
-            _rateBuckets[i].tokens    = refilled < RATE_BUCKET_CAP
-                                        ? refilled : RATE_BUCKET_CAP;
+        uint32_t elapsed = now - _rateBuckets[i].lastRefillMs;
+        if (elapsed >= RATE_REFILL_MS) {
+            _rateBuckets[i].tokens       = rateClampRefill(_rateBuckets[i].tokens, elapsed);
             _rateBuckets[i].lastRefillMs = now;
         }
 
@@ -280,9 +279,40 @@ static void onEspNowOtaUrlRequest(const esp_now_recv_info_t* recvInfo,
 }
 
 
+// Returns true if `s` looks like a safe http(s) URL:
+//   - begins with "http://" or "https://"
+//   - length strictly within appcfg bounds (NUL terminator + at least one byte
+//     after the scheme)
+//   - contains no control characters (<0x20 or ==0x7F) — blocks newline/tab
+//     injection that would later split HTTP headers or break out of the
+//     value="..." attribute in the settings page (even with htmlEscape, defence
+//     in depth is cheap)
+//
+// Applied to URLs arriving on the wire (OTA_URL_RESP) before they are written
+// to NVS (and therefore before they can ever be rendered into HTML).
+static bool isSafeOtaUrl(const char* s, size_t nBytes) {
+    if (!s || nBytes == 0) return false;
+    if (nBytes >= APP_CFG_OTA_JSON_URL_LEN) return false;    // no room for NUL
+    bool okScheme = (nBytes >= 7 && memcmp(s, "http://",  7) == 0)
+                 || (nBytes >= 8 && memcmp(s, "https://", 8) == 0);
+    if (!okScheme) return false;
+    for (size_t i = 0; i < nBytes; i++) {
+        uint8_t c = (uint8_t)s[i];
+        if (c < 0x20 || c == 0x7F) return false;
+    }
+    return true;
+}
+
+
 // ── OTA URL response handler (requester side, OPERATIONAL mode) ───────────────
 // Populates _receivedOtaUrl when a sibling's OTA_URL_RESP arrives.
 // Called from espnowReceiveDispatch while this node is OPERATIONAL.
+//
+// Defence note: a malicious sibling can craft any payload here. The URL is
+// validated (scheme, length, control chars) BEFORE being copied to the buffer
+// that will later be written to NVS via espnowRequestOtaUrl(). Combined with
+// htmlEscape() in ap_portal.h this closes the XSS chain that previously let a
+// sibling poison the admin's /settings page.
 static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
                                     const uint8_t* data, int len) {
     if (len < 2) return;
@@ -292,6 +322,10 @@ static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
     uint8_t urlLen = data[8];
     if (urlLen == 0 || urlLen > 200) return;
     if (len < (int)(9 + urlLen)) return;
+    if (!isSafeOtaUrl((const char*)(data + 9), urlLen)) {
+        LOG_W("ESP-NOW", "OTA URL response rejected — malformed or non-http(s)");
+        return;
+    }
     memcpy(_receivedOtaUrl, data + 9, urlLen);
     _receivedOtaUrl[urlLen] = '\0';
     _otaUrlRespReceived = true;

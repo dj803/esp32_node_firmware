@@ -143,29 +143,50 @@ static void mqttPublish(const char* prefix, const String& payload,
 // `extraJson` is an optional string of additional key:value pairs to append,
 //   e.g. "\"target_version\":\"1.2.0\""  — must NOT include surrounding braces.
 static void mqttPublishStatus(const char* event, const char* extraJson = nullptr) {
-    // Include UUID (primary identity) and MAC (hardware reference) in every status message.
-    // device_id is the stable UUID that persists across OTA updates.
-    // mac is the hardware MAC address, useful for physical device tracing.
-    String macStr = DeviceId::getMac();   // e.g. "AA:BB:CC:A3:F2:C1"
-
-    // Build the JSON payload hand-constructed to avoid heap fragmentation.
-    String payload = "{\"device_id\":\"" + DeviceId::get() + "\""
-                   + ",\"mac\":\""          + macStr + "\""
-                     ",\"firmware_version\":\"" FIRMWARE_VERSION "\""
-                   + ",\"firmware_ts\":"     + String((uint32_t)FIRMWARE_BUILD_TIMESTAMP)
-                   + ",\"uptime_s\":"        + String(millis() / 1000)
-                   + ",\"event\":\""         + event + "\"";
-    if (extraJson) {
-        payload += ",";          // Append extra fields if provided
-        payload += extraJson;
+    // Build the JSON payload onto a stack buffer with snprintf() — avoids the
+    // heap-fragmentation churn that the previous String+String chain produced
+    // on every heartbeat (30 s cadence). 512 B is sized to fit the longest
+    // observed `event` + `extraJson` tail by a comfortable margin; on overflow
+    // snprintf truncates rather than corrupts, and we log a warning.
+    char buf[512];
+    int n;
+    if (extraJson && *extraJson) {
+        n = snprintf(buf, sizeof(buf),
+            "{\"device_id\":\"%s\","
+            "\"mac\":\"%s\","
+            "\"firmware_version\":\"" FIRMWARE_VERSION "\","
+            "\"firmware_ts\":%u,"
+            "\"uptime_s\":%u,"
+            "\"event\":\"%s\","
+            "%s}",
+            DeviceId::get().c_str(),
+            DeviceId::getMac().c_str(),
+            (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
+            (unsigned)(millis() / 1000),
+            event, extraJson);
+    } else {
+        n = snprintf(buf, sizeof(buf),
+            "{\"device_id\":\"%s\","
+            "\"mac\":\"%s\","
+            "\"firmware_version\":\"" FIRMWARE_VERSION "\","
+            "\"firmware_ts\":%u,"
+            "\"uptime_s\":%u,"
+            "\"event\":\"%s\"}",
+            DeviceId::get().c_str(),
+            DeviceId::getMac().c_str(),
+            (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
+            (unsigned)(millis() / 1000),
+            event);
     }
-    payload += "}";
+    if (n < 0 || n >= (int)sizeof(buf)) {
+        LOG_W("MQTT", "status payload truncated (event=%s, wanted=%d)", event, n);
+    }
 
     // The boot announcement is published as retained QoS 1 so that any broker
     // subscriber (e.g. a Node-RED flow) that comes online after the device boots
     // still sees the last known status. All other events are non-retained.
     bool retain = (strcmp(event, "boot") == 0);
-    mqttPublish("status", payload, 1, retain);
+    mqttPublish("status", String(buf), 1, retain);
 }
 
 // Typed overload — converts a FwEvent enum value to its string representation
@@ -196,14 +217,22 @@ static void mqttPublishJson(const char* prefix, JsonDocument& doc,
 static void mqttPublishLedState(const char* state,
                                 uint8_t r, uint8_t g, uint8_t b,
                                 uint8_t brightness, uint8_t count) {
-    String payload = "{\"state\":\""    + String(state)      + "\""
-                   + ",\"r\":"          + String(r)
-                   + ",\"g\":"          + String(g)
-                   + ",\"b\":"          + String(b)
-                   + ",\"brightness\":" + String(brightness)
-                   + ",\"count\":"      + String(count)
-                   + ",\"uptime_s\":"   + String(millis() / 1000) + "}";
-    mqttPublish("status/led", payload, 1, true);   // QoS 1, retained
+    // snprintf on a stack buffer — same rationale as mqttPublishStatus().
+    // 192 B covers the maximum-length field values with headroom.
+    char buf[192];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"state\":\"%s\","
+        "\"r\":%u,\"g\":%u,\"b\":%u,"
+        "\"brightness\":%u,\"count\":%u,"
+        "\"uptime_s\":%u}",
+        state,
+        (unsigned)r, (unsigned)g, (unsigned)b,
+        (unsigned)brightness, (unsigned)count,
+        (unsigned)(millis() / 1000));
+    if (n < 0 || n >= (int)sizeof(buf)) {
+        LOG_W("MQTT", "led state payload truncated");
+    }
+    mqttPublish("status/led", String(buf), 1, true);   // QoS 1, retained
 }
 
 
@@ -265,6 +294,22 @@ static void handleLedCommand(const char* payload, size_t len) {
 }
 
 
+// Normalise an RFID UID: strip ':' and '-' separators, uppercase the rest.
+// `out` is always null-terminated. Used for both `add` and `remove` so the
+// same input format is accepted for either operation — previously the two
+// call sites had identical inline blocks that had to be kept in sync.
+static void rfidNormalizeUid(const char* in, char* out, size_t outLen) {
+    if (outLen == 0) return;
+    size_t j = 0;
+    for (size_t i = 0; in && in[i] && j + 1 < outLen; i++) {
+        char c = in[i];
+        if (c == ':' || c == '-') continue;
+        out[j++] = (char)toupper((unsigned char)c);
+    }
+    out[j] = '\0';
+}
+
+
 // ── RFID whitelist handler ────────────────────────────────────────────────────
 // Called from onMqttMessage when a message arrives on .../cmd/rfid/whitelist.
 // All UIDs are normalised (uppercase, no separators) before processing.
@@ -279,11 +324,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
     if (strcmp(cmd, "add") == 0) {
         const char* raw = doc["uid"] | "";
         char uid[RFID_UID_STR_LEN] = {};
-        strlcpy(uid, raw, RFID_UID_STR_LEN);
-        { char buf[RFID_UID_STR_LEN]={}; int j=0;
-          for(int i=0;uid[i]&&j<RFID_UID_STR_LEN-1;i++)
-            if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
-          memcpy(uid,buf,RFID_UID_STR_LEN); }
+        rfidNormalizeUid(raw, uid, sizeof(uid));
         bool ok = rfidWhitelistAdd(uid);
         LOG_I("MQTT", "rfid/whitelist add %s: %s", uid, ok ? "ok" : "full");
         String resp = ok
@@ -294,11 +335,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
     } else if (strcmp(cmd, "remove") == 0) {
         const char* raw = doc["uid"] | "";
         char uid[RFID_UID_STR_LEN] = {};
-        strlcpy(uid, raw, RFID_UID_STR_LEN);
-        { char buf[RFID_UID_STR_LEN]={}; int j=0;
-          for(int i=0;uid[i]&&j<RFID_UID_STR_LEN-1;i++)
-            if(uid[i]!=':'&&uid[i]!='-') buf[j++]=(char)toupper((unsigned char)uid[i]);
-          memcpy(uid,buf,RFID_UID_STR_LEN); }
+        rfidNormalizeUid(raw, uid, sizeof(uid));
         bool ok = rfidWhitelistRemove(uid);
         LOG_I("MQTT", "rfid/whitelist remove %s: %s", uid, ok ? "ok" : "not found");
         String resp = ok

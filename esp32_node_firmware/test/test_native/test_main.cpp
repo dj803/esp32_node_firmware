@@ -25,8 +25,13 @@
 #include "ranging_math.h"
 #include "mac_utils.h"
 #include "peer_tracker.h"
-#include "fwevent.h"   // FwEvent enum + fwEventName() — dependency-free, compiles on host
-#include "semver.h"    // semverIsNewer() — extracted from ota.h for host testing
+#include "fwevent.h"       // FwEvent enum + fwEventName() — dependency-free, compiles on host
+#include "semver.h"        // semverIsNewer() + semverParse() — extracted from ota.h
+#include "rate_limit.h"    // rateClampRefill() — extracted from espnow_responder.h
+#include "wire_bundle.h"   // WireBundle struct — extracted from espnow_bootstrap.h
+
+#include <math.h>
+#include <stddef.h>  // offsetof
 
 // ── Stub out millis() — used inside PeerTracker via setNow() but the test
 //    drives the clock manually, so the real implementation is not needed.
@@ -440,6 +445,222 @@ void test_topic_sanitizer_mixed_wildcards_and_text() {
 
 
 // =============================================================================
+// peer_tracker.h — additional coverage (v0.3.14)
+//
+// Extends the original six peer_tracker tests with the two behaviours the
+// LRU logic is most likely to break on during a refactor: re-observing a
+// known MAC after the table fills must update the existing slot (never
+// evict), and expire() with a threshold narrower than the age gap must
+// leave younger entries intact.
+// =============================================================================
+
+void test_peer_tracker_reobserve_full_table_updates_in_place() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("AA:BB:CC:DD:EE:01", -60, 2.0f);
+    tracker.setNow(2000); tracker.observe("AA:BB:CC:DD:EE:02", -70, 3.5f);
+    tracker.setNow(3000); tracker.observe("AA:BB:CC:DD:EE:03", -75, 5.0f);
+    tracker.setNow(4000); tracker.observe("AA:BB:CC:DD:EE:04", -80, 7.0f);
+    TEST_ASSERT_EQUAL_UINT8(4, tracker.count());
+
+    // Re-observe slot :01 (currently the LRU). Must NOT evict anyone.
+    tracker.setNow(5000); tracker.observe("AA:BB:CC:DD:EE:01", -55, 1.0f);
+    TEST_ASSERT_EQUAL_UINT8(4, tracker.count());
+
+    bool all_present = true;
+    const char* expected[] = {"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02",
+                              "AA:BB:CC:DD:EE:03", "AA:BB:CC:DD:EE:04"};
+    for (const char* want : expected) {
+        bool found = false;
+        tracker.forEach([&](const PeerEntry& p) {
+            if (strcmp(p.mac, want) == 0) found = true;
+        });
+        if (!found) { all_present = false; break; }
+    }
+    TEST_ASSERT_TRUE(all_present);
+}
+
+void test_peer_tracker_expire_keeps_young_drops_old() {
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("AA:BB:CC:DD:EE:01", -60, 2.0f);
+    tracker.setNow(8000); tracker.observe("AA:BB:CC:DD:EE:02", -70, 3.5f);
+
+    // now=10000, threshold=3000 → :01 aged 9000 (drop), :02 aged 2000 (keep)
+    tracker.setNow(10000);
+    tracker.expire(3000);
+    TEST_ASSERT_EQUAL_UINT8(1, tracker.count());
+
+    bool found02 = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "AA:BB:CC:DD:EE:02") == 0) found02 = true;
+    });
+    TEST_ASSERT_TRUE(found02);
+}
+
+
+// =============================================================================
+// rate_limit.h — rateClampRefill() boundary tests (v0.3.14)
+//
+// Guards against a future edit re-introducing the overflow smell that lived
+// in espnow_responder.h pre-v0.3.13: `tokens + (elapsed / RATE_REFILL_MS)`
+// with no pre-add clamp. The helper's invariant is that the return value
+// is always in [cur, RATE_BUCKET_CAP] regardless of elapsedMs.
+// =============================================================================
+
+void test_rate_clamp_at_cap_returns_cap() {
+    // Already saturated — any elapsed time must keep it at the cap, not exceed.
+    TEST_ASSERT_EQUAL_UINT8(RATE_BUCKET_CAP,
+                            rateClampRefill(RATE_BUCKET_CAP, 0));
+    TEST_ASSERT_EQUAL_UINT8(RATE_BUCKET_CAP,
+                            rateClampRefill(RATE_BUCKET_CAP, 60ul * 60 * 1000));
+}
+
+void test_rate_clamp_below_cap_refills_proportionally() {
+    // cur=1, elapsed=2 refill periods → +2, result=3
+    TEST_ASSERT_EQUAL_UINT8(3,
+                            rateClampRefill(1, 2 * RATE_REFILL_MS));
+    // cur=0, elapsed=1 period → +1
+    TEST_ASSERT_EQUAL_UINT8(1,
+                            rateClampRefill(0, RATE_REFILL_MS));
+}
+
+void test_rate_clamp_huge_elapsed_saturates_at_cap() {
+    // Simulate a MAC that has been silent for the whole uint32 range.
+    // Pre-clamp code would compute (cur + raw) first; if a future change
+    // grew cur or cap, that arithmetic could overflow uint8_t before clamp.
+    TEST_ASSERT_EQUAL_UINT8(RATE_BUCKET_CAP,
+                            rateClampRefill(0, 0xFFFFFFFFul));
+    TEST_ASSERT_EQUAL_UINT8(RATE_BUCKET_CAP,
+                            rateClampRefill(1, 0xFFFFFFFFul));
+}
+
+void test_rate_clamp_zero_elapsed_unchanged() {
+    // No refill period elapsed → result equals input (when below cap).
+    TEST_ASSERT_EQUAL_UINT8(0, rateClampRefill(0, 0));
+    TEST_ASSERT_EQUAL_UINT8(1, rateClampRefill(1, 0));
+    TEST_ASSERT_EQUAL_UINT8(2, rateClampRefill(2, RATE_REFILL_MS - 1));
+}
+
+
+// =============================================================================
+// wire_bundle.h — ESP-NOW on-wire contract tests (v0.3.14)
+//
+// Two devices running different firmware revisions must agree on field
+// offsets and the leading version byte — otherwise a credential rotation
+// silently writes garbage to NVS. These tests freeze the contract so any
+// accidental layout change (e.g. dropped `#pragma pack`) fails the build or
+// test before it ships.
+// =============================================================================
+
+void test_wirebundle_size_is_176_bytes() {
+    TEST_ASSERT_EQUAL_size_t(176u, sizeof(WireBundle));
+}
+
+void test_wirebundle_version_is_leading_byte() {
+    TEST_ASSERT_EQUAL_size_t(0u, offsetof(WireBundle, wire_version));
+
+    WireBundle w = {};
+    w.wire_version = ESPNOW_WIRE_VERSION;
+    uint8_t raw[sizeof(WireBundle)];
+    memcpy(raw, &w, sizeof(WireBundle));
+    TEST_ASSERT_EQUAL_UINT8(ESPNOW_WIRE_VERSION, raw[0]);
+}
+
+void test_wirebundle_roundtrip_preserves_fields() {
+    WireBundle tx = {};
+    tx.wire_version = ESPNOW_WIRE_VERSION;
+    strncpy(tx.wifi_ssid,       "Enigma",             sizeof(tx.wifi_ssid)       - 1);
+    strncpy(tx.wifi_password,   "correct horse",      sizeof(tx.wifi_password)   - 1);
+    strncpy(tx.mqtt_broker_url, "mqtt://10.0.0.1:1883", sizeof(tx.mqtt_broker_url) - 1);
+    strncpy(tx.mqtt_username,   "node",               sizeof(tx.mqtt_username)   - 1);
+    strncpy(tx.mqtt_password,   "s3cret",             sizeof(tx.mqtt_password)   - 1);
+    for (int i = 0; i < 16; i++) tx.rotation_key[i] = (uint8_t)(0xA0 + i);
+    tx.timestamp = 0x1122334455667788ULL;   // exercises all 8 bytes
+    tx.source    = 1;                        // ADMIN
+
+    // Emulate wire serialisation: raw memcpy over the packed struct.
+    uint8_t wire[sizeof(WireBundle)];
+    memcpy(wire, &tx, sizeof(WireBundle));
+
+    WireBundle rx = {};
+    memcpy(&rx, wire, sizeof(WireBundle));
+
+    TEST_ASSERT_EQUAL_UINT8(ESPNOW_WIRE_VERSION, rx.wire_version);
+    TEST_ASSERT_EQUAL_STRING("Enigma",               rx.wifi_ssid);
+    TEST_ASSERT_EQUAL_STRING("correct horse",        rx.wifi_password);
+    TEST_ASSERT_EQUAL_STRING("mqtt://10.0.0.1:1883", rx.mqtt_broker_url);
+    TEST_ASSERT_EQUAL_STRING("node",                 rx.mqtt_username);
+    TEST_ASSERT_EQUAL_STRING("s3cret",               rx.mqtt_password);
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)(0xA0 + i), rx.rotation_key[i]);
+    TEST_ASSERT_EQUAL_UINT64(0x1122334455667788ULL, rx.timestamp);
+    TEST_ASSERT_EQUAL_UINT8(1, rx.source);
+}
+
+
+// =============================================================================
+// ranging_math.h — extreme-input guards (v0.3.14)
+//
+// The clamp floor at 0.01 m means the function never returns < 0.01 or a
+// NaN for physically valid inputs. These tests cover the two inputs that
+// most commonly feed garbage in from radios: an RSSI at the int8 floor
+// (effectively "no signal") and RSSI above txPower (nearer than 1 m, which
+// would otherwise yield a sub-centimetre distance).
+// =============================================================================
+
+void test_ranging_math_extreme_weak_rssi_finite() {
+    // int8_t floor = -128 — should produce a large but finite distance,
+    // never NaN or inf.
+    float d = rssiToDistance(-128, -59, 2.0f);
+    TEST_ASSERT_TRUE(isfinite(d));
+    TEST_ASSERT_TRUE(d > 100.0f);   // very far, but a real number
+}
+
+void test_ranging_math_rssi_above_tx_clamps_to_floor() {
+    // RSSI > txPower is physically implausible (closer than the reference
+    // distance). The formula yields < 1 m; clamp floor is 0.01 m.
+    float d = rssiToDistance(0, -59, 2.0f);
+    TEST_ASSERT_TRUE(isfinite(d));
+    TEST_ASSERT_TRUE(d >= 0.01f);
+}
+
+
+// =============================================================================
+// semver.h — semverParse() strict-mode tests (v0.3.14)
+//
+// semverIsNewer() is intentionally tolerant (malformed strings parse to
+// 0.0.0) for the OTA retry path. semverParse() is the strict complement
+// that security-sensitive callers use to reject partial or malformed input
+// up-front.
+// =============================================================================
+
+void test_semverparse_accepts_well_formed() {
+    int maj = 9, min = 9, pat = 9;
+    TEST_ASSERT_TRUE(semverParse("0.3.14", maj, min, pat));
+    TEST_ASSERT_EQUAL_INT(0, maj);
+    TEST_ASSERT_EQUAL_INT(3, min);
+    TEST_ASSERT_EQUAL_INT(14, pat);
+}
+
+void test_semverparse_rejects_trailing_garbage() {
+    int maj = -1, min = -1, pat = -1;
+    TEST_ASSERT_FALSE(semverParse("0.3.14-rc1", maj, min, pat));
+    TEST_ASSERT_FALSE(semverParse("0.3.14 ",    maj, min, pat));
+    // On rejection the output must not be written to.
+    TEST_ASSERT_EQUAL_INT(-1, maj);
+    TEST_ASSERT_EQUAL_INT(-1, min);
+    TEST_ASSERT_EQUAL_INT(-1, pat);
+}
+
+void test_semverparse_rejects_missing_components() {
+    int maj = 0, min = 0, pat = 0;
+    TEST_ASSERT_FALSE(semverParse("0.3",    maj, min, pat));
+    TEST_ASSERT_FALSE(semverParse("0",      maj, min, pat));
+    TEST_ASSERT_FALSE(semverParse("",       maj, min, pat));
+    TEST_ASSERT_FALSE(semverParse(nullptr,  maj, min, pat));
+}
+
+
+// =============================================================================
 // Unity entry point
 // =============================================================================
 void setUp(void) {}
@@ -504,6 +725,30 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_topic_sanitizer_leading_slash);
     RUN_TEST(test_topic_sanitizer_only_wildcards);
     RUN_TEST(test_topic_sanitizer_mixed_wildcards_and_text);
+
+    // peer_tracker — additional coverage (v0.3.14)
+    RUN_TEST(test_peer_tracker_reobserve_full_table_updates_in_place);
+    RUN_TEST(test_peer_tracker_expire_keeps_young_drops_old);
+
+    // rate_limit — token-bucket refill boundaries (v0.3.14)
+    RUN_TEST(test_rate_clamp_at_cap_returns_cap);
+    RUN_TEST(test_rate_clamp_below_cap_refills_proportionally);
+    RUN_TEST(test_rate_clamp_huge_elapsed_saturates_at_cap);
+    RUN_TEST(test_rate_clamp_zero_elapsed_unchanged);
+
+    // wire_bundle — ESP-NOW on-wire contract (v0.3.14)
+    RUN_TEST(test_wirebundle_size_is_176_bytes);
+    RUN_TEST(test_wirebundle_version_is_leading_byte);
+    RUN_TEST(test_wirebundle_roundtrip_preserves_fields);
+
+    // ranging_math — extreme-input guards (v0.3.14)
+    RUN_TEST(test_ranging_math_extreme_weak_rssi_finite);
+    RUN_TEST(test_ranging_math_rssi_above_tx_clamps_to_floor);
+
+    // semver — strict-mode parser (v0.3.14)
+    RUN_TEST(test_semverparse_accepts_well_formed);
+    RUN_TEST(test_semverparse_rejects_trailing_garbage);
+    RUN_TEST(test_semverparse_rejects_missing_components);
 
     return UNITY_END();
 }

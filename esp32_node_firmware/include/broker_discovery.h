@@ -456,17 +456,27 @@ static BrokerResult tryPortScan() {
         delay(5);   // yield to the AsyncTCP / lwIP task so callbacks can fire
     }
 
-    // Cleanup: abort any remaining in-flight connections and free clients
+    // Cleanup: detach every callback before delete so a late-firing AsyncTCP
+    // event lands on a nullptr-handler slot instead of reaching into a freed
+    // AsyncClient. onConnect(nullptr, nullptr) + onError(nullptr, nullptr) +
+    // onDisconnect(nullptr, nullptr) is the documented detach pattern.
+    //
+    // The Slot objects are `static` so their addresses stay valid across calls
+    // — any callback that does fire after delete merely writes `done=true` to
+    // a slot that we already reset to free at the top of the next call.
     for (int i = 0; i < PORTSCAN_WINDOW; i++) {
         if (slots[i].client) {
+            slots[i].client->onConnect   (nullptr, nullptr);
+            slots[i].client->onError     (nullptr, nullptr);
+            slots[i].client->onDisconnect(nullptr, nullptr);
             slots[i].client->close(true);
             delete slots[i].client;
             slots[i].client = nullptr;
         }
         slots[i].done = true;
     }
-    // Brief pause so AsyncTCP can finish draining error callbacks before the
-    // Slot objects go back to their static storage (safe — they stay in scope).
+    // Brief pause so AsyncTCP can finish draining error callbacks before we
+    // return. With callbacks detached above, any late event is harmless.
     delay(30);
 
     if (foundCount == 0) {

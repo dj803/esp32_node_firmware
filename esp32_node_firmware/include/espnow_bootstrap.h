@@ -8,6 +8,7 @@
 #include "config.h"
 #include "logging.h"
 #include "credentials.h"
+#include "wire_bundle.h"  // WireBundle struct + ESPNOW_WIRE_VERSION (dep-free, host-testable)
 #include "crypto.h"
 #include "app_config.h"   // gAppConfig + AppConfigStore::save() for OTA URL adoption
 #include "led.h"
@@ -47,30 +48,9 @@
 
 static const uint8_t ESPNOW_BROADCAST[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
-// ── WireBundle: compact on-wire representation (176 bytes) ───────────────────
-// Field limits chosen so that the encrypted response fits inside 250 bytes.
-// Tighter than CredentialBundle but sufficient for real-world values.
-//
-// Wire format versioning (v0.3.08+):
-//   wire_version must equal ESPNOW_WIRE_VERSION (1). Receivers reject frames
-//   with any other value. Version 0 is reserved to identify pre-v0.3.08
-//   senders (which will fail the size check — they send 175 bytes, not 176).
-#define ESPNOW_WIRE_VERSION  1   // Increment whenever the WireBundle layout changes
-#pragma pack(push, 1)
-struct WireBundle {
-    uint8_t  wire_version;       // Must equal ESPNOW_WIRE_VERSION — first byte for fast reject
-    char     wifi_ssid[33];      // 32 chars + null
-    char     wifi_password[33];  // 32 chars + null
-    char     mqtt_broker_url[50];// e.g. mqtt://192.168.1.100:1883 (26 chars typical)
-    char     mqtt_username[17];  // 16 chars + null
-    char     mqtt_password[17];  // 16 chars + null
-    uint8_t  rotation_key[16];   // raw 16-byte AES key
-    uint64_t timestamp;
-    uint8_t  source;             // 0=sibling 1=admin
-};
-#pragma pack(pop)
-
-static_assert(sizeof(WireBundle) == 176, "WireBundle size changed — check ESP-NOW fit");
+// WireBundle struct, ESPNOW_WIRE_VERSION, and the 176-byte size assertion
+// live in wire_bundle.h (included above) so host unit tests can verify the
+// on-wire contract without pulling in esp_now.h / Arduino.h.
 
 #ifdef SIBLING_PRIMARY_SELECTION
 // ── SiblingHealth: health advertisement for primary selection ─────────────────
@@ -152,7 +132,7 @@ static EcdhContext   _requesterCtx;
 // ── Receive callback (requester side — bootstrap phase only) ──────────────────
 static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
     if (len < 2) return;
-    Serial.printf("[ESP-NOW CB] Received %d bytes, msg_type=0x%02X\n", len, data[0]);
+    LOG_D("ESP-NOW CB", "Received %d bytes, msg_type=0x%02X", len, data[0]);
 
 #ifdef SIBLING_PRIMARY_SELECTION
     // ── Phase 1: collect health responses ─────────────────────────────────────
@@ -163,7 +143,7 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
         if (_healthCount >= SIBLING_HEALTH_MAX_RESPONSES) return;
         memcpy(&_healthResponses[_healthCount], data + 2, sizeof(SiblingHealth));
         _healthCount++;
-        Serial.printf("[ESP-NOW CB] HEALTH_RESP #%d collected\n", _healthCount);
+        LOG_I("ESP-NOW CB", "HEALTH_RESP #%d collected", _healthCount);
         return;
     }
 #endif
@@ -176,22 +156,22 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
         memcpy(_bootstrapOtaUrl, data + 9, urlLen);
         _bootstrapOtaUrl[urlLen] = '\0';
         _bootstrapOtaUrlReceived = true;
-        Serial.printf("[ESP-NOW CB] OTA URL from sibling: %s\n", _bootstrapOtaUrl);
+        LOG_I("ESP-NOW CB", "OTA URL from sibling: %s", _bootstrapOtaUrl);
         return;
     }
 
     // ── Phase 2 / plain bootstrap: credential response ────────────────────────
     if (data[0] != ESPNOW_MSG_CREDENTIAL_RESP) {
-        Serial.printf("[ESP-NOW CB] Ignoring msg_type=0x%02X\n", data[0]);
+        LOG_D("ESP-NOW CB", "Ignoring msg_type=0x%02X", data[0]);
         return;
     }
     if (len < (int)(RESP_HDR_LEN + GCM_NONCE_LEN + GCM_TAG_LEN)) {
-        Serial.printf("[ESP-NOW CB] CREDENTIAL_RESP too short (%d bytes)\n", len);
+        LOG_W("ESP-NOW CB", "CREDENTIAL_RESP too short (%d bytes)", len);
         return;
     }
     if (data[1] != ESPNOW_PROTOCOL_VERSION) {
-        Serial.printf("[ESP-NOW CB] Version mismatch: got %d expected %d\n",
-                      data[1], ESPNOW_PROTOCOL_VERSION);
+        LOG_W("ESP-NOW CB", "Version mismatch: got %d expected %d",
+              data[1], ESPNOW_PROTOCOL_VERSION);
         return;
     }
     if (_espnowResponseReceived) return;
@@ -200,7 +180,7 @@ static void onEspNowReceive(const esp_now_recv_info_t* recvInfo, const uint8_t* 
     _espnowRespLen = len;
     _espnowResponseReceived = true;
     ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief RX indicator
-    Serial.println("[ESP-NOW CB] Credential response accepted");
+    LOG_I("ESP-NOW CB", "Credential response accepted");
 }
 
 // Forward declaration — implemented in espnow_responder.h
@@ -236,8 +216,8 @@ static bool espnowSendRequest(const EcdhContext& ctx, uint8_t channel) {
     memcpy(&buf[2], mac, 6);
     memcpy(&buf[8], ctx.publicKey, CURVE25519_KEY_LEN);
 
-    Serial.printf("[ESP-NOW] My MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                  mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    LOG_I("ESP-NOW", "My MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+          mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 
     // Update the broadcast peer's channel, or add it if not yet registered
     esp_now_peer_info_t peer = {};
@@ -249,14 +229,14 @@ static bool espnowSendRequest(const EcdhContext& ctx, uint8_t channel) {
     } else {
         esp_err_t addErr = esp_now_add_peer(&peer);
         if (addErr != ESP_OK) {
-            Serial.printf("[ESP-NOW] Add peer failed: %d\n", addErr);
+            LOG_E("ESP-NOW", "Add peer failed: %d", addErr);
             return false;
         }
     }
 
     esp_err_t err = esp_now_send(ESPNOW_BROADCAST, buf, REQ_LEN);
     if (err == ESP_OK) ledSetPattern(LedPattern::ESPNOW_FLASH);   // brief TX indicator
-    Serial.printf("[ESP-NOW] esp_now_send returned: %d\n", err);
+    LOG_D("ESP-NOW", "esp_now_send returned: %d", err);
     return err == ESP_OK;
 }
 
@@ -272,15 +252,15 @@ bool espnowBootstrap(CredentialBundle& out) {
 
     esp_err_t initErr = esp_now_init();
     if (initErr != ESP_OK) {
-        Serial.printf("[ESP-NOW] Init failed: %d\n", initErr);
+        LOG_E("ESP-NOW", "Init failed: %d", initErr);
         return false;
     }
 
     esp_now_register_recv_cb(onEspNowReceive);
-    Serial.println("[ESP-NOW] Init OK — scanning channels 1–13");
+    LOG_I("ESP-NOW", "Init OK — scanning channels 1–13");
 
     if (!cryptoGenKeypair(_requesterCtx)) {
-        Serial.println("[ESP-NOW] ECDH keygen failed");
+        LOG_E("ESP-NOW", "ECDH keygen failed");
         esp_now_deinit();
         return false;
     }
@@ -291,7 +271,7 @@ bool espnowBootstrap(CredentialBundle& out) {
     // Try the last known working channel first — fast path on repeat boots
     uint8_t cachedChannel = espnowLoadLastChannel();
     if (cachedChannel >= 1 && cachedChannel <= 13) {
-        Serial.printf("[ESP-NOW] Trying cached channel %d first\n", cachedChannel);
+        LOG_I("ESP-NOW", "Trying cached channel %d first", cachedChannel);
         esp_wifi_set_channel(cachedChannel, WIFI_SECOND_CHAN_NONE);
         if (espnowSendRequest(_requesterCtx, cachedChannel)) {
             uint32_t deadline = millis() + ESPNOW_CHANNEL_DWELL_MS;
@@ -304,11 +284,11 @@ bool espnowBootstrap(CredentialBundle& out) {
     for (uint8_t ch = 1; ch <= 13 && !_espnowResponseReceived; ch++) {
         if (ch == cachedChannel) continue;   // already tried
         esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-        Serial.printf("[ESP-NOW] Trying channel %d\n", ch);
+        LOG_D("ESP-NOW", "Trying channel %d", ch);
 
         if (!espnowSendRequest(_requesterCtx, ch)) continue;
 
-        Serial.println("[ESP-NOW] Request sent, waiting for sibling response...");
+        LOG_D("ESP-NOW", "Request sent, waiting for sibling response...");
         uint32_t deadline = millis() + ESPNOW_CHANNEL_DWELL_MS;
         while (!_espnowResponseReceived && millis() < deadline) {
             delay(10);
@@ -317,12 +297,12 @@ bool espnowBootstrap(CredentialBundle& out) {
     }
 
     if (!_espnowResponseReceived) {
-        Serial.println("[ESP-NOW] Timeout — no sibling response");
+        LOG_W("ESP-NOW", "Timeout — no sibling response");
         esp_now_deinit();
         return false;
     }
 
-    Serial.printf("[ESP-NOW] Sibling found on channel %d\n", foundChannel);
+    LOG_I("ESP-NOW", "Sibling found on channel %d", foundChannel);
     if (foundChannel != cachedChannel) {
         espnowSaveLastChannel(foundChannel);   // update cache for next boot
     }
@@ -336,13 +316,13 @@ bool espnowBootstrap(CredentialBundle& out) {
     const uint8_t* encPayload       = resp + RESP_HDR_LEN;   // offset 42
 
     size_t encLen = _espnowRespLen - RESP_HDR_LEN;
-    Serial.printf("[ESP-NOW] Parsing response: total=%d encLen=%d payloadLen=%d\n",
-                  (int)_espnowRespLen, (int)encLen, (int)payloadLen);
+    LOG_D("ESP-NOW", "Parsing response: total=%d encLen=%d payloadLen=%d",
+          (int)_espnowRespLen, (int)encLen, (int)payloadLen);
 
     // Derive shared AES key
     uint8_t aesKey[AES_KEY_LEN];
     if (!cryptoDeriveKey(_requesterCtx, responderPubKey, aesKey)) {
-        Serial.println("[ESP-NOW] Key derivation failed");
+        LOG_E("ESP-NOW", "Key derivation failed");
         esp_now_deinit();
         return false;
     }
@@ -351,7 +331,7 @@ bool espnowBootstrap(CredentialBundle& out) {
     uint8_t plaintext[sizeof(WireBundle) + 4];  // small buffer — WireBundle only
     size_t  plaintextLen = 0;
     if (!cryptoDecrypt(aesKey, encPayload, encLen, plaintext, plaintextLen)) {
-        Serial.println("[ESP-NOW] Decryption/auth failed — discarding");
+        LOG_E("ESP-NOW", "Decryption/auth failed — discarding");
         memset(aesKey, 0, AES_KEY_LEN);
         esp_now_deinit();
         return false;
@@ -359,8 +339,8 @@ bool espnowBootstrap(CredentialBundle& out) {
     memset(aesKey, 0, AES_KEY_LEN);
 
     if (plaintextLen != sizeof(WireBundle)) {
-        Serial.printf("[ESP-NOW] Bundle size mismatch: got %d expected %d\n",
-                      (int)plaintextLen, (int)sizeof(WireBundle));
+        LOG_E("ESP-NOW", "Bundle size mismatch: got %d expected %d",
+              (int)plaintextLen, (int)sizeof(WireBundle));
         esp_now_deinit();
         return false;
     }
@@ -380,7 +360,7 @@ bool espnowBootstrap(CredentialBundle& out) {
     wireToBundle(wire, out);
     memset(&wire, 0, sizeof(wire));
 
-    Serial.println("[ESP-NOW] Bundle received and verified");
+    LOG_I("ESP-NOW", "Bundle received and verified");
 
     // ── Also request OTA URL from this sibling while ESP-NOW is still open ────
     // The responder's MAC is in the response header at bytes 2–7.
@@ -411,9 +391,9 @@ bool espnowBootstrap(CredentialBundle& out) {
             strncpy(cfg.ota_json_url, _bootstrapOtaUrl, sizeof(cfg.ota_json_url) - 1);
             cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
             AppConfigStore::save(cfg);
-            Serial.printf("[ESP-NOW] OTA URL adopted from sibling: %s\n", gAppConfig.ota_json_url);
+            LOG_I("ESP-NOW", "OTA URL adopted from sibling: %s", gAppConfig.ota_json_url);
         } else {
-            Serial.println("[ESP-NOW] No OTA URL from sibling — keeping existing");
+            LOG_I("ESP-NOW", "No OTA URL from sibling — keeping existing");
         }
     }
 
@@ -472,6 +452,13 @@ static void _espnowBootstrapTask(void* /*pvParams*/) {
 }
 
 // Start the async bootstrap. No-op if a task is already running.
+//
+// Stack sizing note: 8192 bytes. Peak observed high-water mark is ~5.5 KB
+// during the crypto path (mbedtls AES-GCM state + Curve25519 scratch +
+// ArduinoJson document for OTA response parsing, all nested inside
+// _espnowBootstrapTask). 8 KB leaves ~2.5 KB headroom — enough for one more
+// nested call frame before the task stack-overflow trap fires. Do not reduce
+// below 8192 without re-measuring via uxTaskGetStackHighWaterMark().
 static void espnowBootstrapBegin() {
     if (_bootstrapTaskHandle != nullptr) return;   // already running
     _bootstrapTaskDone = false;
@@ -522,7 +509,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
 
     esp_err_t initErr = esp_now_init();
     if (initErr != ESP_OK) {
-        Serial.printf("[ESP-NOW PS] Init failed: %d — falling back to broadcast\n", initErr);
+        LOG_W("ESP-NOW PS", "Init failed: %d — falling back to broadcast", initErr);
         return espnowBootstrap(out);
     }
     esp_now_register_recv_cb(onEspNowReceive);
@@ -541,8 +528,8 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
 
     uint8_t queryBuf[2] = { ESPNOW_MSG_HEALTH_QUERY, ESPNOW_PROTOCOL_VERSION };
     esp_now_send(ESPNOW_BROADCAST, queryBuf, sizeof(queryBuf));
-    Serial.printf("[ESP-NOW PS] HEALTH_QUERY sent — collecting responses for %d ms\n",
-                  SIBLING_HEALTH_WAIT_MS);
+    LOG_I("ESP-NOW PS", "HEALTH_QUERY sent — collecting responses for %d ms",
+          SIBLING_HEALTH_WAIT_MS);
 
     uint32_t deadline = millis() + SIBLING_HEALTH_WAIT_MS;
     while (millis() < deadline) delay(10);
@@ -550,11 +537,11 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
 
     if (_healthCount == 0) {
         // No v2-capable siblings found — fall back to plain broadcast bootstrap
-        Serial.println("[ESP-NOW PS] No health responses — falling back to broadcast bootstrap");
+        LOG_I("ESP-NOW PS", "No health responses — falling back to broadcast bootstrap");
         esp_now_deinit();
         return espnowBootstrap(out);
     }
-    Serial.printf("[ESP-NOW PS] Collected %d health response(s)\n", _healthCount);
+    LOG_I("ESP-NOW PS", "Collected %d health response(s)", _healthCount);
 
     // ── Pick best sibling ─────────────────────────────────────────────────────
     // Score: higher firmware version wins; ties broken by most health flags set.
@@ -567,11 +554,11 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
         if (score > bestScore) { bestScore = score; bestIdx = i; }
     }
     const SiblingHealth& best = _healthResponses[bestIdx];
-    Serial.printf("[ESP-NOW PS] Best sibling: %02X:%02X:%02X:%02X:%02X:%02X"
-                  "  fw=0x%06X  flags=0x%02X\n",
-                  best.mac[0], best.mac[1], best.mac[2],
-                  best.mac[3], best.mac[4], best.mac[5],
-                  best.fw_version_uint32, best.health_flags);
+    LOG_I("ESP-NOW PS", "Best sibling: %02X:%02X:%02X:%02X:%02X:%02X"
+          "  fw=0x%06X  flags=0x%02X",
+          best.mac[0], best.mac[1], best.mac[2],
+          best.mac[3], best.mac[4], best.mac[5],
+          best.fw_version_uint32, best.health_flags);
 
     // ── Phase 2: unicast CREDENTIAL_REQ to best sibling ──────────────────────
     // Deinit so we can reinit cleanly (ECDH keygen needs a fresh state).
@@ -584,7 +571,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     esp_wifi_set_channel(psChannel, WIFI_SECOND_CHAN_NONE);
 
     if (esp_now_init() != ESP_OK) {
-        Serial.println("[ESP-NOW PS] Reinit failed — falling back to broadcast");
+        LOG_W("ESP-NOW PS", "Reinit failed — falling back to broadcast");
         return espnowBootstrap(out);
     }
 
@@ -593,7 +580,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
 
     // Generate ephemeral ECDH keypair
     if (!cryptoGenKeypair(_requesterCtx)) {
-        Serial.println("[ESP-NOW PS] ECDH keygen failed");
+        LOG_E("ESP-NOW PS", "ECDH keygen failed");
         esp_now_deinit();
         return false;
     }
@@ -616,18 +603,18 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
 
     esp_err_t sendErr = esp_now_send(best.mac, reqBuf, REQ_LEN);
     if (sendErr != ESP_OK) {
-        Serial.printf("[ESP-NOW PS] Unicast send failed: %d — falling back to broadcast\n", sendErr);
+        LOG_W("ESP-NOW PS", "Unicast send failed: %d — falling back to broadcast", sendErr);
         esp_now_deinit();
         return espnowBootstrap(out);
     }
-    Serial.println("[ESP-NOW PS] Unicast CREDENTIAL_REQ sent — waiting for response...");
+    LOG_I("ESP-NOW PS", "Unicast CREDENTIAL_REQ sent — waiting for response...");
 
     // Wait for CREDENTIAL_RESP (same mechanism as espnowBootstrap)
     uint32_t respDeadline = millis() + BOOTSTRAP_TIMEOUT_MS;
     while (!_espnowResponseReceived && millis() < respDeadline) delay(10);
 
     if (!_espnowResponseReceived) {
-        Serial.println("[ESP-NOW PS] Best sibling did not respond — falling back to broadcast");
+        LOG_W("ESP-NOW PS", "Best sibling did not respond — falling back to broadcast");
         esp_now_deinit();
         return espnowBootstrap(out);
     }
@@ -641,12 +628,12 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     const uint8_t* encPayload      = resp + RESP_HDR_LEN;   // offset 42
 
     size_t encLen = _espnowRespLen - RESP_HDR_LEN;
-    Serial.printf("[ESP-NOW PS] Parsing response: total=%d encLen=%d payloadLen=%d\n",
-                  (int)_espnowRespLen, (int)encLen, (int)payloadLen);
+    LOG_D("ESP-NOW PS", "Parsing response: total=%d encLen=%d payloadLen=%d",
+          (int)_espnowRespLen, (int)encLen, (int)payloadLen);
 
     uint8_t aesKey[AES_KEY_LEN];
     if (!cryptoDeriveKey(_requesterCtx, responderPubKey, aesKey)) {
-        Serial.println("[ESP-NOW PS] Key derivation failed");
+        LOG_E("ESP-NOW PS", "Key derivation failed");
         esp_now_deinit();
         return false;
     }
@@ -654,7 +641,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     uint8_t plaintext[sizeof(WireBundle) + 4];
     size_t  plaintextLen = 0;
     if (!cryptoDecrypt(aesKey, encPayload, encLen, plaintext, plaintextLen)) {
-        Serial.println("[ESP-NOW PS] Decryption/auth failed — discarding");
+        LOG_E("ESP-NOW PS", "Decryption/auth failed — discarding");
         memset(aesKey, 0, AES_KEY_LEN);
         esp_now_deinit();
         return false;
@@ -662,8 +649,8 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     memset(aesKey, 0, AES_KEY_LEN);
 
     if (plaintextLen != sizeof(WireBundle)) {
-        Serial.printf("[ESP-NOW PS] Bundle size mismatch: got %d expected %d\n",
-                      (int)plaintextLen, (int)sizeof(WireBundle));
+        LOG_E("ESP-NOW PS", "Bundle size mismatch: got %d expected %d",
+              (int)plaintextLen, (int)sizeof(WireBundle));
         esp_now_deinit();
         return false;
     }
@@ -683,7 +670,7 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
     wireToBundle(wire, out);
     memset(&wire, 0, sizeof(wire));
 
-    Serial.println("[ESP-NOW PS] Bundle received and verified from primary sibling");
+    LOG_I("ESP-NOW PS", "Bundle received and verified from primary sibling");
     if (psChannel != espnowLoadLastChannel()) {
         espnowSaveLastChannel(psChannel);   // update cache for next boot
     }
@@ -708,10 +695,10 @@ bool espnowBootstrapWithPrimarySelection(CredentialBundle& out) {
             strncpy(cfg.ota_json_url, _bootstrapOtaUrl, sizeof(cfg.ota_json_url) - 1);
             cfg.ota_json_url[sizeof(cfg.ota_json_url) - 1] = '\0';
             AppConfigStore::save(cfg);
-            Serial.printf("[ESP-NOW PS] OTA URL adopted from primary sibling: %s\n",
-                          gAppConfig.ota_json_url);
+            LOG_I("ESP-NOW PS", "OTA URL adopted from primary sibling: %s",
+                  gAppConfig.ota_json_url);
         } else {
-            Serial.println("[ESP-NOW PS] No OTA URL from primary sibling — keeping existing");
+            LOG_I("ESP-NOW PS", "No OTA URL from primary sibling — keeping existing");
         }
     }
 

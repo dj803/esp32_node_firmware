@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.11-dev"
+#define FIRMWARE_VERSION           "0.3.14-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -211,6 +211,17 @@
 // stored URL (useful if discovery causes problems on your network).
 // -----------------------------------------------------------------------------
 #define BROKER_DISCOVERY_ENABLED    1       // 1 = try mDNS + port scan; 0 = stored URL only
+
+// -----------------------------------------------------------------------------
+// DESIGN NOTE — MQTT traffic is PLAINTEXT on the LAN.
+// MQTT CONNECT (incl. username/password) and every subsequent PUBLISH travel
+// unencrypted on the wire. Accepted trade-off for a private LAN deployment:
+// a passive sniffer on the same segment can read broker credentials and
+// telemetry, but cannot forge rotation payloads — those are AES-128-GCM
+// encrypted at the application layer. Revisit if the deployment ever moves
+// off a trusted segment. Migration path documented in
+// docs/SUGGESTED_IMPROVEMENTS.txt §7 (AsyncMqttClient::setSecure + pinned CA).
+// -----------------------------------------------------------------------------
 
 #define MDNS_DISCOVERY_TIMEOUT_MS   3000    // How long to wait for mDNS responses
 #define MDNS_SERVICE_TYPE           "mqtt"  // _mqtt._tcp service type (do not change)

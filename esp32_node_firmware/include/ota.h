@@ -55,11 +55,34 @@ static bool     _otaForced    = false; // True when MQTT has requested an immedi
 
 
 
+// Re-subscribe the async_tcp task to the task watchdog. Paired with the
+// esp_task_wdt_delete() call we do before the blocking OTA download. On any
+// non-OK exit path below we MUST re-subscribe or the device keeps running with
+// a silently-downgraded watchdog until the next reboot.
+static void _otaReaddAsyncTcpToWdt() {
+    TaskHandle_t t = xTaskGetHandle("async_tcp");
+    if (t) {
+        esp_err_t err = esp_task_wdt_add(t);
+        if (err != ESP_OK) {
+            // ESP_ERR_INVALID_ARG means "already subscribed" — benign.
+            if (err != ESP_ERR_INVALID_ARG) {
+                LOG_W("OTA", "task_wdt_add(async_tcp) failed: %d", err);
+            }
+        }
+    }
+}
+
+
 // ── otaCheckNow ───────────────────────────────────────────────────────────────
 // The main OTA entry point. Fetches the JSON filter file, compares the version,
 // and flashes the new firmware if a newer version is available.
 // Called periodically from otaLoop() and on demand from the MQTT handler.
-void otaCheckNow() {
+//
+// `isSiblingRetry` is set to true for the single self-recursive call made after
+// a GitHub fetch failure. It prevents infinite recursion if the sibling-
+// provided URL also fails — we give up rather than asking the same siblings
+// again. Default false keeps the public API unchanged for existing callers.
+void otaCheckNow(bool isSiblingRetry = false) {
     // ── OTA URL validation ────────────────────────────────────────────────────
     // Reject obviously broken URLs before handing them to ESP32-OTA-Pull.
     // A blank URL or one that doesn't start with http(s):// will produce a
@@ -138,16 +161,14 @@ void otaCheckNow() {
 
         // Ask siblings for a working OTA URL and retry once with it.
         // espnowRequestOtaUrl() is defined in espnow_responder.h (included before
-        // this file). The retry flag prevents infinite recursion — if the sibling-
-        // provided URL also fails, we give up rather than asking again.
-        static bool _otaRetrying = false;
-        if (!_otaRetrying) {
+        // this file). `isSiblingRetry` prevents infinite recursion — the retry
+        // call passes true so we won't attempt another round of sibling queries
+        // if the sibling-provided URL also fails.
+        if (!isSiblingRetry) {
             LOG_I("OTA", "Asking siblings for a working OTA URL...");
             if (espnowRequestOtaUrl()) {
-                _otaRetrying = true;
                 LOG_I("OTA", "Retrying with sibling-provided URL");
-                otaCheckNow();
-                _otaRetrying = false;
+                otaCheckNow(/*isSiblingRetry=*/true);
             }
         }
         return;
@@ -197,13 +218,17 @@ void otaCheckNow() {
         mqttPublishStatus(FwEvent::OTA_SUCCESS,
             ("\"new_version\":\"" + targetVersion + "\"").c_str());
         delay(500);     // Give the MQTT publish time to be sent before disconnect
-        ESP.restart();  // Boot into the new firmware
+        ESP.restart();  // Boot into the new firmware — watchdog state doesn't matter
     } else {
         LOG_E("OTA", "Flash failed (code %d)", ret);
         { LedEvent e{}; e.type = LedEventType::OTA_DONE; ws2812PostEvent(e); }
         mqttPublishStatus(FwEvent::OTA_FAILED,
             ("\"error\":\"flash failed code " + String(ret) +
              "\",\"current_version\":\"" FIRMWARE_VERSION "\"").c_str());
+        // On any failure path the device keeps running, so async_tcp must go
+        // back on the watchdog or we silently run with a degraded watchdog
+        // until next reboot. Matches the esp_task_wdt_delete() above.
+        _otaReaddAsyncTcpToWdt();
     }
 }
 
