@@ -951,8 +951,16 @@ static void mqttReconnectTimerCb(TimerHandle_t) {
         LOG_I("MQTT", "Attempting reconnect...");
         _mqttConnectStartMs = millis();   // Start watchdog — loop() will restart if no callback arrives
         _mqttClient.connect();            // Triggers onMqttConnect on success, onMqttDisconnect on failure
+    } else {
+        // Wi-Fi not yet up (e.g. post-light-sleep association delay).  The
+        // one-shot timer stops permanently if we do nothing here, meaning MQTT
+        // never reconnects after light sleep.  Re-arm for 2 s so we retry once
+        // the radio finishes re-associating with the AP.
+        if (xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
+            xTimerChangePeriod(_mqttReconnectTimer, pdMS_TO_TICKS(2000), 0);
+            xTimerStart(_mqttReconnectTimer, 0);
+        }
     }
-    // If Wi-Fi is not connected, do nothing — the main loop handles Wi-Fi recovery
 }
 
 
