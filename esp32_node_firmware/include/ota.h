@@ -9,6 +9,9 @@
 #include "semver.h"   // semverIsNewer() — extracted to allow host-side unit testing
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 #include "led.h"
+#ifdef BLE_ENABLED
+#include <NimBLEDevice.h>   // NimBLEDevice::deinit() — free BLE heap before OTA flash write
+#endif
 
 // =============================================================================
 // ota.h  —  Automatic OTA firmware updates via ESP32-OTA-Pull (spec §13)
@@ -219,6 +222,22 @@ void otaCheckNow(bool isSiblingRetry) {
     TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
     if (asyncTcpTask) esp_task_wdt_delete(asyncTcpTask);
 
+    // Free NimBLE heap before the blocking download so Update.begin() can
+    // allocate its 4 KB write buffer. mbed TLS keeps two 16 KB SSL record
+    // buffers live during HTTPS; NimBLE's host allocations (~20-40 KB) are the
+    // only large pool we can safely release without touching the active WiFi/TLS
+    // stack. The device reboots on success (BLE inits fresh at next boot). On
+    // failure we also restart (see below), so the deinit is always safe.
+#ifdef BLE_ENABLED
+    LOG_I("OTA", "Heap before BLE deinit: free=%u largest=%u",
+          heap_caps_get_free_size(MALLOC_CAP_8BIT),
+          heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    NimBLEDevice::deinit(true);
+    LOG_I("OTA", "Heap after BLE deinit:  free=%u largest=%u",
+          heap_caps_get_free_size(MALLOC_CAP_8BIT),
+          heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
+
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
     ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
@@ -234,15 +253,16 @@ void otaCheckNow(bool isSiblingRetry) {
         delay(500);     // Give the MQTT publish time to be sent before disconnect
         ESP.restart();  // Boot into the new firmware — watchdog state doesn't matter
     } else {
-        LOG_E("OTA", "Flash failed (code %d)", ret);
+        LOG_E("OTA", "Flash failed (code %d) — restarting to recover", ret);
         { LedEvent e{}; e.type = LedEventType::OTA_DONE; ws2812PostEvent(e); }
-        mqttPublishStatus(FwEvent::OTA_FAILED,
-            ("\"error\":\"flash failed code " + String(ret) +
-             "\",\"current_version\":\"" FIRMWARE_VERSION "\"").c_str());
-        // On any failure path the device keeps running, so async_tcp must go
-        // back on the watchdog or we silently run with a degraded watchdog
-        // until next reboot. Matches the esp_task_wdt_delete() above.
-        _otaReaddAsyncTcpToWdt();
+        // MQTT was deliberately disconnected before the download so
+        // mqttPublishStatus would silently drop. BLE was also deinited.
+        // The device is in a degraded state (MQTT + BLE both torn down) —
+        // restart cleanly rather than re-adding async_tcp to the WDT, which
+        // would resume processing buffered data through a torn-down
+        // AsyncMqttClient and crash with an InstrFetchProhibited null-vtable panic.
+        delay(200);   // Let the LED OTA_DONE event post to the WS2812 task
+        ESP.restart();
     }
 }
 
