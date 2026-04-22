@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.19-dev"
+#define FIRMWARE_VERSION           "0.3.20-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -503,3 +503,25 @@ inline const char* nvsNsName(NvsNs ns) {
 #define ESPNOW_MQTT_PUBLISH_MS   2000UL    // Publish peer data to MQTT every 2 s
 #define ESPNOW_STALE_MS         15000UL    // Drop peer from table after 15 s of silence
 #define ESPNOW_BEACON_INTERVAL_MS 3000UL   // How often this node broadcasts its ranging beacon
+
+
+// -----------------------------------------------------------------------------
+// MQTT-triggered sleep modes (v0.3.20)
+//
+// Three commands cover the full ESP32 idle spectrum:
+//   cmd/modem_sleep  — Wi-Fi modem power save; CPU keeps running, MQTT stays up
+//   cmd/sleep        — light sleep; CPU halted, radio torn down, RAM preserved
+//   cmd/deep_sleep   — deep sleep; cold boot on wake, RAM wiped, lowest current
+//
+// All three accept JSON payload {"seconds":N} with N in [MIN_SLEEP_SECONDS,
+// MAX_SLEEP_SECONDS]. Values outside the range are rejected with a warning log
+// and no state change. The 86400-second (24 h) cap prevents an operator from
+// accidentally parking a device off-network for days.
+//
+// For cmd/sleep and cmd/deep_sleep, dispatch is deferred by SLEEP_DEFER_MS
+// (mirroring the cmd/restart pattern) so the "sleeping"/"deep_sleeping" status
+// publish has time to drain through AsyncMqttClient before the radio goes off.
+// -----------------------------------------------------------------------------
+#define MIN_SLEEP_SECONDS          1        // Shortest allowed duration (rejects 0/negative)
+#define MAX_SLEEP_SECONDS       86400        // 24 h ceiling — sanity cap, not a hard limit
+#define SLEEP_DEFER_MS             300        // Delay between status publish and radio teardown

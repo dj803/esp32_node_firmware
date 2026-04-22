@@ -111,7 +111,11 @@ All topics follow the ISA-95 / Unified Namespace pattern:
 | `cmd/ota_check`  | MQTT → Device | Trigger immediate OTA check      |
 | `cmd/led`        | MQTT → Device | WS2812B strip control — colour / brightness / animation / count / off / reset (see [docs/led_control.md](docs/led_control.md)) |
 | `cmd/locate`     | MQTT → Device | Flash status LED for 4 s (ignored payload) — physical locate |
+| `cmd/modem_sleep` | MQTT → Device | `{"seconds":N}` — Wi-Fi modem power save for N s (MQTT stays connected, see [docs/sleep.md](docs/sleep.md)) |
+| `cmd/sleep`      | MQTT → Device | `{"seconds":N}` — light sleep for N s (RAM preserved, MQTT disconnects) |
+| `cmd/deep_sleep` | MQTT → Device | `{"seconds":N}` — deep sleep for N s (cold boot on wake) |
 | `status/led`     | Device → MQTT | Retained LED strip state — state, r/g/b, brightness, count, uptime |
+| `status` (`event`: `sleeping` / `deep_sleeping` / `modem_sleeping`) | Device → MQTT | Announcement of sleep entry — includes `duration_s` (seconds until expected wake) |
 | `cmd/rfid/program` | MQTT → Device | Arm next scan for a raw-hex multi-block write (see [docs/rfid_tag_profiles.md](docs/rfid_tag_profiles.md)) |
 | `cmd/rfid/read_block` | MQTT → Device | Arm next scan for a single-block read |
 | `cmd/rfid/cancel` | MQTT → Device | Cancel any pending arm           |

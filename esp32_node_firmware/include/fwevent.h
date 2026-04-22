@@ -33,6 +33,9 @@ enum class FwEvent : uint8_t {
     OTA_DOWNLOADING      = 7,
     OTA_FAILED           = 8,
     OTA_SUCCESS          = 9,
+    SLEEPING             = 10,   // cmd/sleep — light sleep for duration_s seconds
+    DEEP_SLEEPING        = 11,   // cmd/deep_sleep — deep sleep for duration_s seconds
+    MODEM_SLEEPING       = 12,   // cmd/modem_sleep — Wi-Fi modem sleep for duration_s seconds
 };
 
 
@@ -52,6 +55,9 @@ inline const char* fwEventName(FwEvent ev) {
         case FwEvent::OTA_DOWNLOADING:       return "ota_downloading";
         case FwEvent::OTA_FAILED:            return "ota_failed";
         case FwEvent::OTA_SUCCESS:           return "ota_success";
+        case FwEvent::SLEEPING:              return "sleeping";
+        case FwEvent::DEEP_SLEEPING:         return "deep_sleeping";
+        case FwEvent::MODEM_SLEEPING:        return "modem_sleeping";
         default:                             return "unknown";
     }
 }

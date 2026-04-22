@@ -83,6 +83,18 @@ static int              _mqttReconnectCount = 0;             // Consecutive fail
 static volatile bool    _mqttNeedsRediscovery = false;       // Set in disconnect callback; cleared by loop()
 static uint32_t         _mqttConnectStartMs = 0;             // millis() when connect() was last called; 0 = idle
 static uint32_t         _mqttRestartAtMs    = 0;             // Non-zero: restart device when millis() >= this value
+
+// ── Sleep dispatch state (v0.3.20) ───────────────────────────────────────────
+// `cmd/sleep` and `cmd/deep_sleep` take the radio offline, so dispatch is
+// deferred SLEEP_DEFER_MS after the status publish — same shape as restart.
+// `cmd/modem_sleep` is different: the radio stays associated with the AP and
+// MQTT stays connected, so we only need an expiry timer to revert.
+enum class SleepKind : uint8_t { NONE, LIGHT, DEEP };
+static uint32_t         _mqttSleepAtMs        = 0;            // Non-zero: enter sleep when millis() >= this value
+static uint32_t         _mqttSleepDurationS   = 0;            // Seconds to sleep for (timer wake-up)
+static SleepKind        _mqttSleepKind        = SleepKind::NONE;
+static uint32_t         _mqttModemSleepUntilMs = 0;           // Non-zero: exit modem sleep when millis() >= this value
+
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
 static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid
 static String           _mqttHost;                        // kept alive so setServer()'s raw ptr stays valid
@@ -570,6 +582,93 @@ static void handleCredRotation(const char* payload, size_t len) {
 // onMqttMessage call the function. The linker resolves it within the same TU.
 void espnowRangingSetEnabled(bool en);
 
+
+// ── Sleep helpers (v0.3.20) ──────────────────────────────────────────────────
+// Three distinct paths:
+//
+//   1. mqttEnterSleep(sec, LIGHT) — esp_light_sleep_start(). CPU halts, radio
+//      is torn down, RAM is preserved. Post-wake control returns to the caller
+//      inside mqttHeartbeat(); we re-init Wi-Fi and the existing loop() state
+//      machine handles MQTT reconnect.
+//
+//   2. mqttEnterSleep(sec, DEEP)  — esp_deep_sleep_start(). Cold boot on wake.
+//      Never returns.
+//
+//   3. mqttEnterModemSleep(sec)   — WIFI_PS_MAX_MODEM + CPU freq drop. CPU
+//      keeps running, MQTT session stays alive. mqttExitModemSleep() reverts
+//      when the timer expires (checked every tick in mqttHeartbeat()).
+//
+// CRITICAL: AsyncMqttClient's TCP socket cannot survive a multi-second light
+// sleep — lwIP silently drops the connection. For LIGHT and DEEP we explicitly
+// disconnect(true) before putting the radio to sleep so the LWT doesn't fire
+// mid-sleep and the broker doesn't see a half-open session.
+static void mqttEnterSleep(uint32_t seconds, SleepKind kind) {
+    char extra[48];
+    snprintf(extra, sizeof(extra), "\"duration_s\":%u", (unsigned)seconds);
+    FwEvent ev = (kind == SleepKind::DEEP) ? FwEvent::DEEP_SLEEPING
+                                           : FwEvent::SLEEPING;
+    mqttPublishStatus(ev, extra);
+
+    // Drain the QoS-1 publish (AsyncMqttClient is non-blocking).
+    // 200 ms is empirically enough on a LAN broker.
+    uint32_t drainUntil = millis() + 200;
+    while ((int32_t)(millis() - drainUntil) < 0) { delay(10); }
+
+    // Clean teardown — prevents LWT from firing during sleep and avoids a
+    // half-open session server-side.
+    _mqttClient.disconnect(true);
+    delay(50);
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+
+    esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+
+    if (kind == SleepKind::DEEP) {
+        LOG_I("MQTT", "Entering deep sleep for %u s (cold boot on wake)",
+              (unsigned)seconds);
+        esp_deep_sleep_start();   // Never returns — wake is a full reboot
+    } else {
+        LOG_I("MQTT", "Entering light sleep for %u s", (unsigned)seconds);
+        esp_light_sleep_start();  // Blocks until timer fires
+        LOG_I("MQTT", "Light sleep wake — re-initialising Wi-Fi");
+
+        // Post-wake: re-init Wi-Fi using the cached credential bundle. The
+        // main.cpp loop() state machine will detect the re-association and
+        // the existing AsyncMqttClient reconnect timer will re-establish MQTT.
+        WiFi.mode(WIFI_STA);
+        if (_mqttBundle.wifi_ssid[0] != '\0') {
+            WiFi.begin(_mqttBundle.wifi_ssid, _mqttBundle.wifi_password);
+        }
+    }
+}
+
+static void mqttEnterModemSleep(uint32_t seconds) {
+    char extra[48];
+    snprintf(extra, sizeof(extra), "\"duration_s\":%u", (unsigned)seconds);
+    mqttPublishStatus(FwEvent::MODEM_SLEEPING, extra);
+
+    // WIFI_PS_MAX_MODEM — the radio sleeps between DTIM beacons (~300 ms
+    // intervals). Wi-Fi stays associated with the AP; MQTT stays connected.
+    // The broker never notices. Power saving is ~20-40 mA from the radio
+    // alone; dynamic CPU freq scaling could double that but would pull in
+    // the esp_pm driver (~1 KB IRAM) which pushes the firmware over the
+    // IRAM budget. If power savings become critical, revisit with a custom
+    // sdkconfig bump to iram0_0_seg.
+    WiFi.setSleep(WIFI_PS_MAX_MODEM);
+
+    _mqttModemSleepUntilMs = millis() + seconds * 1000;
+    LOG_I("MQTT", "Modem sleep armed for %u s (Wi-Fi PS_MAX)",
+          (unsigned)seconds);
+}
+
+static void mqttExitModemSleep() {
+    WiFi.setSleep(WIFI_PS_NONE);
+    _mqttModemSleepUntilMs = 0;
+    // Fresh heartbeat so Node-RED flips the card back to Connected.
+    mqttPublishStatus(FwEvent::HEARTBEAT);
+    LOG_I("MQTT", "Modem sleep expired — restored full power");
+}
+
 // ── Message receive callback ───────────────────────────────────────────────────
 // Called by AsyncMqttClient whenever a subscribed topic receives a message.
 // Routes the message to the appropriate handler based on the topic string.
@@ -680,6 +779,64 @@ static void onMqttMessage(char* topic, char* payload,
         LOG_I("MQTT", "Restart command received - restarting in 300 ms");
         mqttPublishStatus(FwEvent::RESTARTING);
         _mqttRestartAtMs = millis() + 300;
+    } else if (t == mqttTopic("cmd/sleep") || t == mqttTopic("cmd/deep_sleep")) {
+        // Deferred light / deep sleep. Payload: {"seconds":N} with
+        // N in [MIN_SLEEP_SECONDS, MAX_SLEEP_SECONDS].
+        // Dispatch is deferred SLEEP_DEFER_MS via mqttHeartbeat() so the
+        // status publish drains before the radio goes off.
+        bool isDeep = (t == mqttTopic("cmd/deep_sleep"));
+        const char* label = isDeep ? "deep_sleep" : "sleep";
+
+        // Copy payload into null-terminated buffer for ArduinoJson
+        char buf[96];
+        size_t copyLen = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, buf);
+        if (err) {
+            LOG_W("MQTT", "cmd/%s: bad JSON (%s)", label, err.c_str());
+            return;
+        }
+        int32_t secs = doc["seconds"] | -1;
+        if (secs < (int32_t)MIN_SLEEP_SECONDS || secs > (int32_t)MAX_SLEEP_SECONDS) {
+            LOG_W("MQTT", "cmd/%s: seconds=%d out of range [%u..%u]",
+                  label, (int)secs,
+                  (unsigned)MIN_SLEEP_SECONDS, (unsigned)MAX_SLEEP_SECONDS);
+            return;
+        }
+
+        _mqttSleepDurationS = (uint32_t)secs;
+        _mqttSleepKind      = isDeep ? SleepKind::DEEP : SleepKind::LIGHT;
+        _mqttSleepAtMs      = millis() + SLEEP_DEFER_MS;
+        LOG_I("MQTT", "cmd/%s accepted: %d s, dispatching in %u ms",
+              label, (int)secs, (unsigned)SLEEP_DEFER_MS);
+    } else if (t == mqttTopic("cmd/modem_sleep")) {
+        // Modem sleep — CPU keeps running, radio stays associated.
+        // Applied immediately (no deferred dispatch needed) because MQTT
+        // remains connected throughout.
+        char buf[96];
+        size_t copyLen = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, buf);
+        if (err) {
+            LOG_W("MQTT", "cmd/modem_sleep: bad JSON (%s)", err.c_str());
+            return;
+        }
+        int32_t secs = doc["seconds"] | -1;
+        if (secs < (int32_t)MIN_SLEEP_SECONDS || secs > (int32_t)MAX_SLEEP_SECONDS) {
+            LOG_W("MQTT", "cmd/modem_sleep: seconds=%d out of range [%u..%u]",
+                  (int)secs, (unsigned)MIN_SLEEP_SECONDS, (unsigned)MAX_SLEEP_SECONDS);
+            return;
+        }
+
+        // Stacking: if already modem-sleeping, re-arm the timer with the new
+        // duration and publish a fresh status so Node-RED updates the countdown.
+        mqttEnterModemSleep((uint32_t)secs);
     }
 }
 
@@ -724,6 +881,9 @@ static void onMqttConnect(bool sessionPresent) {
 #endif
     _mqttClient.subscribe(mqttTopic("cmd/espnow/ranging").c_str(), 1);  // ESP-NOW ranging on/off — QoS 1 + retain so state survives reboot
     _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),        0);  // Remote restart — QoS 0 prevents re-delivery loop on reconnect
+    _mqttClient.subscribe(mqttTopic("cmd/sleep").c_str(),          0);  // Light sleep — QoS 0; radio-off prevents PUBACK anyway
+    _mqttClient.subscribe(mqttTopic("cmd/deep_sleep").c_str(),     0);  // Deep sleep — QoS 0; cold boot discards any session state
+    _mqttClient.subscribe(mqttTopic("cmd/modem_sleep").c_str(),    1);  // Modem sleep — QoS 1 safe, session stays connected
 
     // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
     // that subscribe after boot still see this device's last known state.
@@ -936,6 +1096,30 @@ void mqttHeartbeat() {
         _mqttRestartAtMs = 0;
         LOG_I("MQTT", "Deferred restart firing");
         ESP.restart();
+    }
+
+    // ── Deferred sleep (LIGHT / DEEP) ─────────────────────────────────────────
+    // Same pattern as restart — the cmd/sleep and cmd/deep_sleep handlers set
+    // _mqttSleepAtMs so that mqttEnterSleep() is called here rather than inside
+    // the async_tcp callback (where a long-running call or teardown of the
+    // underlying TCP socket would deadlock AsyncMqttClient).
+    if (_mqttSleepAtMs > 0 && millis() >= _mqttSleepAtMs) {
+        uint32_t   secs = _mqttSleepDurationS;
+        SleepKind  kind = _mqttSleepKind;
+        _mqttSleepAtMs      = 0;
+        _mqttSleepDurationS = 0;
+        _mqttSleepKind      = SleepKind::NONE;
+        mqttEnterSleep(secs, kind);
+        // For LIGHT sleep, mqttEnterSleep() returns after wake; for DEEP it
+        // never returns. Either way, fall through — the next tick is either
+        // post-wake or a fresh boot.
+    }
+
+    // ── Modem-sleep expiry ────────────────────────────────────────────────────
+    // Modem sleep doesn't take the radio offline, so no deferred dispatch is
+    // needed; we only need to revert CPU freq + Wi-Fi PS when the timer fires.
+    if (_mqttModemSleepUntilMs > 0 && millis() >= _mqttModemSleepUntilMs) {
+        mqttExitModemSleep();
     }
 
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
