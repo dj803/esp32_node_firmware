@@ -11,36 +11,14 @@
     "id": "pair_ui_page",
     "type": "ui-page",
     "name": "Pair Chart",
-    "ui": "pair_ui_base",
+    "ui": "45a25337ec9ca43a",
     "path": "/pair",
     "icon": "mdi-chart-line",
     "layout": "flex",
-    "theme": "pair_ui_theme",
+    "theme": "alpha_ble_theme",
     "order": 5,
     "className": "",
     "visible": true
-  },
-  {
-    "id": "pair_ui_base",
-    "type": "ui-base",
-    "name": "ESP-NOW Dashboard",
-    "path": "/ui",
-    "includeClientData": true,
-    "acceptsClientConfig": ["ui-notification", "ui-control"],
-    "showPathInSidebar": false
-  },
-  {
-    "id": "pair_ui_theme",
-    "type": "ui-theme",
-    "name": "Pair Theme",
-    "colors": {
-      "surface": "#1e272e",
-      "primary": "#0288d1",
-      "bgPage": "#131c21",
-      "groupBg": "#1e272e",
-      "groupOutline": "#37474f"
-    },
-    "sizes": { "pagePadding": "12px", "groupGap": "12px", "groupBorderRadius": "4px", "widgetGap": "6px" }
   },
   {
     "id": "pair_grp_chart",

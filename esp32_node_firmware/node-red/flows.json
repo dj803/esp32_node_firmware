@@ -131,11 +131,11 @@
     "type": "ui-theme",
     "name": "Default",
     "colors": {
-      "surface": "#ffffff",
-      "primary": "#0094CE",
-      "bgPage": "#eeeeee",
-      "groupBg": "#ffffff",
-      "groupOutline": "#cccccc"
+      "surface": "#1e272e",
+      "primary": "#0288d1",
+      "bgPage": "#131c21",
+      "groupBg": "#1e272e",
+      "groupOutline": "#37474f"
     }
   },
   {
@@ -3303,5 +3303,23 @@
         "espnow_mqtt_out_cmd"
       ]
     ]
+  },
+  {
+    "id": "theme_toggle_tpl",
+    "type": "ui-template",
+    "z": "espnow_flow",
+    "group": "",
+    "name": "Dark/Light Toggle (site)",
+    "order": 0,
+    "width": 0,
+    "height": 0,
+    "format": "<template>\n  <div style=\"display:none\"></div>\n</template>\n<script>\nexport default {\n  mounted() {\n    const saved = localStorage.getItem('esp32-theme') || 'dark';\n    this.applyTheme(saved);\n    this.addToggle(saved);\n  },\n  methods: {\n    addToggle(theme) {\n      if (document.getElementById('esp32-theme-btn')) return;\n      const btn = document.createElement('button');\n      btn.id = 'esp32-theme-btn';\n      btn.title = 'Toggle light/dark mode';\n      btn.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;font-size:22px;background:#0288d1;box-shadow:0 2px 10px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;';\n      btn.textContent = theme === 'dark' ? '\\u2600\\uFE0F' : '\\uD83C\\uDF19';\n      btn.addEventListener('click', () => {\n        const cur = document.documentElement.getAttribute('data-esp32-theme') || 'dark';\n        const next = cur === 'dark' ? 'light' : 'dark';\n        this.applyTheme(next);\n        localStorage.setItem('esp32-theme', next);\n        btn.textContent = next === 'dark' ? '\\u2600\\uFE0F' : '\\uD83C\\uDF19';\n      });\n      document.body.appendChild(btn);\n    },\n    applyTheme(theme) {\n      document.documentElement.setAttribute('data-esp32-theme', theme);\n      const id = 'esp32-theme-style';\n      let el = document.getElementById(id);\n      if (!el) { el = document.createElement('style'); el.id = id; document.head.appendChild(el); }\n      if (theme === 'light') {\n        el.textContent = [\n          '.nrdb-app, .v-main, body { background-color: #eeeeee !important; }',\n          '.nrdb-ui-group { background-color: #ffffff !important; border-color: #cccccc !important; }',\n          '.nrdb-ui-group-name { color: #424242 !important; }',\n          '.v-application { --v-theme-background: 238,238,238; --v-theme-on-background: 33,33,33; --v-theme-surface: 255,255,255; --v-theme-on-surface: 33,33,33; }'\n        ].join('\\n');\n      } else {\n        el.textContent = '';\n      }\n    }\n  }\n}\n</script>",
+    "storeOutMessages": false,
+    "resendOnRefresh": false,
+    "templateScope": "site",
+    "className": "",
+    "x": 100,
+    "y": 500,
+    "wires": [[]]
   }
 ]
