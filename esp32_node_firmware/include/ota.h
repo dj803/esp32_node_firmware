@@ -104,8 +104,12 @@ void otaCheckNow(bool isSiblingRetry) {
 
     ESP32OTAPull ota;
 
-    // Progress callback — logs each 10% increment.
+    // Progress callback — logs each 10% increment and resets the task watchdog
+    // on every invocation so the loopTask's TWDT token stays alive throughout
+    // the blocking download.  Without this, loop() is blocked for the full
+    // download duration and the TWDT fires (~3 s on this SDK config).
     ota.SetCallback([](int offset, int total) {
+        esp_task_wdt_reset();   // Keep loopTask WDT token alive every chunk
         static int lastPct = -1;
         int pct = (total > 0) ? (offset * 100 / total) : 0;
         if (pct / 10 != lastPct / 10) {
@@ -119,6 +123,7 @@ void otaCheckNow(bool isSiblingRetry) {
     // the JSON and returns UPDATE_AVAILABLE (its lexicographic comparator breaks
     // on double-digit patch numbers, e.g. "0.2.7" > "0.2.15"). We then apply
     // our own numeric semver comparison via semverIsNewer().
+    esp_task_wdt_reset();   // JSON fetch blocks loop() for ~0.8 s — pre-reset the loopTask WDT
     int ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
                                     "0.0.0",
                                     ESP32OTAPull::DONT_DO_UPDATE);
