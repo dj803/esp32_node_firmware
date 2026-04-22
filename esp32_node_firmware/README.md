@@ -109,6 +109,9 @@ All topics follow the ISA-95 / Unified Namespace pattern:
 | `cmd`            | MQTT → Device | General commands                 |
 | `cmd/cred_rotate`| MQTT → Device | Credential rotation bundle       |
 | `cmd/ota_check`  | MQTT → Device | Trigger immediate OTA check      |
+| `cmd/led`        | MQTT → Device | WS2812B strip control — colour / brightness / animation / count / off / reset (see [docs/led_control.md](docs/led_control.md)) |
+| `cmd/locate`     | MQTT → Device | Flash status LED for 4 s (ignored payload) — physical locate |
+| `status/led`     | Device → MQTT | Retained LED strip state — state, r/g/b, brightness, count, uptime |
 | `cmd/rfid/program` | MQTT → Device | Arm next scan for a raw-hex multi-block write (see [docs/rfid_tag_profiles.md](docs/rfid_tag_profiles.md)) |
 | `cmd/rfid/read_block` | MQTT → Device | Arm next scan for a single-block read |
 | `cmd/rfid/cancel` | MQTT → Device | Cancel any pending arm           |

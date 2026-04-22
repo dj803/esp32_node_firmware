@@ -153,3 +153,32 @@ each one small and additive.
 18. NFC phone / card emulation
     ESP32 (Xtensa) cannot emulate ISO 14443A as a tag. ESP32-S3 + host card
     emulation could — out of scope for this firmware.
+
+────────────────────────────────────────────────────────────────────────────────
+LED CONTROL — v0.3.18 follow-ups
+────────────────────────────────────────────────────────────────────────────────
+
+19. Per-LED addressing
+    The firmware currently drives the whole strip uniformly. Per-pixel
+    control would need a new cmd/led "pixels" schema, a larger event
+    payload (or separate topic), and a rework of the Core 1 renderer.
+    Ship once a real use case appears (e.g. segment-of-8 progress bar).
+
+20. Scene / preset save-to-device
+    v0.3.18 presets live only in the Node-RED ui-template. Adding an NVS
+    slot on the device would let the MQTT-less AP portal preview a scene
+    too, and survive a Node-RED reinstall. Small feature — ~1 day.
+
+21. Group / broadcast LED commands
+    UI targets one device at a time. Support a "send to all readers" or
+    multi-select — either client-side fan-out in Node-RED or a broadcast
+    MQTT topic the firmware subscribes to (mirrors broadcast/cred_rotate).
+
+22. Scheduled / time-of-day LED automation
+    e.g. warm-white at dawn, red-dim at night. Out of scope for v0.3.18 —
+    user can wire Node-RED inject nodes themselves if needed.
+
+23. OTA / heartbeat LED override from Node-RED
+    Today only LOCATE can overlay the status LED from outside. A generic
+    "force pattern X for Y seconds" command would let Node-RED show
+    alarm patterns for app-level events (door left open, sensor fault).

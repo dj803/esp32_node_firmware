@@ -757,14 +757,16 @@
     "order": 1,
     "width": "12",
     "height": 8,
-    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No devices seen yet â€” waiting for heartbeats...\n    </div>\n    <div v-for=\"(d, i) in (msg && msg.payload || [])\" :key=\"i\"\n         style=\"display:flex;align-items:center;padding:12px 16px;margin-bottom:8px;border-radius:8px;background:#1e272e\">\n      <div :style=\"{\n        width:'14px', height:'14px', borderRadius:'50%', marginRight:'14px', flexShrink:0,\n        background: d.status === 'Connected' ? '#00c853' : '#d50000'\n      }\"></div>\n      <div style=\"flex:1\">\n        <div style=\"font-weight:bold;font-size:15px;color:#eceff1\">{{ d.name }}</div>\n        <div style=\"font-size:11px;color:#78909c;margin-top:2px\">\n          <span>fw {{ d.firmware }}</span>\n          <span style=\"margin-left:12px\">Last seen: {{ d.lastSeen }}</span>\n        </div>\n      </div>\n      <div :style=\"{fontWeight:'bold', color: d.status === 'Connected' ? '#00c853' : '#d50000'}\">\n        {{ d.status }}\n      </div>\n    </div>\n  </div>\n</template>",
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No devices seen yet — waiting for heartbeats...\n    </div>\n    <div v-for=\"(d, i) in (msg && msg.payload || [])\" :key=\"i\"\n         style=\"display:flex;align-items:center;padding:12px 16px;margin-bottom:8px;border-radius:8px;background:#1e272e\">\n      <div :style=\"{\n        width:'14px', height:'14px', borderRadius:'50%', marginRight:'14px', flexShrink:0,\n        background: d.status === 'Connected' ? '#00c853' : '#d50000'\n      }\"></div>\n      <div style=\"flex:1\">\n        <div style=\"font-weight:bold;font-size:15px;color:#eceff1\">{{ d.name }}</div>\n        <div style=\"font-size:11px;color:#78909c;margin-top:2px\">\n          <span>fw {{ d.firmware }}</span>\n          <span style=\"margin-left:12px\">Last seen: {{ d.lastSeen }}</span>\n        </div>\n      </div>\n      <div :style=\"{fontWeight:'bold', color: d.status === 'Connected' ? '#00c853' : '#d50000', marginRight:'12px'}\">\n        {{ d.status }}\n      </div>\n      <button v-if=\"d.status === 'Connected'\"\n              @click=\"send({ topic:'locate', payload:{ uuid: d.uuid } })\"\n              title=\"Flash the status LED for 4 s\"\n              style=\"background:#ffb300;color:#000;border:none;padding:6px 10px;cursor:pointer;border-radius:4px;font-size:11px;font-weight:bold\">\n        ✦ Locate\n      </button>\n    </div>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
     "x": 960,
     "y": 420,
     "wires": [
-      []
+      [
+        "hb_locate_fn"
+      ]
     ]
   },
   {
@@ -2014,7 +2016,8 @@
         "hb_ver_tpl",
         "espnow_ver_tpl",
         "ble_ver_tpl",
-        "rfid_ver_tpl"
+        "rfid_ver_tpl",
+        "led_ver_tpl"
       ]
     ]
   },
@@ -2510,6 +2513,367 @@
     "width": "12",
     "height": 1,
     "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.17 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 600,
+    "y": 560,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "hb_locate_fn",
+    "type": "function",
+    "z": "0cc8e394107eb034",
+    "name": "Build cmd/locate topic",
+    "func": "try {\n    if (!msg || msg.topic !== 'locate' || !msg.payload || !msg.payload.uuid) return null;\n    var base = flow.get('topic_base') || global.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    return { topic: base + msg.payload.uuid + '/cmd/locate', payload: '' };\n} catch(e) { node.error('hb_locate_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1100,
+    "y": 480,
+    "wires": [
+      [
+        "hb_mqtt_out"
+      ]
+    ]
+  },
+  {
+    "id": "led_control_flow",
+    "type": "tab",
+    "label": "LED Control",
+    "disabled": false,
+    "info": "",
+    "env": []
+  },
+  {
+    "id": "led_ui_page",
+    "type": "ui-page",
+    "name": "LED Control",
+    "ui": "45a25337ec9ca43a",
+    "path": "/led",
+    "icon": "mdi-lightbulb",
+    "layout": "notebook",
+    "theme": "alpha_ble_theme",
+    "breakpoints": [
+      {
+        "name": "Default",
+        "px": 0,
+        "cols": 3
+      },
+      {
+        "name": "Tablet",
+        "px": 576,
+        "cols": 6
+      },
+      {
+        "name": "Desktop",
+        "px": 1024,
+        "cols": 12
+      }
+    ],
+    "order": 5,
+    "visible": true,
+    "disabled": false
+  },
+  {
+    "id": "led_device_group",
+    "type": "ui-group",
+    "name": "Target Device",
+    "page": "led_ui_page",
+    "width": "12",
+    "order": 1,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "led_color_group",
+    "type": "ui-group",
+    "name": "Colour",
+    "page": "led_ui_page",
+    "width": "12",
+    "order": 2,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "led_control_group",
+    "type": "ui-group",
+    "name": "Brightness / Count / Animation",
+    "page": "led_ui_page",
+    "width": "12",
+    "order": 3,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "led_state_group",
+    "type": "ui-group",
+    "name": "Live State (all devices)",
+    "page": "led_ui_page",
+    "width": "12",
+    "order": 4,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "led_ver_group",
+    "type": "ui-group",
+    "name": "Flow Version",
+    "page": "led_ui_page",
+    "width": "12",
+    "order": 5,
+    "showTitle": false,
+    "groupType": "default"
+  },
+  {
+    "id": "led_dev_inj",
+    "type": "inject",
+    "z": "led_control_flow",
+    "name": "Refresh device list",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "10",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 140,
+    "y": 80,
+    "wires": [
+      [
+        "led_dev_list_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_dev_list_fn",
+    "type": "function",
+    "z": "led_control_flow",
+    "name": "Build device list",
+    "func": "try {\n    var d = global.get('hb_devices') || {};\n    var list = Object.keys(d).map(function(u){ return { uuid: u, name: (d[u] && d[u].name) || u.slice(0,8) + '...' }; });\n    list.sort(function(a,b){ return a.name.localeCompare(b.name); });\n    return { topic: 'devices', payload: list };\n} catch(e) { node.error('led_dev_list_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 80,
+    "wires": [
+      [
+        "led_device_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "led_device_tpl",
+    "type": "ui-template",
+    "z": "led_control_flow",
+    "group": "led_device_group",
+    "name": "Device Picker",
+    "order": 1,
+    "width": "12",
+    "height": 2,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <label style=\"display:block;color:#78909c;font-size:11px;margin-bottom:4px\">Target device</label>\n    <select v-model=\"selected\" @change=\"onChange\"\n            style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:8px\">\n      <option v-if=\"!devices || devices.length === 0\" value=\"\">No devices — waiting for heartbeats …</option>\n      <option v-for=\"d in devices\" :key=\"d.uuid\" :value=\"d.uuid\">{{ d.name }}</option>\n    </select>\n    <div style=\"color:#78909c;font-size:11px;margin-top:6px;font-family:monospace\">{{ selected || '—' }}</div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { devices: [], selected: '' }; },\n  watch: {\n    msg(nv) {\n      if (!nv) return;\n      if (nv.topic === 'devices' && Array.isArray(nv.payload)) {\n        this.devices = nv.payload;\n        if (!this.selected && this.devices.length) { this.selected = this.devices[0].uuid; this.emitSel(); }\n      }\n    }\n  },\n  methods: {\n    onChange() { this.emitSel(); },\n    emitSel() { this.send({ topic: 'select', payload: { uuid: this.selected } }); }\n  }\n};\n</script>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 640,
+    "y": 80,
+    "wires": [
+      [
+        "led_selection_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_selection_fn",
+    "type": "function",
+    "z": "led_control_flow",
+    "name": "Store selected uuid",
+    "func": "try {\n    if (msg && msg.topic === 'select' && msg.payload && msg.payload.uuid) {\n        flow.set('led_selected_uuid', msg.payload.uuid);\n    }\n    return null;\n} catch(e) { node.error('led_selection_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 900,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "led_color_tpl",
+    "type": "ui-template",
+    "z": "led_control_flow",
+    "group": "led_color_group",
+    "name": "Colour Picker",
+    "order": 1,
+    "width": "12",
+    "height": 4,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div style=\"display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px\">\n      <button v-for=\"p in presets\" :key=\"p.name\"\n              @click=\"pickPreset(p)\"\n              :style=\"{ background: p.hex, color: p.fg||'#000', border:'none', padding:'8px 12px', cursor:'pointer', borderRadius:'4px', fontSize:'12px', fontWeight:'bold', minWidth:'64px' }\">\n        {{ p.name }}\n      </button>\n    </div>\n    <div style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap\">\n      <label style=\"color:#78909c;font-size:11px\">Freeform:</label>\n      <input type=\"color\" v-model=\"hex\" @change=\"pickHex\"\n             style=\"width:60px;height:36px;border:1px solid #37474f;background:#263238;cursor:pointer\"/>\n      <input v-model=\"hex\" @change=\"pickHex\" maxlength=\"7\" placeholder=\"#RRGGBB\"\n             style=\"background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px 8px;font-family:monospace;width:110px\"/>\n      <span style=\"color:#78909c;font-size:11px\">rgb({{ rgb.r }}, {{ rgb.g }}, {{ rgb.b }})</span>\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() {\n    return {\n      hex: '#0094CE',\n      presets: [\n        { name:'Red',     hex:'#d50000', fg:'#fff' },\n        { name:'Orange',  hex:'#ef6c00', fg:'#fff' },\n        { name:'Amber',   hex:'#ffb300' },\n        { name:'Yellow',  hex:'#fff176' },\n        { name:'Green',   hex:'#00c853', fg:'#fff' },\n        { name:'Cyan',    hex:'#00acc1', fg:'#fff' },\n        { name:'Blue',    hex:'#2962ff', fg:'#fff' },\n        { name:'Purple',  hex:'#6a1b9a', fg:'#fff' },\n        { name:'Magenta', hex:'#d500f9', fg:'#fff' },\n        { name:'Pink',    hex:'#f48fb1' },\n        { name:'White',   hex:'#ffffff' },\n        { name:'Off',     hex:'#000000', fg:'#eceff1' }\n      ]\n    };\n  },\n  computed: { rgb() { return this.toRgb(this.hex); } },\n  methods: {\n    toRgb(h) {\n      var s = String(h||'').replace('#','');\n      if (s.length !== 6) return { r:0, g:0, b:0 };\n      return { r: parseInt(s.slice(0,2),16), g: parseInt(s.slice(2,4),16), b: parseInt(s.slice(4,6),16) };\n    },\n    pickPreset(p) {\n      this.hex = p.hex;\n      if (p.name === 'Off') { this.send({ topic: 'off' }); return; }\n      this.emitColor();\n    },\n    pickHex() { this.emitColor(); },\n    emitColor() { var rgb = this.toRgb(this.hex); this.send({ topic: 'color', payload: rgb }); }\n  }\n};\n</script>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 260,
+    "y": 200,
+    "wires": [
+      [
+        "led_encode_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_control_tpl",
+    "type": "ui-template",
+    "z": "led_control_flow",
+    "group": "led_control_group",
+    "name": "Brightness / Count / Animation",
+    "order": 1,
+    "width": "12",
+    "height": 5,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div style=\"margin-bottom:12px\">\n      <label style=\"color:#78909c;font-size:11px\">Brightness: {{ brightness }}</label>\n      <input type=\"range\" min=\"1\" max=\"255\" v-model.number=\"brightness\"\n             @change=\"emitBrightness\"\n             style=\"width:100%\"/>\n    </div>\n    <div style=\"margin-bottom:12px\">\n      <label style=\"color:#78909c;font-size:11px\">Active LED count: {{ count }}</label>\n      <input type=\"range\" min=\"1\" max=\"64\" v-model.number=\"count\"\n             @change=\"emitCount\"\n             style=\"width:100%\"/>\n    </div>\n    <div style=\"display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap\">\n      <div style=\"flex:1 1 200px\">\n        <label style=\"display:block;color:#78909c;font-size:11px\">Animation</label>\n        <select v-model=\"animation\" @change=\"emitAnimation\"\n                style=\"width:100%;background:#263238;color:#eceff1;border:1px solid #37474f;padding:6px\">\n          <option value=\"solid\">Solid</option>\n          <option value=\"breathing\">Breathing</option>\n          <option value=\"rainbow\">Rainbow</option>\n        </select>\n      </div>\n      <button @click=\"send({ topic:'off' })\"   style=\"background:#455a64;color:#fff;border:none;padding:8px 14px;cursor:pointer;border-radius:4px\">Turn off</button>\n      <button @click=\"send({ topic:'reset' })\" style=\"background:#0277bd;color:#fff;border:none;padding:8px 14px;cursor:pointer;border-radius:4px\">Reset</button>\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { brightness: 80, count: 8, animation: 'solid' }; },\n  methods: {\n    emitBrightness() { this.send({ topic: 'brightness', payload: { value: this.brightness } }); },\n    emitCount() { this.send({ topic: 'count', payload: { value: this.count } }); },\n    emitAnimation() { this.send({ topic: 'animation', payload: { name: this.animation } }); }\n  }\n};\n</script>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 280,
+    "y": 280,
+    "wires": [
+      [
+        "led_encode_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_encode_fn",
+    "type": "function",
+    "z": "led_control_flow",
+    "name": "Encode cmd/led",
+    "func": "try {\n    var uuid = flow.get('led_selected_uuid');\n    if (!uuid) { node.warn('No device selected'); return null; }\n    var base = flow.get('topic_base') || global.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    var t = base + uuid + '/cmd/led';\n    var body = null;\n    switch (msg.topic) {\n      case 'color':\n        if (!msg.payload) return null;\n        body = { cmd:'color', r: msg.payload.r|0, g: msg.payload.g|0, b: msg.payload.b|0 };\n        break;\n      case 'brightness':\n        body = { cmd:'brightness', value: (msg.payload && msg.payload.value)|0 };\n        break;\n      case 'count':\n        body = { cmd:'count', value: (msg.payload && msg.payload.value)|0 };\n        break;\n      case 'animation':\n        body = { cmd:'animation', name: (msg.payload && msg.payload.name) || 'solid' };\n        break;\n      case 'off':   body = { cmd:'off' };   break;\n      case 'reset': body = { cmd:'reset' }; break;\n      default: return null;\n    }\n    return { topic: t, payload: body };\n} catch(e) { node.error('led_encode_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 620,
+    "y": 280,
+    "wires": [
+      [
+        "led_cmd_mqtt_out"
+      ]
+    ]
+  },
+  {
+    "id": "led_cmd_mqtt_out",
+    "type": "mqtt out",
+    "z": "led_control_flow",
+    "name": "cmd/led + cmd/locate (retain=false)",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "mqtt_broker",
+    "x": 900,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "led_state_mqtt_in",
+    "type": "mqtt in",
+    "z": "led_control_flow",
+    "name": "status/led (all)",
+    "topic": "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/+/status/led",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": false,
+    "inputs": 0,
+    "x": 140,
+    "y": 420,
+    "wires": [
+      [
+        "led_state_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_state_fn",
+    "type": "function",
+    "z": "led_control_flow",
+    "name": "Aggregate LED state",
+    "func": "try {\n    var uuid = msg.topic.split('/')[6] || '';\n    if (!uuid || !msg.payload) return null;\n    var all = flow.get('led_state') || {};\n    var devices = global.get('hb_devices') || {};\n    var name = (devices[uuid] && devices[uuid].name) || (uuid.slice(0,8) + '...');\n    all[uuid] = {\n        uuid:       uuid,\n        name:       name,\n        state:      msg.payload.state || '—',\n        r:          msg.payload.r|0,\n        g:          msg.payload.g|0,\n        b:          msg.payload.b|0,\n        brightness: msg.payload.brightness|0,\n        count:      msg.payload.count|0,\n        uptime_s:   msg.payload.uptime_s|0,\n        ts:         new Date().toLocaleString()\n    };\n    flow.set('led_state', all);\n    var rows = Object.values(all).sort(function(a,b){ return a.name.localeCompare(b.name); });\n    return { payload: rows };\n} catch(e) { node.error('led_state_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 420,
+    "wires": [
+      [
+        "led_state_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "led_state_tpl",
+    "type": "ui-template",
+    "z": "led_control_flow",
+    "group": "led_state_group",
+    "name": "LED State Table",
+    "order": 1,
+    "width": "12",
+    "height": 8,
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No state yet — waiting for status/led messages …\n    </div>\n    <table v-else style=\"width:100%;border-collapse:collapse;font-size:12px\">\n      <thead>\n        <tr style=\"color:#78909c;text-align:left;border-bottom:1px solid #263238\">\n          <th style=\"padding:4px 6px\">Device</th>\n          <th style=\"padding:4px 6px\">State</th>\n          <th style=\"padding:4px 6px\">Colour</th>\n          <th style=\"padding:4px 6px\">Bright</th>\n          <th style=\"padding:4px 6px\">Count</th>\n          <th style=\"padding:4px 6px\">Last</th>\n          <th style=\"padding:4px 6px\">&nbsp;</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-for=\"r in msg.payload\" :key=\"r.uuid\" style=\"border-bottom:1px solid #1e272e\">\n          <td style=\"padding:4px 6px;color:#eceff1\">{{ r.name }}</td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ r.state }}</td>\n          <td style=\"padding:4px 6px\">\n            <span :style=\"{ display:'inline-block', width:'18px', height:'18px', borderRadius:'3px', verticalAlign:'middle', border:'1px solid #37474f', background: 'rgb(' + r.r + ',' + r.g + ',' + r.b + ')' }\"></span>\n            <span style=\"color:#78909c;font-family:monospace;margin-left:6px\">{{ r.r }},{{ r.g }},{{ r.b }}</span>\n          </td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ r.brightness }}</td>\n          <td style=\"padding:4px 6px;color:#b0bec5\">{{ r.count }}</td>\n          <td style=\"padding:4px 6px;color:#78909c\">{{ r.ts }}</td>\n          <td style=\"padding:4px 6px\">\n            <button @click=\"send({ topic:'locate', payload:{ uuid: r.uuid } })\"\n                    style=\"background:#ffb300;color:#000;border:none;padding:4px 10px;cursor:pointer;border-radius:4px;font-size:11px;font-weight:bold\">\n              ✦ Locate\n            </button>\n          </td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 640,
+    "y": 420,
+    "wires": [
+      [
+        "led_locate_fn"
+      ]
+    ]
+  },
+  {
+    "id": "led_locate_fn",
+    "type": "function",
+    "z": "led_control_flow",
+    "name": "Build cmd/locate topic",
+    "func": "try {\n    if (!msg || msg.topic !== 'locate' || !msg.payload || !msg.payload.uuid) return null;\n    var base = flow.get('topic_base') || global.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    return { topic: base + msg.payload.uuid + '/cmd/locate', payload: '' };\n} catch(e) { node.error('led_locate_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 900,
+    "y": 420,
+    "wires": [
+      [
+        "led_cmd_mqtt_out"
+      ]
+    ]
+  },
+  {
+    "id": "led_ver_tpl",
+    "type": "ui-template",
+    "z": "led_control_flow",
+    "group": "led_ver_group",
+    "name": "Flow Version Badge",
+    "order": 1,
+    "width": "12",
+    "height": 1,
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.18 &nbsp;&middot;&nbsp; 2026-04-22</span>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",

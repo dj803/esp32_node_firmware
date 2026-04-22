@@ -20,6 +20,7 @@
 //   MQTT_CONNECTED  — 50 ms pulse / 2000 ms off — normal operational heartbeat
 //   BOOT            — solid ON — early initialisation
 //   ESPNOW_FLASH    — 40 ms overlay then revert — ESP-NOW packet sent/received
+//   LOCATE          — 10 × 200 ms ON/OFF (4 s) then revert — physical locate flash
 //   OFF             — always off
 // =============================================================================
 
@@ -33,6 +34,7 @@ enum class LedPattern : uint8_t {
     OTA_UPDATE,       // Solid ON — firmware flash in progress (device reboots after)
     ERROR,            // 3 × 100 ms flash, 700 ms pause — unrecoverable / restarting
     ESPNOW_FLASH,     // 40 ms overlay flash then revert to previous pattern
+    LOCATE,           // 10 × 200 ms ON/OFF (4 s) then auto-revert — physical-locate flash
 };
 
 static volatile LedPattern _ledPat     = LedPattern::OFF;
@@ -86,6 +88,19 @@ static void _ledTimerCb(void*) {
             }
             break;
 
+        case LedPattern::LOCATE:
+            {   // 10 × 200 ms ON / 200 ms OFF = 4000 ms total (400 ticks),
+                // then auto-revert to whatever pattern was running before.
+                uint32_t dt = tick - _ledFlashAt;
+                if (dt < 400) {
+                    on = (dt % 40) < 20;     // 200 ms ON / 200 ms OFF
+                } else {
+                    _ledPat = _ledPrevPat;
+                    on = false;
+                }
+            }
+            break;
+
         case LedPattern::OFF:
         default:
             on = false;
@@ -118,9 +133,11 @@ inline void ledInit() {
 // previous pattern resumes automatically. Do not call it if the current pattern
 // is already ESPNOW_FLASH (the second flash is queued implicitly by the timer).
 inline void ledSetPattern(LedPattern p) {
-    if (p == LedPattern::ESPNOW_FLASH && _ledPat != LedPattern::ESPNOW_FLASH) {
+    // Auto-revert patterns (ESPNOW_FLASH, LOCATE) save the current pattern so
+    // the timer callback can restore it when the overlay expires.
+    if ((p == LedPattern::ESPNOW_FLASH || p == LedPattern::LOCATE) && _ledPat != p) {
         _ledPrevPat = _ledPat;    // save current pattern for restore
-        _ledFlashAt = _ledTick;   // record when the flash started
+        _ledFlashAt = _ledTick;   // record when the overlay started
     }
     _ledPat = p;
 }

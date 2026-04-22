@@ -614,6 +614,11 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd/led")) {
         // WS2812B LED strip control
         handleLedCommand(payload, len);
+    } else if (t == mqttTopic("cmd/locate")) {
+        // Status LED locate flash — 4 s non-blocking overlay, auto-reverts.
+        // Payload is ignored; any publish arms the flash.
+        LOG_I("MQTT", "cmd/locate received - flashing status LED");
+        ledSetPattern(LedPattern::LOCATE);
     } else if (t == mqttTopic("cmd/rfid/whitelist")) {
         // RFID UID whitelist management
         handleRfidWhitelist(payload, len);
@@ -704,6 +709,7 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(),   1);   // Start HTTP settings portal on LAN IP
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
     _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
+    _mqttClient.subscribe(mqttTopic("cmd/locate").c_str(),        1);   // Status LED locate flash
     _mqttClient.subscribe(mqttTopic("cmd/rfid/whitelist").c_str(), 1);  // RFID whitelist management
 #ifdef RFID_ENABLED
     _mqttClient.subscribe(mqttTopic("cmd/rfid/program").c_str(),    1); // RFID playground: arm write

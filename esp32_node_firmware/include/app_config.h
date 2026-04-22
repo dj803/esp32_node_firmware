@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "config.h"
+#include "led.h"         // LedPattern::LOCATE — used by ledFlashLocate()
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 
 // =============================================================================
@@ -51,16 +52,15 @@
 // ── ledFlashLocate ────────────────────────────────────────────────────────────
 // Flash STATUS_LED_PIN 10 times (200 ms on / 200 ms off) so the device can be
 // physically located in a rack, cabinet, or on a shelf.
-// Called by the "Locate This Device" button in both web portals (ap_portal.h)
-// and can also be called directly from the main sketch or MQTT handlers.
+// Called by the "Locate This Device" button in the web portals (ap_portal.h)
+// and from the MQTT `cmd/locate` handler (mqtt_client.h).
+//
+// Non-blocking: posts LedPattern::LOCATE to the 10 ms timer callback in led.h,
+// which runs the 4-second flash sequence and auto-reverts to the previous
+// pattern. Returning immediately is critical — callers include the MQTT task,
+// where a blocking 4 s delay would stall heartbeats and backlog the broker.
 static void ledFlashLocate() {
-    pinMode(STATUS_LED_PIN, OUTPUT);
-    for (int i = 0; i < 10; i++) {
-        digitalWrite(STATUS_LED_PIN, HIGH);
-        delay(200);
-        digitalWrite(STATUS_LED_PIN, LOW);
-        delay(200);
-    }
+    ledSetPattern(LedPattern::LOCATE);
 }
 
 // Per-field buffer sizes — generous enough for real-world values, conservative
