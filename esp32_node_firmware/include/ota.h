@@ -58,24 +58,6 @@ static bool     _otaForced    = false; // True when MQTT has requested an immedi
 
 
 
-// Re-subscribe the async_tcp task to the task watchdog. Paired with the
-// esp_task_wdt_delete() call we do before the blocking OTA download. On any
-// non-OK exit path below we MUST re-subscribe or the device keeps running with
-// a silently-downgraded watchdog until the next reboot.
-static void _otaReaddAsyncTcpToWdt() {
-    TaskHandle_t t = xTaskGetHandle("async_tcp");
-    if (t) {
-        esp_err_t err = esp_task_wdt_add(t);
-        if (err != ESP_OK) {
-            // ESP_ERR_INVALID_ARG means "already subscribed" — benign.
-            if (err != ESP_ERR_INVALID_ARG) {
-                LOG_W("OTA", "task_wdt_add(async_tcp) failed: %d", err);
-            }
-        }
-    }
-}
-
-
 // ── otaCheckNow ───────────────────────────────────────────────────────────────
 // The main OTA entry point. Fetches the JSON filter file, compares the version,
 // and flashes the new firmware if a newer version is available.
