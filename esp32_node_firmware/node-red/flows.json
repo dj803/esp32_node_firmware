@@ -3035,7 +3035,7 @@
   },
   {
     "id": "espnow_mqtt_out_cmd",
-    "type": "mqtt-out",
+    "type": "mqtt out",
     "z": "espnow_flow",
     "name": "MQTT cmd/espnow/*",
     "topic": "",
@@ -3053,7 +3053,7 @@
   },
   {
     "id": "espnow_status_in",
-    "type": "mqtt-in",
+    "type": "mqtt in",
     "z": "espnow_flow",
     "name": "status (all nodes)",
     "topic": "Enigma/JHBDev/+/+/+/ESP32NodeBox/+/status",
@@ -3134,7 +3134,7 @@
   },
   {
     "id": "espnow_response_in",
-    "type": "mqtt-in",
+    "type": "mqtt in",
     "z": "espnow_flow",
     "name": "response (all nodes)",
     "topic": "Enigma/JHBDev/+/+/+/ESP32NodeBox/+/response",
