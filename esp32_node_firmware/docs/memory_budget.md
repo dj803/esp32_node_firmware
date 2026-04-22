@@ -101,24 +101,24 @@ approximate (see note below each table).
 
 | Component | Bytes | KB | % of 132 KB |
 |---|---|---|---|
-| btdm_app (BLE controller) | 32177 | 31.4 | 23.8% |
-| freertos | 16498 | 16.1 | 12.2% |
-| c (newlib libc hot paths) | 13325 | 13.0 | 9.9% |
-| phy (RF driver) | 9126 | 8.9 | 6.8% |
-| spi_flash | 8678 | 8.5 | 6.4% |
-| esp_hw_support | 7966 | 7.8 | 5.9% |
-| heap | 6428 | 6.3 | 4.8% |
-| hal | 5557 | 5.4 | 4.1% |
-| esp_system | 4223 | 4.1 | 3.1% |
-| esp_ringbuf | 4160 | 4.1 | 3.1% |
-| coexist | 3256 | 3.2 | 2.4% |
-| esp_sleep / rtc | 2028 | 2.0 | 1.5% |
-| pp (Wi-Fi MAC) | 1937 | 1.9 | 1.4% |
-| bootloader_support | 1839 | 1.8 | 1.4% |
-| xtensa (arch support) | 1817 | 1.8 | 1.3% |
-| newlib | 1761 | 1.7 | 1.3% |
-| esp_driver_rmt | 1736 | 1.7 | 1.3% |
-| bt (classic BT) | 1678 | 1.6 | 1.2% |
+| btdm_app (BLE controller binary) | 32177 | 31.4 | 23.8% |
+| freertos (RTOS kernel — task scheduler, queues, semaphores) | 16498 | 16.1 | 12.2% |
+| c (newlib libc — memcpy, string, printf hot paths) | 13325 | 13.0 | 9.9% |
+| phy (RF PHY driver — must run with flash cache off) | 9126 | 8.9 | 6.8% |
+| spi_flash (flash cache, MMU, wear-levelling, OTA write) | 8678 | 8.5 | 6.4% |
+| esp_hw_support (RTC clock, CPU freq scaling, peripheral init) | 7966 | 7.8 | 5.9% |
+| heap (TLSF heap allocator — ISR-safe alloc/free) | 6428 | 6.3 | 4.8% |
+| hal (hardware abstraction — GPIO, timer, SPI, I2C, cache) | 5557 | 5.4 | 4.1% |
+| esp_system (panic handler, reset reason, IDF system init) | 4223 | 4.1 | 3.1% |
+| esp_ringbuf (IDF ring buffer — used by UART and streams) | 4160 | 4.1 | 3.1% |
+| coexist (Wi-Fi + BLE radio coexistence scheduler) | 3256 | 3.2 | 2.4% |
+| esp_sleep / rtc (sleep entry, RTC timer — added v0.3.20) | 2028 | 2.0 | 1.5% |
+| pp (Wi-Fi MAC lower-layer — packet processing) | 1937 | 1.9 | 1.4% |
+| bootloader_support (flash encryption helpers, partition table) | 1839 | 1.8 | 1.4% |
+| xtensa (Xtensa arch — setjmp, window overflow, int vectors) | 1817 | 1.8 | 1.3% |
+| newlib (C stdlib bridging — stdio, TZ, malloc hooks) | 1761 | 1.7 | 1.3% |
+| esp_driver_rmt (RMT peripheral driver — used by FastLED) | 1736 | 1.7 | 1.3% |
+| bt (Classic Bluetooth stack) | 1678 | 1.6 | 1.2% |
 | (remaining < 1.5 KB each) | 5663 | 5.5 | 4.2% |
 | **TOTAL** | **129855** | **126.8** | **96.1%** |
 
@@ -132,21 +132,21 @@ v0.3.20 to accommodate the `esp_sleep.c` IRAM_ATTR functions pulled in by
 
 | Component | Bytes | KB | Notes |
 |---|---|---|---|
-| net80211 (Wi-Fi stack) | 169334 | 165.4 | Largest single consumer |
-| SPI (includes FastLED RMT path) | 151185 | 147.6 | Inflated by str1.1 merging |
-| lwip | 133124 | 130.0 | TCP/IP stack |
-| mbedcrypto | 119406 | 116.6 | TLS crypto |
-| NimBLE-Arduino | 107162 | 104.7 | BLE host |
-| src (firmware code) | 104549 | 102.1 | Our own code |
-| btdm_app | 101555 | 99.2 | BLE controller code |
-| c / libc | 67687 | 66.1 | |
-| pp (Wi-Fi MAC) | 67202 | 65.6 | |
-| wpa_supplicant | 61198 | 59.8 | |
-| FrameworkArduino | 54707 | 53.4 | Arduino core |
-| FastLED | 50195 | 49.0 | LED animation |
-| mbedtls_2 | 40724 | 39.8 | TLS record layer |
-| phy | 34467 | 33.7 | RF driver |
-| espressif__mdns | 30174 | 29.5 | mDNS |
+| net80211 (Wi-Fi 802.11 stack) | 169334 | 165.4 | Largest single consumer |
+| SPI (Arduino SPI + FastLED LED strip driver) | 151185 | 147.6 | Inflated by str1.1 merging |
+| lwip (TCP/IP — sockets, DHCP, DNS) | 133124 | 130.0 | |
+| mbedcrypto (TLS symmetric + asymmetric crypto) | 119406 | 116.6 | AES, SHA, ECDH |
+| NimBLE-Arduino (BLE host — GATT, GAP, connections) | 107162 | 104.7 | |
+| src (firmware application code) | 104549 | 102.1 | Our own code |
+| btdm_app (BLE controller binary) | 101555 | 99.2 | Closed-source blob |
+| c / libc (newlib C standard library) | 67687 | 66.1 | printf, string, math |
+| pp (Wi-Fi MAC lower-layer) | 67202 | 65.6 | Rate ctrl, aggregation |
+| wpa_supplicant (WPA2/WPA3 auth, 802.11 association) | 61198 | 59.8 | |
+| FrameworkArduino (Arduino-ESP32 core) | 54707 | 53.4 | HAL glue, Arduino APIs |
+| FastLED (LED animation library) | 50195 | 49.0 | |
+| mbedtls_2 (TLS record layer, X.509 cert handling) | 40724 | 39.8 | |
+| phy (RF PHY driver + calibration tables) | 34467 | 33.7 | |
+| espressif__mdns (mDNS / DNS-SD service discovery) | 30174 | 29.5 | |
 | (remaining ~55 libraries) | ~243000 | ~237 | |
 | **TOTAL (overcounted)** | **~1713029** | **~1673** | **~87% of 1920 KB** |
 
@@ -165,19 +165,19 @@ map file still lists each contributing object at the same address.
 
 | Component | Bytes | KB | % of 122 KB |
 |---|---|---|---|
-| src (firmware static vars) | 16147 | 15.8 | 12.9% |
-| net80211 | 9420 | 9.2 | 7.5% |
-| NimBLE-Arduino | 5734 | 5.6 | 4.6% |
-| spi_flash | 5517 | 5.4 | 4.4% |
-| freertos | 5301 | 5.2 | 4.2% |
-| bt (classic BT) | 4658 | 4.5 | 3.7% |
-| lwip | 4397 | 4.3 | 3.5% |
-| pp (Wi-Fi MAC) | 4183 | 4.1 | 3.3% |
-| btdm_app | 4079 | 4.0 | 3.3% |
-| phy | 3491 | 3.4 | 2.8% |
-| FrameworkArduino | 3083 | 3.0 | 2.5% |
-| c / libc | 2530 | 2.5 | 2.0% |
-| espressif__mdns | 2414 | 2.4 | 1.9% |
+| src (firmware static + BSS variables) | 16147 | 15.8 | 12.9% |
+| net80211 (Wi-Fi stack — BSS tables, association state) | 9420 | 9.2 | 7.5% |
+| NimBLE-Arduino (BLE host — GATT tables, connection state) | 5734 | 5.6 | 4.6% |
+| spi_flash (flash driver state — cache maps, sector tracking) | 5517 | 5.4 | 4.4% |
+| freertos (RTOS — task control blocks, timer lists) | 5301 | 5.2 | 4.2% |
+| bt (Classic Bluetooth state — HCI, L2CAP buffers) | 4658 | 4.5 | 3.7% |
+| lwip (TCP/IP — socket PCBs, ARP table, DHCP lease) | 4397 | 4.3 | 3.5% |
+| pp (Wi-Fi MAC — packet queues, rate control state) | 4183 | 4.1 | 3.3% |
+| btdm_app (BLE controller — HCI/ACL buffer pools) | 4079 | 4.0 | 3.3% |
+| phy (RF calibration data — loaded at boot from NVS) | 3491 | 3.4 | 2.8% |
+| FrameworkArduino (Arduino core globals — Serial, WiFi events) | 3083 | 3.0 | 2.5% |
+| c / libc (stdio buffers, TZ state, reentrancy structs) | 2530 | 2.5 | 2.0% |
+| espressif__mdns (mDNS service registry and query state) | 2414 | 2.4 | 1.9% |
 | (remaining ~20 libraries) | 8979 | 8.8 | 7.2% |
 | **TOTAL** | **84933** | **82.9** | **68.0%** |
 
