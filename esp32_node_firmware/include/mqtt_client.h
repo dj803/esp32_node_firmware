@@ -99,6 +99,7 @@ static uint32_t         _mqttModemSleepUntilMs = 0;           // Non-zero: exit 
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
 static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid
 static String           _mqttHost;                        // kept alive so setServer()'s raw ptr stays valid
+static String           _mqttWillTopic;                   // kept alive so setWill()'s raw ptr stays valid
 static CredentialBundle _mqttBundle;                      // Copy of credentials, kept for rotation key access
 
 
@@ -1186,11 +1187,9 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     // .../status for "online":false to grey out anchors on the map and clear
     // stale peer entries in the roster. The will is set once here and
     // re-sent automatically on every reconnect by AsyncMqttClient.
-    {
-        String lwtTopic = mqttTopic("status");
-        _mqttClient.setWill(lwtTopic.c_str(), 1, true,
-            "{\"online\":false,\"event\":\"offline\"}");
-    }
+    _mqttWillTopic = mqttTopic("status");
+    _mqttClient.setWill(_mqttWillTopic.c_str(), 1, true,
+        "{\"online\":false,\"event\":\"offline\"}");
 
     if (WiFi.isConnected()) {
         LOG_I("MQTT", "Connecting to %s:%d as %s",
