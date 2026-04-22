@@ -294,7 +294,7 @@
     "name": "ESP-NOW Tracking",
     "page": "espnow_ui_tab",
     "width": "12",
-    "order": 2,
+    "order": 3,
     "showTitle": true,
     "groupType": "default"
   },
@@ -1059,7 +1059,7 @@
     "type": "function",
     "z": "espnow_flow",
     "name": "Accumulate Discovered",
-    "func": "try {\n    var peers = (msg.payload && Array.isArray(msg.payload.peers))\n                ? msg.payload.peers : [];\n    var disc = flow.get(\"espnow_discovered\") || {};\n    peers.forEach(function(p) {\n        if (p.mac) disc[p.mac] = { mac: p.mac, rssi: p.rssi, dist_m: p.dist_m };\n    });\n    flow.set(\"espnow_discovered\", disc);\n    msg.payload = { peers: Object.values(disc) };\n    return msg;\n} catch(e) {\n    node.error('Accumulate Discovered: ' + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var peers = (msg.payload && Array.isArray(msg.payload.peers))\n                ? msg.payload.peers : [];\n    var src = msg.payload && msg.payload.node_name ? msg.payload.node_name : null;\n    var disc  = flow.get('espnow_discovered') || {};\n    var roster = flow.get('espnow_roster') || {};\n    peers.forEach(function(p) {\n        if (!p.mac) return;\n        var name = (roster[p.mac] && roster[p.mac].name) ? roster[p.mac].name : '';\n        disc[p.mac] = {\n            mac:      p.mac,\n            name:     name,\n            rssi:     p.rssi,\n            rssi_ema: p.rssi_ema,\n            dist_m:   p.dist_m,\n            rejects:  p.rejects || 0\n        };\n    });\n    flow.set('espnow_discovered', disc);\n    msg.payload = { peers: Object.values(disc) };\n    return msg;\n} catch(e) {\n    node.error('Accumulate Discovered: ' + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -1100,8 +1100,8 @@
     "name": "Peer Table",
     "order": 6,
     "width": "12",
-    "height": "8",
-    "format": "<template>\n  <div style=\"padding:8px;font-size:13px\">\n    <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px\">\n      <label style=\"display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer\">\n        <input type=\"checkbox\" v-model=\"allSelected\" style=\"width:15px;height:15px;cursor:pointer\">\n        Select All ({{ peers.length }})\n      </label>\n      <button @click=\"trackSelected\"\n              :disabled=\"selected.length === 0\"\n              :style=\"{ opacity: selected.length === 0 ? 0.4 : 1, padding:'4px 16px', background:'#0288d1', color:'#fff', border:'none', borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n        Track Selected ({{ selected.length }}/8)\n      </button>\n    </div>\n    <table style=\"width:100%;border-collapse:collapse\">\n      <thead>\n        <tr style=\"background:#263238;color:#eceff1\">\n          <th style=\"padding:8px;width:32px\"></th>\n          <th style=\"padding:8px;text-align:left\">MAC</th>\n          <th style=\"padding:8px;text-align:right\">RSSI</th>\n          <th style=\"padding:8px;text-align:right\">Distance</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-if=\"peers.length === 0\">\n          <td colspan=\"4\" style=\"padding:16px;text-align:center;color:#546e7a\">\n            No peers found â€” press Refresh Peers\n          </td>\n        </tr>\n        <tr v-for=\"(p, i) in peers\" :key=\"p.mac\" style=\"border-bottom:1px solid #37474f\">\n          <td style=\"padding:8px;text-align:center\">\n            <input type=\"checkbox\" :value=\"p.mac\" v-model=\"selected\"\n                   style=\"cursor:pointer;width:15px;height:15px\">\n          </td>\n          <td style=\"padding:8px;font-family:monospace;font-size:12px;color:#80cbc4\">{{ p.mac }}</td>\n          <td style=\"padding:8px;text-align:right\">{{ p.rssi }} dBm</td>\n          <td style=\"padding:8px;text-align:right\">{{ Number(p.dist_m).toFixed(1) }} m</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() { return { selected: [] } },\n  computed: {\n    peers() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.peers))\n        ? this.msg.payload.peers : []\n    },\n    allSelected: {\n      get() { return this.peers.length > 0 && this.selected.length === this.peers.length },\n      set(val) { this.selected = val ? this.peers.map(p => p.mac) : [] }\n    }\n  },\n  watch: {\n    peers(newList) {\n      const macs = new Set(newList.map(p => p.mac))\n      this.selected = this.selected.filter(mac => macs.has(mac))\n    }\n  },\n  methods: {\n    trackSelected() {\n      if (this.selected.length) this.send({ payload: this.selected })\n    }\n  }\n}\n</script>",
+    "height": "10",
+    "format": "<template>\n  <div style=\"padding:8px;font-size:13px\">\n    <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px\">\n      <label style=\"display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer\">\n        <input type=\"checkbox\" v-model=\"allSelected\" style=\"width:15px;height:15px;cursor:pointer\">\n        Select All ({{ peers.length }})\n      </label>\n      <button @click=\"trackSelected\"\n              :disabled=\"selected.length === 0\"\n              :style=\"{ opacity: selected.length === 0 ? 0.4 : 1, padding:'4px 16px',\n                         background:'#0288d1', color:'#fff', border:'none',\n                         borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n        Track Selected ({{ selected.length }}/8)\n      </button>\n    </div>\n    <table style=\"width:100%;border-collapse:collapse\">\n      <thead>\n        <tr style=\"background:#263238;color:#eceff1\">\n          <th style=\"padding:6px;width:28px\"></th>\n          <th style=\"padding:6px;text-align:left\">Name / MAC</th>\n          <th style=\"padding:6px;text-align:right\">RSSI</th>\n          <th style=\"padding:6px;text-align:right\">EMA</th>\n          <th style=\"padding:6px;text-align:right\">Dist</th>\n          <th style=\"padding:6px;text-align:right\">Rej</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-if=\"peers.length === 0\">\n          <td colspan=\"6\" style=\"padding:16px;text-align:center;color:#546e7a\">\n            No peers found &mdash; press Refresh Peers\n          </td>\n        </tr>\n        <tr v-for=\"p in peers\" :key=\"p.mac\" style=\"border-bottom:1px solid #37474f\">\n          <td style=\"padding:6px;text-align:center\">\n            <input type=\"checkbox\" :value=\"p.mac\" v-model=\"selected\" style=\"cursor:pointer;width:15px;height:15px\">\n          </td>\n          <td style=\"padding:6px\">\n            <div style=\"font-size:13px;color:#80cbc4\">{{ p.name || '&mdash;' }}</div>\n            <div style=\"font-family:monospace;font-size:10px;color:#546e7a\">{{ p.mac }}</div>\n          </td>\n          <td style=\"padding:6px;text-align:right\">{{ p.rssi }} dBm</td>\n          <td style=\"padding:6px;text-align:right;color:#80deea\">{{ p.rssi_ema != null ? p.rssi_ema + ' dBm' : '&mdash;' }}</td>\n          <td style=\"padding:6px;text-align:right\">{{ Number(p.dist_m).toFixed(1) }} m</td>\n          <td style=\"padding:6px;text-align:right;color:#ef9a9a\">{{ p.rejects || 0 }}</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() { return { selected: [] } },\n  computed: {\n    peers() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.peers))\n        ? this.msg.payload.peers : []\n    },\n    allSelected: {\n      get() { return this.peers.length > 0 && this.selected.length === this.peers.length },\n      set(v) { this.selected = v ? this.peers.map(p => p.mac) : [] }\n    }\n  },\n  watch: {\n    peers(list) {\n      const s = new Set(list.map(p => p.mac));\n      this.selected = this.selected.filter(m => s.has(m));\n    }\n  },\n  methods: {\n    trackSelected() { if (this.selected.length) this.send({ payload: this.selected }) }\n  }\n}\n</script>",
     "storeOutMessages": false,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -1118,8 +1118,8 @@
     "type": "function",
     "z": "espnow_flow",
     "name": "Set Tracked MACs",
-    "func": "try {\n    var macs = [].concat(msg.payload || []).filter(function(m) {\n        return typeof m === \"string\" && m.length > 0;\n    });\n    flow.set(\"espnow_tracked_macs\", macs);\n    var disc = flow.get(\"espnow_discovered\") || {};\n    var devices = macs.map(function(mac) { return disc[mac]; }).filter(Boolean);\n    var seedMsg = (macs.length > 0)\n        ? { payload: { peers: devices } }\n        : null;\n    node.send([\n        { payload: { tracking: macs.length > 0, devices: devices } },\n        seedMsg\n    ]);\n    return null;\n} catch(e) {\n    node.error('Set Tracked MACs: ' + e.message, msg);\n    return null;\n}",
-    "outputs": 2,
+    "func": "try {\n    var macs = [].concat(msg.payload || []).filter(function(m) {\n        return typeof m === 'string' && m.length > 0;\n    });\n    flow.set('espnow_tracked_macs', macs);\n    var disc = flow.get('espnow_discovered') || {};\n    var devices = macs.map(function(mac) { return disc[mac]; }).filter(Boolean);\n    var seedMsg = macs.length > 0 ? { payload: { peers: devices } } : null;\n    // output 3: publish cmd/espnow/track to firmware (retained)\n    var trackMsg = {\n        topic: msg._baseTopic ? msg._baseTopic + '/cmd/espnow/track' : null,\n        payload: JSON.stringify({ macs: macs }),\n        retain: true\n    };\n    node.send([\n        { payload: { tracking: macs.length > 0, devices: devices } },\n        seedMsg,\n        macs !== undefined ? trackMsg : null\n    ]);\n    return null;\n} catch(e) {\n    node.error('Set Tracked MACs: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 3,
     "noerr": 0,
     "initialize": "",
     "finalize": "",
@@ -1133,6 +1133,9 @@
       ],
       [
         "espnow_filter_fn"
+      ],
+      [
+        "espnow_mqtt_out_cmd"
       ]
     ]
   },
@@ -1145,7 +1148,7 @@
     "order": 1,
     "width": "12",
     "height": 2,
-    "format": "<template>\n  <div style=\"padding:6px 12px\">\n    <div v-if=\"!msg || !msg.payload || !msg.payload.tracking\"\n         style=\"display:flex;align-items:center;gap:8px\">\n      <div style=\"width:10px;height:10px;border-radius:50%;background:#546e7a;flex-shrink:0\"></div>\n      <span style=\"color:#78909c;font-size:13px\">Not Tracking</span>\n    </div>\n    <div v-else>\n      <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:4px\">\n        <div style=\"width:10px;height:10px;border-radius:50%;background:#00b0ff;\n                    flex-shrink:0;animation:enpulse 1.5s ease-in-out infinite\"></div>\n        <span style=\"color:#00b0ff;font-size:13px;font-weight:bold\">\n          Tracking {{ msg.payload.devices.length }} peer{{ msg.payload.devices.length !== 1 ? 's' : '' }}\n        </span>\n      </div>\n      <div v-for=\"(d, i) in msg.payload.devices\" :key=\"i\"\n           style=\"padding:1px 0 1px 18px;font-size:11px;color:#90a4ae;font-family:monospace\">\n        {{ d.mac }}&nbsp;&nbsp;â€”&nbsp;&nbsp;{{ d.dist_m }} m / {{ d.rssi }} dBm\n      </div>\n    </div>\n  </div>\n  <style scoped>\n    @keyframes enpulse { 0%,100%{opacity:1} 50%{opacity:0.3} }\n  </style>\n</template>",
+    "format": "<template>\n  <div style=\"padding:6px 12px\">\n    <div v-if=\"!msg || !msg.payload || !msg.payload.tracking\"\n         style=\"display:flex;align-items:center;gap:8px\">\n      <div style=\"width:10px;height:10px;border-radius:50%;background:#546e7a;flex-shrink:0\"></div>\n      <span style=\"color:#78909c;font-size:13px\">Not Tracking</span>\n    </div>\n    <div v-else>\n      <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:4px\">\n        <div style=\"width:10px;height:10px;border-radius:50%;background:#00b0ff;\n                    flex-shrink:0;animation:enpulse 1.5s ease-in-out infinite\"></div>\n        <span style=\"color:#00b0ff;font-size:13px;font-weight:bold\">\n          Tracking {{ msg.payload.devices.length }} peer{{ msg.payload.devices.length !== 1 ? 's' : '' }}\n        </span>\n      </div>\n      <div v-for=\"(d, i) in msg.payload.devices\" :key=\"i\"\n           style=\"padding:1px 0 1px 18px;font-size:11px;color:#90a4ae;font-family:monospace\">\n        {{ d.name || d.mac }}&nbsp;&mdash;&nbsp;{{ d.dist_m }} m / {{ d.rssi }} dBm\n      </div>\n    </div>\n  </div>\n  <style scoped>\n    @keyframes enpulse { 0%,100%{opacity:1} 50%{opacity:0.3} }\n  </style>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -1160,7 +1163,7 @@
     "type": "function",
     "z": "espnow_flow",
     "name": "Filter Tracked Peers",
-    "func": "try {\n    var tracked = flow.get('espnow_tracked_macs') || [];\n    if (tracked.length === 0) return null;\n    var peers = (msg.payload && Array.isArray(msg.payload.peers))\n                ? msg.payload.peers : [];\n    var msgs = [];\n    peers.forEach(function(p) {\n        if (tracked.indexOf(p.mac) >= 0) {\n            msgs.push({ payload: parseFloat(p.dist_m) || 0,\n                        topic: p.mac, _label: p.mac });\n        }\n    });\n    return msgs.length > 0 ? [msgs] : null;\n} catch(e) {\n    node.error('Filter Tracked Peers: ' + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var tracked = flow.get('espnow_tracked_macs') || [];\n    if (tracked.length === 0) return null;\n    var peers = (msg.payload && Array.isArray(msg.payload.peers))\n                ? msg.payload.peers : [];\n    var msgs = [];\n    peers.forEach(function(p) {\n        if (tracked.indexOf(p.mac) >= 0) {\n            var label = p.name || p.mac;\n            msgs.push({ payload: parseFloat(p.dist_m) || 0, topic: label, _label: label });\n        }\n    });\n    return msgs.length > 0 ? [msgs] : null;\n} catch(e) {\n    node.error('Filter Tracked Peers: ' + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -1376,7 +1379,7 @@
     "name": "Flow Version",
     "page": "espnow_ui_tab",
     "width": "12",
-    "order": 3,
+    "order": 4,
     "showTitle": false,
     "groupType": "default"
   },
@@ -3016,6 +3019,236 @@
       ],
       [
         "hb_status_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_grp_config",
+    "type": "ui-group",
+    "page": "espnow_ui_tab",
+    "name": "Config & Calibration",
+    "theme": "espnow_ui_tab",
+    "order": 2,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+  {
+    "id": "espnow_mqtt_out_cmd",
+    "type": "mqtt-out",
+    "z": "espnow_flow",
+    "name": "MQTT cmd/espnow/*",
+    "topic": "",
+    "qos": "1",
+    "retain": "",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker",
+    "x": 1100,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "espnow_status_in",
+    "type": "mqtt-in",
+    "z": "espnow_flow",
+    "name": "status (all nodes)",
+    "topic": "Enigma/JHBDev/+/+/+/ESP32NodeBox/+/status",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 140,
+    "y": 500,
+    "wires": [
+      [
+        "espnow_roster_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_roster_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Build Roster",
+    "func": "try {\n    var p = msg.payload || {};\n    if (!p.mac) return null;\n    var roster = flow.get('espnow_roster') || {};\n    // Name collision detection\n    var name = (p.node_name || '').trim();\n    if (name) {\n        Object.keys(roster).forEach(function(mac) {\n            if (mac !== p.mac && roster[mac].name === name) {\n                // Flag duplicate — append #2 suffix to incoming\n                name = name + '#2';\n            }\n        });\n    }\n    roster[p.mac] = {\n        uuid:    p.device_id || p.mac,\n        mac:     p.mac,\n        name:    name,\n        online:  p.online !== false\n    };\n    flow.set('espnow_roster', roster);\n    // Rebuild discovered names\n    var disc = flow.get('espnow_discovered') || {};\n    if (disc[p.mac]) disc[p.mac].name = name;\n    flow.set('espnow_discovered', disc);\n    // Forward device list to rename & calibration templates\n    var devices = Object.values(roster).map(function(r) {\n        return { uuid: r.uuid, mac: r.mac, name: r.name, online: r.online };\n    });\n    return { payload: { devices: devices } };\n} catch(e) {\n    node.error('Build Roster: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 500,
+    "wires": [
+      [
+        "espnow_rename_tpl",
+        "espnow_calib_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_rename_tpl",
+    "type": "ui-template",
+    "z": "espnow_flow",
+    "group": "espnow_grp_scan",
+    "name": "Rename Node",
+    "order": 7,
+    "width": "12",
+    "height": "3",
+    "format": "<template>\n  <div style=\"display:flex;align-items:center;gap:8px;padding:8px;font-size:13px;flex-wrap:wrap\">\n    <span style=\"color:#90a4ae\">Rename:</span>\n    <select v-model=\"selMac\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n            padding:4px 8px;border-radius:4px;font-size:12px\">\n      <option value=\"\">-- select node --</option>\n      <option v-for=\"d in devices\" :key=\"d.mac\" :value=\"d.mac\">\n        {{ d.name || d.mac }} ({{ d.mac }})\n      </option>\n    </select>\n    <input v-model=\"newName\" type=\"text\" placeholder=\"Alpha\" maxlength=\"15\"\n           pattern=\"[A-Za-z0-9_-]+\"\n           style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n                  padding:4px 8px;border-radius:4px;font-size:12px;width:120px\">\n    <button @click=\"save\" :disabled=\"!selMac || !newName.trim()\"\n            :style=\"{ opacity: (!selMac || !newName.trim()) ? 0.4 : 1,\n                       padding:'4px 16px', background:'#00897b', color:'#fff',\n                       border:'none', borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n      Save Name\n    </button>\n    <span v-if=\"saved\" style=\"color:#80cbc4;font-size:12px\">Saved!</span>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { selMac: '', newName: '', saved: false } },\n  computed: {\n    devices() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.devices))\n        ? this.msg.payload.devices : []\n    }\n  },\n  methods: {\n    save() {\n      if (!this.selMac || !this.newName.trim()) return;\n      this.send({ payload: { mac: this.selMac, name: this.newName.trim() } });\n      this.saved = true;\n      setTimeout(() => { this.saved = false; }, 2000);\n    }\n  }\n}\n</script>",
+    "storeOutMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 650,
+    "y": 500,
+    "wires": [
+      [
+        "espnow_rename_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_rename_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Build Name Cmd",
+    "func": "try {\n    var mac  = msg.payload && msg.payload.mac;\n    var name = msg.payload && msg.payload.name;\n    if (!mac || !name) return null;\n    // Derive base topic from retained roster (status topic minus '/status')\n    // Fallback: use wildcard-matched topic from espnow_status_in for this mac.\n    // We embed the MAC in the payload so Node-RED can route; firmware ignores mac field.\n    var topic = 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/' + mac + '/cmd/espnow/name';\n    return {\n        topic: topic,\n        payload: JSON.stringify({ name: name }),\n        retain: true,\n        qos: 1\n    };\n} catch(e) {\n    node.error('Build Name Cmd: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 880,
+    "y": 500,
+    "wires": [
+      [
+        "espnow_mqtt_out_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_response_in",
+    "type": "mqtt-in",
+    "z": "espnow_flow",
+    "name": "response (all nodes)",
+    "topic": "Enigma/JHBDev/+/+/+/ESP32NodeBox/+/response",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": false,
+    "rh": 0,
+    "inputs": 0,
+    "x": 140,
+    "y": 620,
+    "wires": [
+      [
+        "espnow_calib_progress_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_calib_progress_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Calib Progress",
+    "func": "msg.payload.calib = true;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 620,
+    "wires": [
+      [
+        "espnow_calib_tpl"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_calib_tpl",
+    "type": "ui-template",
+    "z": "espnow_flow",
+    "group": "espnow_grp_config",
+    "name": "Calibration Wizard",
+    "order": 1,
+    "width": "12",
+    "height": "14",
+    "format": "<template>\n  <div style=\"padding:10px;font-size:13px\">\n    <div style=\"font-weight:bold;color:#80cbc4;margin-bottom:8px\">Calibration Wizard</div>\n    <!-- Device selector -->\n    <div style=\"display:flex;align-items:center;gap:8px;margin-bottom:8px\">\n      <span style=\"color:#90a4ae;min-width:80px\">Device:</span>\n      <select v-model=\"selMac\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n              padding:4px 8px;border-radius:4px;font-size:12px;flex:1\">\n        <option value=\"\">-- select node --</option>\n        <option v-for=\"d in devices\" :key=\"d.mac\" :value=\"d.mac\">\n          {{ d.name || d.mac }}\n        </option>\n      </select>\n    </div>\n    <!-- Step 1 -->\n    <div style=\"background:#1a2730;border-radius:6px;padding:10px;margin-bottom:8px\">\n      <div style=\"color:#eceff1;margin-bottom:6px\">\n        <b>Step 1</b> &mdash; Place target <b>1 m</b> from this node, then click:\n      </div>\n      <div style=\"display:flex;align-items:center;gap:8px\">\n        <button @click=\"measure1m\" :disabled=\"!selMac || busy\"\n                :style=\"btnStyle(!selMac || busy, '#0288d1')\">\n          Measure @ 1 m\n        </button>\n        <span v-if=\"step1\" style=\"color:#80deea;font-size:12px\">\n          RSSI median: {{ step1.rssi_median }} dBm ({{ step1.samples }} samples)\n        </span>\n      </div>\n    </div>\n    <!-- Step 2 -->\n    <div style=\"background:#1a2730;border-radius:6px;padding:10px;margin-bottom:8px\">\n      <div style=\"color:#eceff1;margin-bottom:6px\">\n        <b>Step 2</b> &mdash; Move target to known distance, enter it, then click:\n      </div>\n      <div style=\"display:flex;align-items:center;gap:8px;flex-wrap:wrap\">\n        <input v-model.number=\"distM\" type=\"number\" min=\"2\" max=\"50\" step=\"0.5\"\n               placeholder=\"4.0\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n               padding:4px 8px;border-radius:4px;font-size:12px;width:80px\">\n        <span style=\"color:#90a4ae\">m</span>\n        <button @click=\"measureD\" :disabled=\"!selMac || !step1 || !distM || busy\"\n                :style=\"btnStyle(!selMac || !step1 || !distM || busy, '#0288d1')\">\n          Measure @ {{ distM || '?' }} m\n        </button>\n        <span v-if=\"step2\" style=\"color:#80deea;font-size:12px\">\n          RSSI median: {{ step2.rssi_median }} dBm\n        </span>\n      </div>\n    </div>\n    <!-- Progress bar -->\n    <div v-if=\"busy\" style=\"background:#263238;border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px\">\n      <div :style=\"{ width: progress + '%', background:'#0288d1', height:'100%',\n                      transition:'width 0.5s' }\"></div>\n    </div>\n    <!-- Commit / Reset -->\n    <div style=\"display:flex;gap:8px\">\n      <button @click=\"commit\" :disabled=\"!step2\"\n              :style=\"btnStyle(!step2, '#00897b')\">\n        Commit\n      </button>\n      <button @click=\"reset\" :style=\"btnStyle(false, '#b71c1c')\">\n        Reset\n      </button>\n      <span v-if=\"committed\" style=\"color:#a5d6a7;font-size:12px\">\n        Saved: txPow={{ committed.tx_power_dbm }} dBm, n={{ committed.path_loss_n }}\n      </span>\n    </div>\n    <!-- Status line -->\n    <div v-if=\"statusMsg\" style=\"margin-top:6px;font-size:11px;color:#78909c\">{{ statusMsg }}</div>\n  </div>\n</template>\n<script>\nexport default {\n  data() {\n    return { selMac:'', distM:4, step1:null, step2:null, busy:false,\n             progress:0, committed:null, statusMsg:'', devices:[] }\n  },\n  watch: {\n    msg(m) {\n      if (!m || !m.payload) return;\n      // Roster update (from espnow_roster_fn)\n      if (Array.isArray(m.payload.devices)) {\n        this.devices = m.payload.devices;\n        return;\n      }\n      // Calibration progress from firmware (.../response)\n      if (m.payload.calib) {\n        var p = m.payload;\n        if (p.step === 'measure_1m') {\n          this.progress = Math.round(p.samples / 30 * 100);\n          this.statusMsg = 'Measuring 1m... ' + p.samples + '/30';\n          if (p.done) { this.step1 = p; this.busy = false; this.progress = 100;\n                        this.statusMsg = 'Step 1 done.'; }\n        } else if (p.step === 'measure_d') {\n          this.progress = Math.round(p.samples / 30 * 100);\n          this.statusMsg = 'Measuring ' + p.distance_m + 'm... ' + p.samples + '/30';\n          if (p.done) { this.step2 = p; this.busy = false; this.progress = 100;\n                        this.statusMsg = 'Step 2 done. Ready to commit.'; }\n        } else if (p.committed) {\n          this.committed = p;\n          this.statusMsg = 'Calibration committed to NVS.';\n          this.step1 = null; this.step2 = null; this.busy = false;\n        } else if (p.reset) {\n          this.step1 = null; this.step2 = null; this.busy = false;\n          this.committed = null; this.statusMsg = 'Reset to factory defaults.';\n        }\n      }\n    }\n  },\n  methods: {\n    btnStyle(dis, bg) {\n      return { opacity: dis ? 0.4 : 1, padding:'4px 14px', background: bg,\n               color:'#fff', border:'none', borderRadius:'4px',\n               cursor: dis ? 'not-allowed' : 'pointer', fontSize:'12px' }\n    },\n    measure1m() {\n      this.busy = true; this.progress = 0; this.step1 = null; this.statusMsg = 'Sending measure_1m...';\n      this.send({ payload: { mac: this.selMac, cmd: 'measure_1m', samples: 30 } });\n    },\n    measureD() {\n      this.busy = true; this.progress = 0; this.step2 = null;\n      this.statusMsg = 'Sending measure_d...';\n      this.send({ payload: { mac: this.selMac, cmd: 'measure_d',\n                              distance_m: this.distM, samples: 30 } });\n    },\n    commit() {\n      this.send({ payload: { mac: this.selMac, cmd: 'commit' } });\n      this.statusMsg = 'Committing...';\n    },\n    reset() {\n      this.step1 = null; this.step2 = null; this.committed = null;\n      this.send({ payload: { mac: this.selMac, cmd: 'reset' } });\n    }\n  }\n}\n</script>",
+    "storeOutMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 650,
+    "y": 620,
+    "wires": [
+      [
+        "espnow_calib_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_calib_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Build Calib Cmd",
+    "func": "try {\n    var p = msg.payload || {};\n    var mac = p.mac;\n    if (!mac) return null;\n    var cmdPayload = { cmd: p.cmd };\n    if (p.cmd === 'measure_1m') { cmdPayload.samples = p.samples || 30; }\n    if (p.cmd === 'measure_d')  { cmdPayload.samples = p.samples || 30; cmdPayload.distance_m = p.distance_m; }\n    var topic = 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/' + mac + '/cmd/espnow/calibrate';\n    return { topic: topic, payload: JSON.stringify(cmdPayload), qos: 1, retain: false };\n} catch(e) {\n    node.error('Build Calib Cmd: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 880,
+    "y": 620,
+    "wires": [
+      [
+        "espnow_mqtt_out_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_drift_tpl",
+    "type": "ui-template",
+    "z": "espnow_flow",
+    "group": "espnow_grp_config",
+    "name": "Drift Filter Settings",
+    "order": 2,
+    "width": "12",
+    "height": "4",
+    "format": "<template>\n  <div style=\"padding:10px;font-size:13px\">\n    <div style=\"font-weight:bold;color:#80cbc4;margin-bottom:8px\">EMA Drift Filter</div>\n    <div style=\"display:flex;align-items:center;gap:12px;flex-wrap:wrap\">\n      <label style=\"color:#90a4ae\">\n        Alpha (0-100):\n        <input v-model.number=\"alpha\" type=\"number\" min=\"0\" max=\"100\" step=\"5\"\n               style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n               padding:4px 8px;border-radius:4px;font-size:12px;width:70px;margin-left:6px\">\n      </label>\n      <label style=\"color:#90a4ae\">\n        Outlier gate (dB):\n        <input v-model.number=\"outlier\" type=\"number\" min=\"0\" max=\"40\" step=\"1\"\n               style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;\n               padding:4px 8px;border-radius:4px;font-size:12px;width:70px;margin-left:6px\">\n      </label>\n      <button @click=\"apply\"\n              style=\"padding:4px 16px;background:#6a1b9a;color:#fff;border:none;\n                     border-radius:4px;cursor:pointer;font-size:12px\">\n        Apply to All\n      </button>\n      <span v-if=\"sent\" style=\"color:#ce93d8;font-size:12px\">Sent!</span>\n    </div>\n    <div style=\"margin-top:6px;font-size:11px;color:#546e7a\">\n      alpha=30 means 30% new / 70% old each frame. 0 = filtering off.\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { alpha: 30, outlier: 15, sent: false } },\n  methods: {\n    apply() {\n      this.send({ payload: { alpha_x100: this.alpha, outlier_db: this.outlier } });\n      this.sent = true;\n      setTimeout(() => { this.sent = false; }, 2000);\n    }\n  }\n}\n</script>",
+    "storeOutMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 650,
+    "y": 720,
+    "wires": [
+      [
+        "espnow_drift_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_drift_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Build Filter Cmds",
+    "func": "try {\n    var alpha   = msg.payload.alpha_x100;\n    var outlier = msg.payload.outlier_db;\n    var roster  = flow.get('espnow_roster') || {};\n    var macs = Object.keys(roster);\n    if (macs.length === 0) {\n        node.warn('No known devices in roster yet');\n        return null;\n    }\n    var msgs = macs.map(function(mac) {\n        return {\n            topic: 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/' + mac + '/cmd/espnow/filter',\n            payload: JSON.stringify({ alpha_x100: alpha, outlier_db: outlier }),\n            retain: true,\n            qos: 1\n        };\n    });\n    node.send([msgs]);\n    return null;\n} catch(e) {\n    node.error('Build Filter Cmds: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 880,
+    "y": 720,
+    "wires": [
+      [
+        "espnow_mqtt_out_cmd"
       ]
     ]
   }
