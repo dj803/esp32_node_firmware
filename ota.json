@@ -1,7 +1,7 @@
 {
   "Configurations": [
     {
-      "Version": "0.3.28",
+      "Version": "0.3.29",
       "URL": "https://dj803.github.io/esp32_node_firmware/firmware.bin"
     }
   ]
