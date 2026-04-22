@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.31"
+#define FIRMWARE_VERSION           "0.3.32"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -163,6 +163,15 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
                                            // Default: 1 hour (3 600 000 ms).
                                            // You can also trigger an immediate check
                                            // via MQTT: publish to cmd/ota_check.
+
+#define OTA_PROGRESS_TIMEOUT_MS      30000 // Per-chunk deadline during the OTA download:
+                                           // if no progress callback fires for this long,
+                                           // a one-shot FreeRTOS timer calls ESP.restart()
+                                           // to recover cleanly rather than waiting for
+                                           // the TWDT. Picked at 30 s to tolerate normal
+                                           // CDN slow-starts but catch a true stall like
+                                           // the v0.3.28 Charlie freeze (see SUGGESTED
+                                           // _IMPROVEMENTS #24).
 
 
 // -----------------------------------------------------------------------------

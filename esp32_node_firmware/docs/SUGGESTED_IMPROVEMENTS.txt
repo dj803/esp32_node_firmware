@@ -6,13 +6,15 @@ of them cheap to bundle in.
 
 ────────────────────────────────────────────────────────────────────────────────
 
-1. Upgrade GitHub Actions to Node.js 24
+1. Upgrade GitHub Actions to Node.js 24            (addressed 2026-04-22)
    WHERE:    .github/workflows/build.yml (actions/checkout@v4, setup-python@v5,
              upload-artifact@v4, download-artifact@v4, softprops/action-gh-release@v2)
    DEADLINE: Node.js 20 is deprecated; hard cutoff June 2026. After that
              date, CI builds will fail without this upgrade.
-   FIX:      Either bump each action to its Node 24 build once published, or
-             set FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true at workflow level.
+   FIX:      Set FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true at workflow level
+             (chosen approach — one-line workflow `env:` block). Once every
+             action above publishes a native Node 24 build, the env var can
+             be removed and individual actions bumped explicitly.
 
 2. JTAG debugging setup                                (was audit item 20)
    Requires: ST-Link or ESP-Prog debug probe, JTAG pins wired on the dev board
@@ -29,11 +31,24 @@ of them cheap to bundle in.
    Add Dependabot (built-in) and/or Trivy against the platformio.ini lib_deps
    list. Alerts on CVEs in AsyncTCP, async-mqtt-client, NimBLE-Arduino, etc.
 
-5. Local PlatformIO validation
+5. Local PlatformIO validation                 (addressed 2026-04-22)
    No local `pio run` / `pio test` was ever run during the v0.3.03 migration —
    CI was the only signal. Run `pip install platformio` on the dev machine and
    confirm `pio run -e esp32dev` + `pio test -e native` both pass locally, so
    future iterations don't round-trip through CI for trivial syntax errors.
+   STATUS:   `pio run -e esp32dev` validated locally (Charlie + Bravo flashed
+             from this machine on 2026-04-22). `pio test -e native` requires
+             a local C/C++ host toolchain (gcc/g++), which is not installed
+             on the current Windows dev box. Install MSYS2 mingw-w64 or
+             chocolatey `mingw` to enable host tests; CI runs them on Ubuntu.
+   WINDOWS GOTCHA: PlatformIO's click output handler uses CP1252 on Windows
+             and crashes with UnicodeEncodeError on the Unicode progress bars
+             that esptool emits during `--target upload`. The flash itself
+             succeeds (esptool is a subprocess), but pio's output reader dies.
+             Workaround: prefix every pio invocation with `set
+             PYTHONIOENCODING=utf-8 &&` (cmd.exe) or `$env:PYTHONIOENCODING=
+             "utf-8";` (PowerShell), or set it persistently via
+             `setx PYTHONIOENCODING utf-8`.
 
 6. OTA HTTPS certificate pinning                       (flagged 2026-04-21 review)
    WHERE:    include/ota.h (ESP32-OTA-Pull + HTTPClient stack)
@@ -182,3 +197,43 @@ LED CONTROL — v0.3.18 follow-ups
     Today only LOCATE can overlay the status LED from outside. A generic
     "force pattern X for Y seconds" command would let Node-RED show
     alarm patterns for app-level events (door left open, sensor fault).
+
+────────────────────────────────────────────────────────────────────────────────
+OTA — v0.3.28 follow-ups                                   (flagged 2026-04-22)
+────────────────────────────────────────────────────────────────────────────────
+
+24. OTA transient freeze — add watchdog-safe progress timeout   (observed v0.3.28)
+    OBSERVED:  During the v0.3.28 OTA field rollout, device Charlie froze on
+               first attempt (no serial attached, device non-responsive).
+               Worked cleanly on a manual reset + retry. Alpha and Bravo
+               succeeded first-try. Root cause unknown — no serial log captured.
+    CANDIDATES:
+      a) Heap fragmentation at the moment of OTA. Charlie had likely been running
+         longer / in a different heap state. BLE deinit freed the pool but mbed TLS
+         handshake or lwIP buffer allocation may have hit a transient shortage.
+      b) TCP stall mid-download. If the GitHub Pages CDN stalled and the progress
+         callback stopped firing, the TWDT would eventually fire and reset — but
+         the timeout (~3–5 s) may have looked like a freeze before the reset
+         actually triggered.
+      c) MQTT/async_tcp teardown race unique to Charlie's connection state at the
+         time (e.g. mid-reconnect when OTA triggered, causing the _mqttOtaActive
+         guard to hit an unexpected branch).
+    SUGGESTED FIX:
+      - Add a per-chunk deadline in the progress callback: if more than N seconds
+        elapse between consecutive callback invocations, call ESP.restart() to
+        abort and recover cleanly rather than relying on the TWDT alone.
+      - Consider logging heap free/largest-block at OTA trigger time (before BLE
+        deinit) so future freezes can be correlated with heap state.
+      - If freeze recurs on Charlie specifically, capture serial during next OTA
+        attempt to get the exact crash / stall point.
+    PRIORITY:  Low — single occurrence, clean recovery on retry. Promote if it
+               recurs on any device.
+    STATUS:    Addressed 2026-04-22.
+               - One-shot FreeRTOS timer `_otaProgressWatchdog` armed before the
+                 download (ota.h). Each progress callback resets it; if no
+                 callback fires for OTA_PROGRESS_TIMEOUT_MS (config.h, default
+                 30 s), the timer task calls ESP.restart() to break the stall.
+               - Trigger-time heap snapshot (free + largest block) now logged
+                 immediately after "Update available" — before MQTT/BLE
+                 teardown — so future freezes can be correlated with heap state
+                 at the moment of OTA initiation, not just after teardown.

@@ -53,8 +53,18 @@
 
 
 // ── Module state ──────────────────────────────────────────────────────────────
-static uint32_t _lastOtaCheck = 0;     // millis() timestamp of last check
-static bool     _otaForced    = false; // True when MQTT has requested an immediate check
+static uint32_t     _lastOtaCheck         = 0;     // millis() timestamp of last check
+static bool         _otaForced            = false; // True when MQTT has requested an immediate check
+static TimerHandle_t _otaProgressWatchdog = NULL;  // One-shot stall detector during download
+
+// One-shot FreeRTOS timer fired if no progress callback arrives within
+// OTA_PROGRESS_TIMEOUT_MS. Recovers from CDN stalls / TCP black-holes that
+// don't trip the TWDT (e.g. v0.3.28 Charlie freeze).
+static void _otaProgressTimeout(TimerHandle_t /*xTimer*/) {
+    LOG_E("OTA", "Progress watchdog fired (no callback for %d ms) - restarting",
+          OTA_PROGRESS_TIMEOUT_MS);
+    ESP.restart();
+}
 
 
 
@@ -95,6 +105,7 @@ void otaCheckNow(bool isSiblingRetry) {
     // download duration and the TWDT fires (~3 s on this SDK config).
     ota.SetCallback([](int offset, int total) {
         esp_task_wdt_reset();   // Keep loopTask WDT token alive every chunk
+        if (_otaProgressWatchdog) xTimerReset(_otaProgressWatchdog, 0);
         static int lastPct = -1;
         int pct = (total > 0) ? (offset * 100 / total) : 0;
         if (pct / 10 != lastPct / 10) {
@@ -171,6 +182,13 @@ void otaCheckNow(bool isSiblingRetry) {
     String targetVersion = ota.GetVersion();
     LOG_I("OTA", "Update available: %s -> %s", FIRMWARE_VERSION, targetVersion.c_str());
 
+    // Snapshot heap state at trigger time (before any teardown). If a future
+    // OTA freezes mid-download, correlating this with serial logs lets us
+    // distinguish heap-fragmentation stalls from network stalls.
+    LOG_I("OTA", "Heap at trigger: free=%u largest=%u",
+          heap_caps_get_free_size(MALLOC_CAP_8BIT),
+          heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
     String extra = "\"target_version\":\"" + targetVersion + "\"";
     mqttPublishStatus(FwEvent::OTA_DOWNLOADING, extra.c_str());
     delay(200);   // Give the MQTT publish time to be sent before the download blocks
@@ -237,9 +255,26 @@ void otaCheckNow(bool isSiblingRetry) {
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
     ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
     { LedEvent e{}; e.type = LedEventType::OTA_START; ws2812PostEvent(e); }
+
+    // Arm the per-chunk progress watchdog: created lazily so multiple OTA
+    // attempts in one boot reuse a single timer object. Each progress callback
+    // resets it; if no callback fires for OTA_PROGRESS_TIMEOUT_MS, the timer
+    // task calls ESP.restart() to break the stall.
+    if (!_otaProgressWatchdog) {
+        _otaProgressWatchdog = xTimerCreate("ota_wd",
+                                            pdMS_TO_TICKS(OTA_PROGRESS_TIMEOUT_MS),
+                                            pdFALSE,   // one-shot
+                                            NULL,
+                                            _otaProgressTimeout);
+    }
+    if (_otaProgressWatchdog) xTimerStart(_otaProgressWatchdog, 0);
+
     ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
                                 "0.0.0",
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);
+
+    // Download returned (success or failure) — disarm the stall watchdog.
+    if (_otaProgressWatchdog) xTimerStop(_otaProgressWatchdog, 0);
 
     if (ret == ESP32OTAPull::UPDATE_OK) {
         LOG_I("OTA", "Flash succeeded - restarting");

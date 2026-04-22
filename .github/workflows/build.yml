@@ -27,6 +27,13 @@ on:
     tags:
       - 'v*.*.*'
 
+# Node.js 20 is deprecated by GitHub Actions (hard cutoff June 2026).
+# This flag forces all JavaScript actions to use the Node.js 24 runtime
+# even on action versions that haven't published a Node 24 build yet.
+# Remove once every action below ships a native Node 24 release.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 defaults:
   run:
     working-directory: esp32_node_firmware
