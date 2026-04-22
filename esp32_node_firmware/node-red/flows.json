@@ -2676,7 +2676,8 @@
     "y": 400,
     "wires": [
       [
-        "hb_status_tpl"
+        "hb_status_tpl",
+        "hb_sleep_tpl"
       ]
     ]
   },
@@ -2962,6 +2963,59 @@
     "wires": [
       [
         "hb_mqtt_out"
+      ]
+    ]
+  },
+  {
+    "id": "hb_sleep_group",
+    "type": "ui-group",
+    "name": "Sleep Control",
+    "page": "hb_ui_page",
+    "width": "12",
+    "order": 3,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
+    "id": "hb_sleep_tpl",
+    "type": "ui-template",
+    "z": "0cc8e394107eb034",
+    "group": "hb_sleep_group",
+    "name": "Sleep Control Panel",
+    "order": 1,
+    "width": "12",
+    "height": 3,
+    "format": "<template>\n  <div style=\"padding:8px 16px\">\n    <div style=\"display:flex;align-items:center;gap:10px;flex-wrap:wrap\">\n      <select v-model=\"selectedUuid\"\n              style=\"background:#263238;color:#eceff1;border:1px solid #546e7a;border-radius:4px;padding:6px 8px;font-size:13px\">\n        <option value=\"\">— select device —</option>\n        <option v-for=\"d in connectedDevices\" :key=\"d.uuid\" :value=\"d.uuid\">{{ d.name }}</option>\n      </select>\n      <input type=\"number\" v-model.number=\"durValue\" min=\"1\"\n             :style=\"{\n               width:'70px', background:'#263238',\n               color: inputValid ? '#eceff1' : '#ef5350',\n               border: inputValid ? '1px solid #546e7a' : '1px solid #ef5350',\n               borderRadius:'4px', padding:'6px 8px', fontSize:'13px'\n             }\">\n      <select v-model=\"durUnit\"\n              style=\"background:#263238;color:#eceff1;border:1px solid #546e7a;border-radius:4px;padding:6px 8px;font-size:13px\">\n        <option value=\"s\">seconds</option>\n        <option value=\"m\">minutes</option>\n        <option value=\"h\">hours</option>\n      </select>\n      <button @click=\"doSleep('modem')\" :disabled=\"!valid\"\n              :style=\"{background: valid ? '#00897b' : '#37474f', color:'#fff', border:'none',\n                       padding:'6px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:'bold',\n                       cursor: valid ? 'pointer' : 'not-allowed', opacity: valid ? 1 : 0.5}\">\n        Wi-Fi Sleep\n      </button>\n      <button @click=\"doSleep('light')\" :disabled=\"!valid\"\n              :style=\"{background: valid ? '#1565c0' : '#37474f', color:'#fff', border:'none',\n                       padding:'6px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:'bold',\n                       cursor: valid ? 'pointer' : 'not-allowed', opacity: valid ? 1 : 0.5}\">\n        Sleep\n      </button>\n      <button @click=\"doSleep('deep')\" :disabled=\"!valid\"\n              :style=\"{background: valid ? '#6a1b9a' : '#37474f', color:'#fff', border:'none',\n                       padding:'6px 14px', borderRadius:'4px', fontSize:'12px', fontWeight:'bold',\n                       cursor: valid ? 'pointer' : 'not-allowed', opacity: valid ? 1 : 0.5}\">\n        Deep Sleep\n      </button>\n    </div>\n    <div v-if=\"selectedUuid && !inputValid\"\n         style=\"color:#ef5350;font-size:11px;margin-top:6px\">\n      Duration out of range (max 86400 s / 24 h)\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { selectedUuid: '', durValue: 30, durUnit: 's', devices: [] }; },\n  computed: {\n    connectedDevices() {\n      return this.devices.filter(function(d) {\n        return d.status === 'Connected' || d.status === 'Modem Sleeping';\n      });\n    },\n    seconds() {\n      var m = this.durUnit === 'h' ? 3600 : this.durUnit === 'm' ? 60 : 1;\n      return Math.round(this.durValue * m);\n    },\n    inputValid() { return this.seconds >= 1 && this.seconds <= 86400; },\n    valid()       { return !!this.selectedUuid && this.inputValid; }\n  },\n  watch: {\n    msg: {\n      handler(m) { if (m && Array.isArray(m.payload)) this.devices = m.payload; },\n      immediate: true\n    }\n  },\n  methods: {\n    doSleep(kind) {\n      if (!this.valid) return;\n      this.send({ topic: 'sleep_cmd',\n                  payload: { uuid: this.selectedUuid, seconds: this.seconds, kind: kind } });\n    }\n  }\n};\n</script>\n",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 960,
+    "y": 340,
+    "wires": [
+      [
+        "hb_sleep_fn"
+      ]
+    ]
+  },
+  {
+    "id": "hb_sleep_fn",
+    "type": "function",
+    "z": "0cc8e394107eb034",
+    "name": "Send Sleep Command",
+    "func": "try {\n    if (!msg || msg.topic !== 'sleep_cmd' || !msg.payload) return null;\n    var base    = flow.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    var devices = flow.get('hb_devices') || {};\n    var uuid    = msg.payload.uuid;\n    var seconds = msg.payload.seconds;\n    var kind    = msg.payload.kind;\n\n    if (!uuid || !devices[uuid]) { node.warn('hb_sleep_fn: unknown uuid'); return null; }\n    if (!(seconds >= 1 && seconds <= 86400)) { node.warn('hb_sleep_fn: bad seconds ' + seconds); return null; }\n    if (['modem','light','deep'].indexOf(kind) === -1) { node.warn('hb_sleep_fn: bad kind'); return null; }\n\n    var statusLabel = kind === 'deep'  ? 'Deep Sleeping'\n                    : kind === 'light' ? 'Sleeping'\n                    :                    'Modem Sleeping';\n    var topicLeaf   = kind === 'deep'  ? 'deep_sleep'\n                    : kind === 'light' ? 'sleep'\n                    :                    'modem_sleep';\n\n    devices[uuid].status           = statusLabel;\n    devices[uuid].sleep_duration_s = seconds;\n    devices[uuid].wake_at_ms       = Date.now() + seconds * 1000;\n    flow.set('hb_devices', devices);\n    global.set('hb_devices', devices);\n    var sorted = Object.values(devices).sort(function(a,b){ return a.name.localeCompare(b.name); });\n\n    node.send([\n        { topic: base + uuid + '/cmd/' + topicLeaf,\n          payload: JSON.stringify({ seconds: seconds }), qos: 1, retain: false },\n        { payload: sorted }\n    ]);\n    return null;\n} catch(e) {\n    node.error('hb_sleep_fn: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 340,
+    "wires": [
+      [
+        "hb_mqtt_out"
+      ],
+      [
+        "hb_status_tpl"
       ]
     ]
   }
