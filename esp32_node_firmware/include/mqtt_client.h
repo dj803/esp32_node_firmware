@@ -181,11 +181,17 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     const char* rfidEnabledStr = "false";
 #endif
 
+    // Friendly node name from NVS — empty string until the operator sets one.
+    // Always emitted so Node-RED's roster flow can label by name when present
+    // and fall back to device_id when "".
+    const char* nodeName = gAppConfig.node_name;
+
     char buf[512];
     int n;
     if (extraJson && *extraJson) {
         n = snprintf(buf, sizeof(buf),
             "{\"device_id\":\"%s\","
+            "\"node_name\":\"%s\","
             "\"mac\":\"%s\","
             "\"firmware_version\":\"" FIRMWARE_VERSION "\","
             "\"firmware_ts\":%u,"
@@ -194,6 +200,7 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"event\":\"%s\","
             "%s}",
             DeviceId::get().c_str(),
+            nodeName,
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
@@ -202,6 +209,7 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     } else {
         n = snprintf(buf, sizeof(buf),
             "{\"device_id\":\"%s\","
+            "\"node_name\":\"%s\","
             "\"mac\":\"%s\","
             "\"firmware_version\":\"" FIRMWARE_VERSION "\","
             "\"firmware_ts\":%u,"
@@ -209,6 +217,7 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"rfid_enabled\":%s,"
             "\"event\":\"%s\"}",
             DeviceId::get().c_str(),
+            nodeName,
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
@@ -578,10 +587,10 @@ static void handleCredRotation(const char* payload, size_t len) {
 }
 
 
-// Forward declaration — defined in espnow_ranging.h, which is included AFTER
-// mqtt_client.h in main.cpp. This avoids a circular include while still letting
-// onMqttMessage call the function. The linker resolves it within the same TU.
+// Forward declarations — defined in espnow_ranging.h, included AFTER mqtt_client.h.
 void espnowRangingSetEnabled(bool en);
+void espnowCalibrateCmd(const char* payload, size_t len);
+void espnowSetFilter(const char* payload, size_t len);
 
 
 // ── Sleep helpers (v0.3.20) ──────────────────────────────────────────────────
@@ -774,6 +783,59 @@ static void onMqttMessage(char* topic, char* payload,
         bool enable = (len > 0 && payload[0] == '1');
         espnowRangingSetEnabled(enable);
         LOG_I("MQTT", "ESP-NOW ranging %s via MQTT", enable ? "enabled" : "disabled");
+    } else if (t == mqttTopic("cmd/espnow/name")) {
+        // Set the friendly per-device name. Payload: {"name":"Alpha"}.
+        // Validates against [A-Za-z0-9_-]{1,15}; silently rejects invalid input
+        // so a malformed retained message can't brick the name field.
+        // Persisted via AppConfigStore::save() — Node-RED publishes retained so
+        // a reboot or reconnect re-applies the same name without operator action.
+        char buf[64];
+        size_t copyLen = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+
+        JsonDocument doc;
+        if (deserializeJson(doc, buf)) {
+            LOG_W("MQTT", "cmd/espnow/name: bad JSON");
+            return;
+        }
+        const char* name = doc["name"] | "";
+        size_t nameLen = strlen(name);
+        if (nameLen == 0 || nameLen >= APP_CFG_NODE_NAME_LEN) {
+            LOG_W("MQTT", "cmd/espnow/name: length %u out of [1..%u]",
+                  (unsigned)nameLen, (unsigned)(APP_CFG_NODE_NAME_LEN - 1));
+            return;
+        }
+        for (size_t i = 0; i < nameLen; i++) {
+            char c = name[i];
+            bool valid = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                         (c >= '0' && c <= '9') || c == '_' || c == '-';
+            if (!valid) {
+                LOG_W("MQTT", "cmd/espnow/name: invalid char '%c'", c);
+                return;
+            }
+        }
+
+        // No-op if unchanged so we don't churn NVS on every retained replay.
+        if (strcmp(gAppConfig.node_name, name) == 0) return;
+
+        AppConfig copy = gAppConfig;
+        strncpy(copy.node_name, name, APP_CFG_NODE_NAME_LEN - 1);
+        copy.node_name[APP_CFG_NODE_NAME_LEN - 1] = '\0';
+        if (AppConfigStore::save(copy)) {
+            LOG_I("MQTT", "Node name set to '%s'", gAppConfig.node_name);
+            mqttPublishStatus("name_changed");
+        } else {
+            LOG_E("MQTT", "cmd/espnow/name: NVS save failed");
+        }
+    } else if (t == mqttTopic("cmd/espnow/calibrate")) {
+        // Two-point calibration wizard. Drives the state machine in espnow_ranging.h.
+        // Not retained — each cmd/espnow/calibrate message is a one-shot action.
+        espnowCalibrateCmd(payload, len);
+    } else if (t == mqttTopic("cmd/espnow/filter")) {
+        // Update EMA + outlier settings. Retain=true on broker side; the device
+        // re-applies the filter on reconnect without operator re-entry.
+        espnowSetFilter(payload, len);
     } else if (t == mqttTopic("cmd/restart")) {
         // Deferred restart — publish status then let mqttHeartbeat() fire
         // ESP.restart() after 300 ms so the MQTT publish drains without
@@ -881,8 +943,11 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/ble/clear").c_str(),     1);   // BLE: clear tracked beacon
     _mqttClient.subscribe(mqttTopic("cmd/ble/list").c_str(),      1);   // BLE: re-publish last results
 #endif
-    _mqttClient.subscribe(mqttTopic("cmd/espnow/ranging").c_str(), 1);  // ESP-NOW ranging on/off — QoS 1 + retain so state survives reboot
-    _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),        0);  // Remote restart — QoS 0 prevents re-delivery loop on reconnect
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/ranging").c_str(),    1);  // ranging on/off — retain
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/name").c_str(),      1);  // friendly name — retain
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/calibrate").c_str(), 1);  // calibration wizard — QoS 1 (not retained; operator-initiated)
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/filter").c_str(),    1);  // EMA/outlier filter settings — QoS 1 + retain
+    _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),          0);  // Remote restart — QoS 0 prevents re-delivery loop on reconnect
     _mqttClient.subscribe(mqttTopic("cmd/sleep").c_str(),          0);  // Light sleep — QoS 0; radio-off prevents PUBACK anyway
     _mqttClient.subscribe(mqttTopic("cmd/deep_sleep").c_str(),     0);  // Deep sleep — QoS 0; cold boot discards any session state
     _mqttClient.subscribe(mqttTopic("cmd/modem_sleep").c_str(),    1);  // Modem sleep — QoS 1 safe, session stays connected

@@ -614,6 +614,8 @@ static esp_err_t apHandleRoot(httpd_req_t* req) {
         "<input name='mq_cell' value='" + htmlEscape(gAppConfig.mqtt_cell) + "'>"
         "<label>Device Type</label>"
         "<input name='mq_devtype' value='" + htmlEscape(gAppConfig.mqtt_device_type) + "'>"
+        "<label>Node Name <span class='note'>(friendly name e.g. Alpha; A-Z 0-9 _ -, max 15 chars)</span></label>"
+        "<input name='node_name' maxlength='15' pattern='[A-Za-z0-9_-]{0,15}' value='" + htmlEscape(gAppConfig.node_name) + "'>"
 
         "<h3>Security</h3>"
         "<label>Rotation Key <span class='note'>(32 hex chars = 16 bytes, optional)</span></label>"
@@ -684,7 +686,8 @@ static esp_err_t apHandleSave(httpd_req_t* req) {
         formArg("mq_area").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
         formArg("mq_line").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
         formArg("mq_cell").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
-        formArg("mq_devtype").length()    > APP_CFG_MQTT_SEG_LEN         - 1) {
+        formArg("mq_devtype").length()    > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("node_name").length()     > APP_CFG_NODE_NAME_LEN        - 1) {
         LOG_W("AP Portal", "POST /save rejected — field too long");
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "text/plain");
@@ -732,6 +735,7 @@ static esp_err_t apHandleSave(httpd_req_t* req) {
     formArg("mq_line")      .toCharArray(cfg.mqtt_line,        sizeof(cfg.mqtt_line));
     formArg("mq_cell")      .toCharArray(cfg.mqtt_cell,        sizeof(cfg.mqtt_cell));
     formArg("mq_devtype")   .toCharArray(cfg.mqtt_device_type, sizeof(cfg.mqtt_device_type));
+    formArg("node_name")    .toCharArray(cfg.node_name,        sizeof(cfg.node_name));
 
     if (strlen(cfg.mqtt_enterprise) == 0) strncpy(cfg.mqtt_enterprise, MQTT_ENTERPRISE, sizeof(cfg.mqtt_enterprise)-1);
     if (strlen(cfg.mqtt_site)       == 0) strncpy(cfg.mqtt_site,       MQTT_SITE,       sizeof(cfg.mqtt_site)-1);
@@ -940,6 +944,8 @@ static esp_err_t settingsHandleGet(httpd_req_t* req) {
         "<input name='mq_cell'       value='" + htmlEscape(gAppConfig.mqtt_cell)       + "'>"
         "<label>Device Type</label>"
         "<input name='mq_devtype'    value='" + htmlEscape(gAppConfig.mqtt_device_type)+ "'>"
+        "<label>Node Name <span class='note'>(friendly name e.g. Alpha; A-Z 0-9 _ -, max 15 chars)</span></label>"
+        "<input name='node_name'     maxlength='15' pattern='[A-Za-z0-9_-]{0,15}' value='" + htmlEscape(gAppConfig.node_name) + "'>"
 
         "<button type='submit'>Save Settings</button>"
         "</form>"
@@ -1001,6 +1007,7 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
         formArg("mq_line").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
         formArg("mq_cell").length()       > APP_CFG_MQTT_SEG_LEN         - 1 ||
         formArg("mq_devtype").length()    > APP_CFG_MQTT_SEG_LEN         - 1 ||
+        formArg("node_name").length()     > APP_CFG_NODE_NAME_LEN        - 1 ||
         formArg("mqtt_broker_url").length() > sizeof(_btmp.mqtt_broker_url) - 1 ||
         formArg("mqtt_username").length() > sizeof(_btmp.mqtt_username)   - 1 ||
         formArg("mqtt_password").length() > sizeof(_btmp.mqtt_password)   - 1) {
@@ -1025,6 +1032,7 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
     String mq_line = formArg("mq_line");
     String mq_cell = formArg("mq_cell");
     String mq_dev  = formArg("mq_devtype");
+    String nodeNm  = formArg("node_name");
 
     if (mq_ent.length()  > 0) mq_ent.toCharArray(cfg.mqtt_enterprise,   sizeof(cfg.mqtt_enterprise));
     if (mq_site.length() > 0) mq_site.toCharArray(cfg.mqtt_site,        sizeof(cfg.mqtt_site));
@@ -1032,6 +1040,11 @@ static esp_err_t settingsHandlePost(httpd_req_t* req) {
     if (mq_line.length() > 0) mq_line.toCharArray(cfg.mqtt_line,        sizeof(cfg.mqtt_line));
     if (mq_cell.length() > 0) mq_cell.toCharArray(cfg.mqtt_cell,        sizeof(cfg.mqtt_cell));
     if (mq_dev.length()  > 0) mq_dev.toCharArray(cfg.mqtt_device_type,  sizeof(cfg.mqtt_device_type));
+    // Node name: blank field clears the friendly name back to "" so Node-RED
+    // falls back to device_id. Always overwritten when the form is submitted
+    // (no "leave blank to keep current" semantics — matches how MQTT segments
+    // behave).
+    nodeNm.toCharArray(cfg.node_name, sizeof(cfg.node_name));
 
     // MQTT credentials: blank fields mean "keep the current value"
     String newMurl = formArg("mqtt_broker_url");

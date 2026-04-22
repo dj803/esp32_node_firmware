@@ -35,10 +35,12 @@
 // =============================================================================
 
 struct PeerEntry {
-    char     mac[18]   = {};   // "XX:XX:XX:XX:XX:XX\0"
-    int8_t   rssi      = 0;
-    float    distM     = 0.0f;
-    uint32_t seenMs    = 0;    // millis() of last observation
+    char     mac[18]      = {};    // "XX:XX:XX:XX:XX:XX\0"
+    int8_t   rssi         = 0;     // raw RSSI of the most recent frame
+    float    distM        = 0.0f;  // raw distance from most recent RSSI
+    uint32_t seenMs       = 0;     // millis() of last observation
+    int16_t  rssi_ema_x10 = 0;     // EMA-smoothed RSSI × 10; 0 = uninitialised
+    uint16_t rejects      = 0;     // frames dropped by the outlier gate
 };
 
 template <uint8_t N>
@@ -48,7 +50,13 @@ public:
     // Record an observation for `mac`.
     // If `mac` is already in the table, updates its entry.
     // If the table is full, evicts the least-recently-seen slot (LRU).
-    void observe(const char* mac, int8_t rssi, float distM) {
+    //
+    // EMA smoothing (F4):
+    //   alpha_x100 = 0   — filtering disabled; rssi_ema_x10 tracks raw RSSI × 10
+    //   alpha_x100 > 0   — EMA: new = α×rssi + (1−α)×prev, with optional outlier gate
+    //   outlier_db  > 0  — drop frames where |rssi − ema| > outlier_db (rejects++)
+    void observe(const char* mac, int8_t rssi, float distM,
+                 uint8_t alpha_x100 = 0, uint8_t outlier_db = 0) {
         int  slot   = -1;
         int  oldest = 0;
         for (int i = 0; i < N; i++) {
@@ -58,11 +66,40 @@ public:
         }
         if (slot < 0) slot = oldest;   // table full — evict LRU
 
+        // True when this is a continuing observation for the same peer.
+        // False for brand-new empty slots or LRU-evicted slots (different peer).
+        bool samePeer = (_slots[slot].mac[0] != '\0' && strcmp(_slots[slot].mac, mac) == 0);
+
         strncpy(_slots[slot].mac, mac, 17);
-        _slots[slot].mac[17]  = '\0';
-        _slots[slot].rssi     = rssi;
-        _slots[slot].distM    = distM;
-        _slots[slot].seenMs   = _nowMs;  // set by loop() via setNow()
+        _slots[slot].mac[17] = '\0';
+        _slots[slot].rssi    = rssi;
+        _slots[slot].distM   = distM;
+        _slots[slot].seenMs  = _nowMs;
+        if (!samePeer) {
+            _slots[slot].rssi_ema_x10 = 0;   // reset EMA when peer changes
+            _slots[slot].rejects      = 0;
+        }
+
+        // EMA + outlier update
+        if (alpha_x100 == 0 || _slots[slot].rssi_ema_x10 == 0) {
+            // Initialise or run without filtering: track raw RSSI
+            _slots[slot].rssi_ema_x10 = (int16_t)(rssi * 10);
+        } else {
+            int16_t prevEma = _slots[slot].rssi_ema_x10;
+            // Outlier gate: reject if deviation exceeds threshold
+            if (outlier_db > 0) {
+                int16_t devAbs = (int16_t)(rssi * 10) - prevEma;
+                if (devAbs < 0) devAbs = -devAbs;   // abs without <stdlib.h>
+                if (devAbs > (int16_t)(outlier_db * 10)) {
+                    _slots[slot].rejects++;
+                    return;   // skip EMA update for this frame
+                }
+            }
+            // α×rssi×10 + (1−α)×prevEma, all × 100 for integer math
+            int32_t updated = (int32_t)alpha_x100 * (rssi * 10)
+                            + (int32_t)(100 - alpha_x100) * prevEma;
+            _slots[slot].rssi_ema_x10 = (int16_t)(updated / 100);
+        }
     }
 
     // Provide the current millis() value before calling observe() or expire().

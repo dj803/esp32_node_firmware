@@ -67,6 +67,7 @@ static void ledFlashLocate() {
 // enough to fit comfortably in NVS (max NVS string value is 4000 bytes)
 #define APP_CFG_OTA_JSON_URL_LEN   256  // Full HTTPS URL of the OTA JSON filter file
 #define APP_CFG_MQTT_SEG_LEN       48   // One ISA-95 topic segment: Enterprise/Site/etc.
+#define APP_CFG_NODE_NAME_LEN      16   // Friendly node name ("Alpha", "Bravo", …)
 
 
 // ── AppConfig struct ──────────────────────────────────────────────────────────
@@ -87,6 +88,20 @@ struct AppConfig {
     char mqtt_line[APP_CFG_MQTT_SEG_LEN]          = {0};   // e.g. "Line"
     char mqtt_cell[APP_CFG_MQTT_SEG_LEN]          = {0};   // e.g. "Cell"
     char mqtt_device_type[APP_CFG_MQTT_SEG_LEN]   = {0};   // e.g. "ESP32NodeBox"
+
+    // Friendly per-device name. Editable at runtime via MQTT cmd/espnow/name
+    // (retained) and at provisioning time via the AP / settings portal.
+    // Empty string means "no friendly name set" — Node-RED will fall back to
+    // the device UUID for display.
+    char node_name[APP_CFG_NODE_NAME_LEN]         = {0};   // e.g. "Alpha"
+
+    // ESP-NOW ranging calibration + drift-filter parameters.
+    // Editable at runtime via cmd/espnow/calibrate (commit) and cmd/espnow/filter.
+    // Compile-time defaults are used until the operator calibrates.
+    int8_t  espnow_tx_power_dbm    = ESPNOW_TX_POWER_DBM;               // RSSI @ 1 m (dBm)
+    uint8_t espnow_path_loss_n_x10 = (uint8_t)(ESPNOW_PATH_LOSS_N * 10); // n × 10 (e.g. 25 = 2.5)
+    uint8_t espnow_ema_alpha_x100  = ESPNOW_EMA_ALPHA_X100;              // α × 100 (e.g. 30 = 0.30)
+    uint8_t espnow_outlier_db      = ESPNOW_OUTLIER_DB;                  // outlier gate (dB)
 };
 
 
@@ -138,6 +153,16 @@ public:
         readStr("mq_line",    gAppConfig.mqtt_line,        APP_CFG_MQTT_SEG_LEN,     MQTT_LINE);
         readStr("mq_cell",    gAppConfig.mqtt_cell,        APP_CFG_MQTT_SEG_LEN,     MQTT_CELL);
         readStr("mq_devtype", gAppConfig.mqtt_device_type, APP_CFG_MQTT_SEG_LEN,     MQTT_DEVICE_TYPE);
+        readStr("node_name",  gAppConfig.node_name,        APP_CFG_NODE_NAME_LEN,    NODE_NAME);
+
+        // Integer fields: read directly via Preferences (no readStr wrapper needed).
+        // Compile-time defaults from config.h are used when the key doesn't exist yet.
+        if (opened) {
+            gAppConfig.espnow_tx_power_dbm    = prefs.getChar("en_txpow",   ESPNOW_TX_POWER_DBM);
+            gAppConfig.espnow_path_loss_n_x10 = prefs.getUChar("en_pathN",  (uint8_t)(ESPNOW_PATH_LOSS_N * 10));
+            gAppConfig.espnow_ema_alpha_x100  = prefs.getUChar("en_alpha",  ESPNOW_EMA_ALPHA_X100);
+            gAppConfig.espnow_outlier_db      = prefs.getUChar("en_outlier", ESPNOW_OUTLIER_DB);
+        }
 
         if (opened) prefs.end();
 
@@ -147,6 +172,8 @@ public:
                       gAppConfig.mqtt_enterprise, gAppConfig.mqtt_site,
                       gAppConfig.mqtt_area,       gAppConfig.mqtt_line,
                       gAppConfig.mqtt_cell,        gAppConfig.mqtt_device_type);
+        Serial.printf("[AppConfig] Node name: %s\n",
+                      gAppConfig.node_name[0] ? gAppConfig.node_name : "(unset)");
     }
 
 
@@ -174,7 +201,12 @@ public:
         ok &= NvsPutIfChanged(prefs, "mq_area",      cfg.mqtt_area)        > 0;
         ok &= NvsPutIfChanged(prefs, "mq_line",      cfg.mqtt_line)        > 0;
         ok &= NvsPutIfChanged(prefs, "mq_cell",      cfg.mqtt_cell)        > 0;
-        ok &= NvsPutIfChanged(prefs, "mq_devtype",   cfg.mqtt_device_type) > 0;
+        ok &= NvsPutIfChanged(prefs, "mq_devtype",   cfg.mqtt_device_type)        > 0;
+        ok &= NvsPutIfChanged(prefs, "node_name",    cfg.node_name)               > 0;
+        ok &= NvsPutIfChanged(prefs, "en_txpow",     cfg.espnow_tx_power_dbm)     > 0;
+        ok &= NvsPutIfChanged(prefs, "en_pathN",     cfg.espnow_path_loss_n_x10)  > 0;
+        ok &= NvsPutIfChanged(prefs, "en_alpha",     cfg.espnow_ema_alpha_x100)   > 0;
+        ok &= NvsPutIfChanged(prefs, "en_outlier",   cfg.espnow_outlier_db)       > 0;
         prefs.end();
 
         if (ok) {

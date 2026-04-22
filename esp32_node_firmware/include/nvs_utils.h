@@ -46,6 +46,16 @@
 // =============================================================================
 
 
+// ── int8_t (putChar) ─────────────────────────────────────────────────────────
+inline size_t NvsPutIfChanged(Preferences& p, const char* key, int8_t val) {
+    if (p.isKey(key)) {
+        int8_t existing = p.getChar(key, (int8_t)(val ^ 0x7F));
+        if (existing == val) return 1;
+    }
+    return p.putChar(key, val);
+}
+
+
 // ── uint8_t (putUChar) ────────────────────────────────────────────────────────
 inline size_t NvsPutIfChanged(Preferences& p, const char* key, uint8_t val) {
     if (p.isKey(key)) {

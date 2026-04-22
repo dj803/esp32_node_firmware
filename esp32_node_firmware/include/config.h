@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.28-dev"
+#define FIRMWARE_VERSION           "0.3.29"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -197,6 +197,13 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 #define MQTT_LINE                  "Line"               // Production line or logical group
 #define MQTT_CELL                  "Cell"               // Work cell or sub-area
 #define MQTT_DEVICE_TYPE           "ESP32NodeBox"       // Class of this device
+
+#define NODE_NAME                  ""                   // Friendly per-device name
+                                                        // (e.g. "Alpha", "Bravo"). Empty
+                                                        // until set via cmd/espnow/name or
+                                                        // the settings portal. Visible in
+                                                        // every status / espnow publish so
+                                                        // Node-RED can label by name.
 
 
 // -----------------------------------------------------------------------------
@@ -503,6 +510,17 @@ inline const char* nvsNsName(NvsNs ns) {
 #define ESPNOW_MQTT_PUBLISH_MS   2000UL    // Publish peer data to MQTT every 2 s
 #define ESPNOW_STALE_MS         15000UL    // Drop peer from table after 15 s of silence
 #define ESPNOW_BEACON_INTERVAL_MS 3000UL   // How often this node broadcasts its ranging beacon
+
+// Drift-filter defaults (F4). Overridden at runtime via cmd/espnow/filter and persisted to NVS.
+#define ESPNOW_EMA_ALPHA_X100       30      // RSSI EMA smoothing factor × 100 (α = 0.30).
+                                            // Higher → reacts faster but noisier.
+#define ESPNOW_OUTLIER_DB           15      // Reject RSSI samples deviating > 15 dB from EMA.
+                                            // Set 0 to disable outlier filtering.
+
+// Calibration defaults (F3). Not user-tunable compile-time beyond these.
+#define ESPNOW_CALIBRATION_SAMPLES  30      // RSSI readings per calibration step (median taken).
+                                            // At 3 s beacon interval this is ~90 s per step.
+#define ESPNOW_CALIBRATION_TIMEOUT_MS 120000UL  // Abort step if peer silent for 2 min.
 
 
 // -----------------------------------------------------------------------------

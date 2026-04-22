@@ -16,3 +16,11 @@
 // Called by espnow_responder.h's receive dispatcher for every incoming frame.
 // Updates the peer tracking table with the sender's MAC and RSSI.
 void espnowRangingObserve(const uint8_t* mac6, int8_t rssi);
+
+// Called from mqtt_client.h for cmd/espnow/calibrate. Drives the two-point
+// calibration state machine (measure_1m / measure_d / commit / reset).
+void espnowCalibrateCmd(const char* payload, size_t len);
+
+// Called from mqtt_client.h for cmd/espnow/filter. Updates EMA alpha and
+// outlier threshold in gAppConfig + NVS.
+void espnowSetFilter(const char* payload, size_t len);
