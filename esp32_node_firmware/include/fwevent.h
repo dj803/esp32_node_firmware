@@ -36,6 +36,7 @@ enum class FwEvent : uint8_t {
     SLEEPING             = 10,   // cmd/sleep — light sleep for duration_s seconds
     DEEP_SLEEPING        = 11,   // cmd/deep_sleep — deep sleep for duration_s seconds
     MODEM_SLEEPING       = 12,   // cmd/modem_sleep — Wi-Fi modem sleep for duration_s seconds
+    LOCATING             = 13,   // cmd/locate — status LED locate flash in progress (4 s)
 };
 
 
@@ -58,6 +59,7 @@ inline const char* fwEventName(FwEvent ev) {
         case FwEvent::SLEEPING:              return "sleeping";
         case FwEvent::DEEP_SLEEPING:         return "deep_sleeping";
         case FwEvent::MODEM_SLEEPING:        return "modem_sleeping";
+        case FwEvent::LOCATING:             return "locating";
         default:                             return "unknown";
     }
 }

@@ -718,6 +718,7 @@ static void onMqttMessage(char* topic, char* payload,
         // Payload is ignored; any publish arms the flash.
         LOG_I("MQTT", "cmd/locate received - flashing status LED");
         ledSetPattern(LedPattern::LOCATE);
+        mqttPublishStatus(FwEvent::LOCATING);
     } else if (t == mqttTopic("cmd/rfid/whitelist")) {
         // RFID UID whitelist management
         handleRfidWhitelist(payload, len);
