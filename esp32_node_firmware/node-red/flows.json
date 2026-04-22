@@ -294,7 +294,7 @@
     "name": "ESP-NOW Tracking",
     "page": "espnow_ui_tab",
     "width": "12",
-    "order": 3,
+    "order": 4,
     "showTitle": true,
     "groupType": "default"
   },
@@ -1379,7 +1379,7 @@
     "name": "Flow Version",
     "page": "espnow_ui_tab",
     "width": "12",
-    "order": 4,
+    "order": 5,
     "showTitle": false,
     "groupType": "default"
   },
@@ -3088,7 +3088,8 @@
     "wires": [
       [
         "espnow_rename_tpl",
-        "espnow_calib_tpl"
+        "espnow_calib_tpl",
+        "espnow_anchor_tpl"
       ]
     ]
   },
@@ -3246,6 +3247,57 @@
     "libs": [],
     "x": 880,
     "y": 720,
+    "wires": [
+      [
+        "espnow_mqtt_out_cmd"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_grp_anchor",
+    "type": "ui-group",
+    "page": "espnow_ui_tab",
+    "name": "Anchor Setup",
+    "theme": "espnow_ui_tab",
+    "order": 3,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+  {
+    "id": "espnow_anchor_tpl",
+    "type": "ui-template",
+    "z": "espnow_flow",
+    "group": "espnow_grp_anchor",
+    "name": "Anchor Setup",
+    "order": 1,
+    "width": "12",
+    "height": "4",
+    "format": "<template>\n  <div style=\"padding:10px;font-size:13px\">\n    <div style=\"font-weight:bold;color:#80cbc4;margin-bottom:8px\">Anchor Role</div>\n    <div style=\"display:flex;align-items:center;gap:12px;flex-wrap:wrap\">\n      <select v-model=\"selMac\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;padding:4px 8px;border-radius:4px;font-size:12px;flex:1;min-width:180px\">\n        <option value=\"\">-- select node --</option>\n        <option v-for=\"d in devices\" :key=\"d.mac\" :value=\"d.mac\">{{ d.name || d.mac }}</option>\n      </select>\n      <label style=\"color:#90a4ae;display:flex;align-items:center;gap:6px;cursor:pointer\">\n        <input type=\"radio\" v-model=\"role\" value=\"anchor\"> Anchor\n      </label>\n      <label style=\"color:#90a4ae;display:flex;align-items:center;gap:6px;cursor:pointer\">\n        <input type=\"radio\" v-model=\"role\" value=\"mobile\"> Mobile\n      </label>\n    </div>\n    <div v-if=\"role==='anchor'\" style=\"display:flex;gap:8px;margin-top:8px;flex-wrap:wrap\">\n      <label style=\"color:#90a4ae\">X(m): <input v-model.number=\"xm\" type=\"number\" step=\"0.1\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;padding:3px 6px;border-radius:4px;width:70px\"></label>\n      <label style=\"color:#90a4ae\">Y(m): <input v-model.number=\"ym\" type=\"number\" step=\"0.1\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;padding:3px 6px;border-radius:4px;width:70px\"></label>\n      <label style=\"color:#90a4ae\">Z(m): <input v-model.number=\"zm\" type=\"number\" step=\"0.1\" style=\"background:#1e272c;color:#eceff1;border:1px solid #546e7a;padding:3px 6px;border-radius:4px;width:70px\"></label>\n    </div>\n    <button @click=\"apply\" :disabled=\"!selMac\" style=\"margin-top:8px;padding:4px 16px;background:#00897b;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px\">Apply</button>\n    <span v-if=\"sent\" style=\"margin-left:10px;color:#a5d6a7;font-size:12px\">Sent!</span>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { selMac:'', role:'mobile', xm:0, ym:0, zm:0, sent:false } },\n  computed: {\n    devices() { return (this.msg&&this.msg.payload&&Array.isArray(this.msg.payload.devices)) ? this.msg.payload.devices : [] }\n  },\n  methods: {\n    apply() {\n      if (!this.selMac) return;\n      var payload = this.role==='anchor' ? {role:'anchor',x_m:this.xm,y_m:this.ym,z_m:this.zm} : {role:'mobile'};\n      this.send({ payload: { mac: this.selMac, cmd: JSON.stringify(payload) } });\n      this.sent=true; setTimeout(()=>{this.sent=false;},2000);\n    }\n  }\n}\n</script>",
+    "storeOutMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "x": 650,
+    "y": 820,
+    "wires": [
+      [
+        "espnow_anchor_fn"
+      ]
+    ]
+  },
+  {
+    "id": "espnow_anchor_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Build Anchor Cmd",
+    "func": "try {\n    var mac = msg.payload && msg.payload.mac;\n    var cmd = msg.payload && msg.payload.cmd;\n    if (!mac || !cmd) return null;\n    return {\n        topic: 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/' + mac + '/cmd/espnow/anchor',\n        payload: cmd,\n        retain: true,\n        qos: 1\n    };\n} catch(e) { node.error('Build Anchor Cmd: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 880,
+    "y": 820,
     "wires": [
       [
         "espnow_mqtt_out_cmd"

@@ -186,7 +186,23 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // and fall back to device_id when "".
     const char* nodeName = gAppConfig.node_name;
 
-    char buf[512];
+    // Wi-Fi channel — emitted so Node-RED can warn if anchors are on different
+    // channels (ESP-NOW silently fails across channels on a shared radio).
+    uint8_t wifiCh = (uint8_t)WiFi.channel();
+
+    // Anchor snippet (F5) — only non-empty when this node is configured as a
+    // fixed anchor. Node-RED reads the retained .../status boot announcement
+    // to build the anchor registry for the 2-D map.
+    char anchorSnip[96] = "";
+    if (gAppConfig.anchor_role == 1) {
+        snprintf(anchorSnip, sizeof(anchorSnip),
+            ",\"anchor\":{\"role\":\"anchor\",\"x_m\":%.3f,\"y_m\":%.3f,\"z_m\":%.3f}",
+            gAppConfig.anchor_x_mm / 1000.0f,
+            gAppConfig.anchor_y_mm / 1000.0f,
+            gAppConfig.anchor_z_mm / 1000.0f);
+    }
+
+    char buf[640];
     int n;
     if (extraJson && *extraJson) {
         n = snprintf(buf, sizeof(buf),
@@ -197,15 +213,17 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
+            "\"wifi_channel\":%u,"
             "\"event\":\"%s\","
-            "%s}",
+            "%s%s}",
             DeviceId::get().c_str(),
             nodeName,
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
-            event, extraJson);
+            (unsigned)wifiCh,
+            event, extraJson, anchorSnip);
     } else {
         n = snprintf(buf, sizeof(buf),
             "{\"device_id\":\"%s\","
@@ -215,14 +233,16 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
-            "\"event\":\"%s\"}",
+            "\"wifi_channel\":%u,"
+            "\"event\":\"%s\"%s}",
             DeviceId::get().c_str(),
             nodeName,
             DeviceId::getMac().c_str(),
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
-            event);
+            (unsigned)wifiCh,
+            event, anchorSnip);
     }
     if (n < 0 || n >= (int)sizeof(buf)) {
         LOG_W("MQTT", "status payload truncated (event=%s, wanted=%d)", event, n);
@@ -591,6 +611,7 @@ static void handleCredRotation(const char* payload, size_t len) {
 void espnowRangingSetEnabled(bool en);
 void espnowCalibrateCmd(const char* payload, size_t len);
 void espnowSetFilter(const char* payload, size_t len);
+void espnowSetTrackedMacs(const char** macs, uint8_t n);
 
 
 // ── Sleep helpers (v0.3.20) ──────────────────────────────────────────────────
@@ -836,6 +857,60 @@ static void onMqttMessage(char* topic, char* payload,
         // Update EMA + outlier settings. Retain=true on broker side; the device
         // re-applies the filter on reconnect without operator re-entry.
         espnowSetFilter(payload, len);
+    } else if (t == mqttTopic("cmd/espnow/track")) {
+        // MAC publish filter — only peers in the list appear in .../espnow publishes.
+        // Empty "macs":[] clears the filter and reverts to publish-all.
+        // Observations continue for all peers regardless of the filter.
+        char buf[256];
+        size_t copyLen = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+        JsonDocument doc;
+        if (deserializeJson(doc, buf) == DeserializationError::Ok) {
+            const char* macPtrs[ESPNOW_MAX_TRACKED];
+            uint8_t count = 0;
+            JsonArray macsArr = doc["macs"].as<JsonArray>();
+            if (macsArr) {
+                for (JsonVariant v : macsArr) {
+                    const char* m = v.as<const char*>();
+                    if (m && strlen(m) == 17 && count < ESPNOW_MAX_TRACKED)
+                        macPtrs[count++] = m;
+                }
+            }
+            espnowSetTrackedMacs(macPtrs, count);
+        }
+    } else if (t == mqttTopic("cmd/espnow/anchor")) {
+        // Set this node's role and fixed-anchor coordinates.
+        // {"role":"anchor","x_m":0.0,"y_m":0.0,"z_m":0.0} — fixed position
+        // {"role":"mobile"} — clear anchor role and coordinates
+        char buf[192];
+        size_t copyLen = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
+        memcpy(buf, payload, copyLen);
+        buf[copyLen] = '\0';
+        JsonDocument doc;
+        if (deserializeJson(doc, buf) != DeserializationError::Ok) {
+            LOG_W("MQTT", "cmd/espnow/anchor: bad JSON"); return;
+        }
+        const char* role = doc["role"] | "mobile";
+        AppConfig copy = gAppConfig;
+        copy.anchor_role = (strcmp(role, "anchor") == 0) ? 1 : 0;
+        if (copy.anchor_role == 1) {
+            copy.anchor_x_mm = (int32_t)(((float)(doc["x_m"] | 0.0f)) * 1000.0f);
+            copy.anchor_y_mm = (int32_t)(((float)(doc["y_m"] | 0.0f)) * 1000.0f);
+            copy.anchor_z_mm = (int32_t)(((float)(doc["z_m"] | 0.0f)) * 1000.0f);
+        } else {
+            copy.anchor_x_mm = 0; copy.anchor_y_mm = 0; copy.anchor_z_mm = 0;
+        }
+        if (AppConfigStore::save(copy)) {
+            LOG_I("MQTT", "Anchor role=%u pos=(%.2f, %.2f, %.2f) m",
+                  copy.anchor_role,
+                  copy.anchor_x_mm / 1000.0f,
+                  copy.anchor_y_mm / 1000.0f,
+                  copy.anchor_z_mm / 1000.0f);
+            mqttPublishStatus("anchor_updated");
+        } else {
+            LOG_E("MQTT", "cmd/espnow/anchor: NVS save failed");
+        }
     } else if (t == mqttTopic("cmd/restart")) {
         // Deferred restart — publish status then let mqttHeartbeat() fire
         // ESP.restart() after 300 ms so the MQTT publish drains without
@@ -947,6 +1022,8 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/espnow/name").c_str(),      1);  // friendly name — retain
     _mqttClient.subscribe(mqttTopic("cmd/espnow/calibrate").c_str(), 1);  // calibration wizard — QoS 1 (not retained; operator-initiated)
     _mqttClient.subscribe(mqttTopic("cmd/espnow/filter").c_str(),    1);  // EMA/outlier filter settings — QoS 1 + retain
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/track").c_str(),     1);  // MAC publish filter — retain
+    _mqttClient.subscribe(mqttTopic("cmd/espnow/anchor").c_str(),    1);  // anchor role + coords — retain
     _mqttClient.subscribe(mqttTopic("cmd/restart").c_str(),          0);  // Remote restart — QoS 0 prevents re-delivery loop on reconnect
     _mqttClient.subscribe(mqttTopic("cmd/sleep").c_str(),          0);  // Light sleep — QoS 0; radio-off prevents PUBACK anyway
     _mqttClient.subscribe(mqttTopic("cmd/deep_sleep").c_str(),     0);  // Deep sleep — QoS 0; cold boot discards any session state
@@ -1103,6 +1180,17 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     // e.g. "ESP32-a3f2c1d4-5e6" — unique per device, survives OTA updates.
     _mqttClientId = "ESP32-" + _deviceId.substring(0, 13);
     _mqttClient.setClientId(_mqttClientId.c_str());
+
+    // Last-Will and Testament — broker publishes this retained message if the
+    // TCP connection drops without a clean MQTT DISCONNECT. Node-RED watches
+    // .../status for "online":false to grey out anchors on the map and clear
+    // stale peer entries in the roster. The will is set once here and
+    // re-sent automatically on every reconnect by AsyncMqttClient.
+    {
+        String lwtTopic = mqttTopic("status");
+        _mqttClient.setWill(lwtTopic.c_str(), 1, true,
+            "{\"online\":false,\"event\":\"offline\"}");
+    }
 
     if (WiFi.isConnected()) {
         LOG_I("MQTT", "Connecting to %s:%d as %s",

@@ -76,6 +76,16 @@ inline size_t NvsPutIfChanged(Preferences& p, const char* key, uint16_t val) {
 }
 
 
+// ── int32_t (putInt) ──────────────────────────────────────────────────────────
+inline size_t NvsPutIfChanged(Preferences& p, const char* key, int32_t val) {
+    if (p.isKey(key)) {
+        int32_t existing = p.getInt(key, val ^ 0x7FFFFFFF);
+        if (existing == val) return 4;
+    }
+    return p.putInt(key, val);
+}
+
+
 // ── uint64_t (putULong64) ─────────────────────────────────────────────────────
 inline size_t NvsPutIfChanged(Preferences& p, const char* key, uint64_t val) {
     if (p.isKey(key)) {

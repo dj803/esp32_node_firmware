@@ -59,6 +59,33 @@ void espnowRangingSetEnabled(bool en) {
 }
 
 
+// ── MAC publish filter (F2) ───────────────────────────────────────────────────
+// When non-empty, only peers whose MAC is in _filterMacs are included in the
+// MQTT publish. Observations still go into PeerTracker for all peers so that
+// switching the filter is instant (no warm-up delay needed).
+static char    _filterMacs[ESPNOW_MAX_TRACKED][18] = {};
+static uint8_t _filterCount = 0;
+
+static bool _enrIsFiltered(const char* mac) {
+    if (_filterCount == 0) return true;   // no filter → publish all
+    for (uint8_t i = 0; i < _filterCount; i++) {
+        if (strcmp(_filterMacs[i], mac) == 0) return true;
+    }
+    return false;
+}
+
+void espnowSetTrackedMacs(const char** macs, uint8_t n) {
+    _filterCount = 0;
+    for (uint8_t i = 0; i < n && i < ESPNOW_MAX_TRACKED; i++) {
+        if (!macs[i] || strlen(macs[i]) != 17) continue;
+        strncpy(_filterMacs[_filterCount], macs[i], 17);
+        _filterMacs[_filterCount][17] = '\0';
+        _filterCount++;
+    }
+    Serial.printf("[ESP-NOW Ranging] track filter: %u MACs\n", (unsigned)_filterCount);
+}
+
+
 // ── Calibration state machine (F3) ───────────────────────────────────────────
 
 enum class EnrCalibState : uint8_t { IDLE, MEASURING_1M, MEASURING_D };
@@ -376,6 +403,7 @@ void espnowRangingLoop() {
     JsonArray arr = doc["peers"].to<JsonArray>();
 
     _enrPeers.forEach([&arr, txPow, pathN](const PeerEntry& p) {
+        if (!_enrIsFiltered(p.mac)) return;   // F2: skip if not in track filter
         JsonObject o = arr.add<JsonObject>();
         o["mac"]  = p.mac;
         o["rssi"] = p.rssi;

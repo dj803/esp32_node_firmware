@@ -24,3 +24,9 @@ void espnowCalibrateCmd(const char* payload, size_t len);
 // Called from mqtt_client.h for cmd/espnow/filter. Updates EMA alpha and
 // outlier threshold in gAppConfig + NVS.
 void espnowSetFilter(const char* payload, size_t len);
+
+// Called from mqtt_client.h for cmd/espnow/track. Sets the MAC publish filter:
+// only peers in `macs[0..n-1]` are included in the MQTT espnow publish.
+// n == 0 clears the filter (publish all). Observations still accumulate for
+// all peers so switching the filter takes effect immediately.
+void espnowSetTrackedMacs(const char** macs, uint8_t n);

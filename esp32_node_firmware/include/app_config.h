@@ -102,6 +102,15 @@ struct AppConfig {
     uint8_t espnow_path_loss_n_x10 = (uint8_t)(ESPNOW_PATH_LOSS_N * 10); // n × 10 (e.g. 25 = 2.5)
     uint8_t espnow_ema_alpha_x100  = ESPNOW_EMA_ALPHA_X100;              // α × 100 (e.g. 30 = 0.30)
     uint8_t espnow_outlier_db      = ESPNOW_OUTLIER_DB;                  // outlier gate (dB)
+
+    // Anchor role + 3-D position (F5).
+    // 0 = mobile node, 1 = fixed anchor. Coordinates in mm (integer) to avoid
+    // floating-point NVS serialisation; divide by 1000 for metres.
+    // Set via cmd/espnow/anchor {"role":"anchor","x_m":0.0,"y_m":0.0,"z_m":0.0}.
+    uint8_t anchor_role   = 0;   // 0 = mobile, 1 = anchor
+    int32_t anchor_x_mm   = 0;
+    int32_t anchor_y_mm   = 0;
+    int32_t anchor_z_mm   = 0;
 };
 
 
@@ -162,6 +171,10 @@ public:
             gAppConfig.espnow_path_loss_n_x10 = prefs.getUChar("en_pathN",  (uint8_t)(ESPNOW_PATH_LOSS_N * 10));
             gAppConfig.espnow_ema_alpha_x100  = prefs.getUChar("en_alpha",  ESPNOW_EMA_ALPHA_X100);
             gAppConfig.espnow_outlier_db      = prefs.getUChar("en_outlier", ESPNOW_OUTLIER_DB);
+            gAppConfig.anchor_role            = prefs.getUChar("anc_role",  0);
+            gAppConfig.anchor_x_mm            = prefs.getInt("anc_x_mm",   0);
+            gAppConfig.anchor_y_mm            = prefs.getInt("anc_y_mm",   0);
+            gAppConfig.anchor_z_mm            = prefs.getInt("anc_z_mm",   0);
         }
 
         if (opened) prefs.end();
@@ -207,6 +220,10 @@ public:
         ok &= NvsPutIfChanged(prefs, "en_pathN",     cfg.espnow_path_loss_n_x10)  > 0;
         ok &= NvsPutIfChanged(prefs, "en_alpha",     cfg.espnow_ema_alpha_x100)   > 0;
         ok &= NvsPutIfChanged(prefs, "en_outlier",   cfg.espnow_outlier_db)       > 0;
+        ok &= NvsPutIfChanged(prefs, "anc_role",     cfg.anchor_role)             > 0;
+        ok &= NvsPutIfChanged(prefs, "anc_x_mm",     cfg.anchor_x_mm)            >= 4;
+        ok &= NvsPutIfChanged(prefs, "anc_y_mm",     cfg.anchor_y_mm)            >= 4;
+        ok &= NvsPutIfChanged(prefs, "anc_z_mm",     cfg.anchor_z_mm)            >= 4;
         prefs.end();
 
         if (ok) {
