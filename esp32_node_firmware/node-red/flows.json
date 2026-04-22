@@ -18,7 +18,7 @@
   {
     "id": "alpha_ble_flow",
     "type": "tab",
-    "label": "Alpha BLE Scanner",
+    "label": "BLE Tracking",
     "disabled": false,
     "info": "",
     "env": []
@@ -588,7 +588,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Detect Heartbeat & Timeout",
-    "func": "try {\n    var event = msg.payload && msg.payload.event;\n    if (event !== \"heartbeat\" && event !== \"boot\" && event !== \"ota_start\") return null;\n    var uuid = msg.topic.split(\"/\")[6];\n    if (!uuid) return null;\n    var fw      = (msg.payload && msg.payload.firmware_version) || \"\";\n    var uptime  = (msg.payload && msg.payload.uptime_s)         || 0;\n    var rfid_en = (msg.payload && msg.payload.rfid_enabled)     === true;\n\n    if (event === \"ota_start\") {\n        node.status({ fill: \"yellow\", shape: \"dot\", text: uuid + \" updating\" });\n        msg.uuid             = uuid;\n        msg.firmware_version = fw;\n        msg.uptime_s         = uptime;\n        msg.rfid_enabled     = rfid_en;\n        msg.payload          = \"Updating\";\n        return msg;\n    }\n\n    var timeouts = context.get(\"timeouts\") || {};\n    if (timeouts[uuid]) clearTimeout(timeouts[uuid]);\n    node.status({ fill: \"green\", shape: \"dot\", text: uuid + \" connected\" });\n    timeouts[uuid] = setTimeout(function () {\n        node.status({ fill: \"red\", shape: \"ring\", text: uuid + \" disconnected\" });\n        node.send({ payload: \"Disconnected\", uuid: uuid, firmware_version: \"\", uptime_s: 0, rfid_enabled: false });\n    }, 90000);\n    context.set(\"timeouts\", timeouts);\n    msg.uuid             = uuid;\n    msg.firmware_version = fw;\n    msg.uptime_s         = uptime;\n    msg.rfid_enabled     = rfid_en;\n    msg.payload          = \"Connected\";\n    return msg;\n} catch(e) {\n    node.error(\"Detect Heartbeat: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var event = msg.payload && msg.payload.event;\n    if (event !== 'heartbeat' && event !== 'boot' &&\n        event !== 'ota_start'  && event !== 'restart') return null;\n    var uuid    = msg.topic.split('/')[6];\n    if (!uuid) return null;\n    var fw      = (msg.payload && msg.payload.firmware_version) || '';\n    var uptime  = (msg.payload && msg.payload.uptime_s)         || 0;\n    var rfid_en = (msg.payload && msg.payload.rfid_enabled)     === true;\n\n    if (event === 'ota_start') {\n        node.status({ fill:'yellow', shape:'dot', text: uuid + ' updating' });\n        msg.uuid=uuid; msg.firmware_version=fw; msg.uptime_s=uptime;\n        msg.rfid_enabled=rfid_en; msg.payload='Updating';\n        return msg;\n    }\n    if (event === 'restart') {\n        node.status({ fill:'orange', shape:'dot', text: uuid + ' restarting' });\n        msg.uuid=uuid; msg.firmware_version=fw; msg.uptime_s=uptime;\n        msg.rfid_enabled=rfid_en; msg.payload='Restarting';\n        return msg;\n    }\n\n    var timeouts = context.get('timeouts') || {};\n    if (timeouts[uuid]) clearTimeout(timeouts[uuid]);\n    node.status({ fill:'green', shape:'dot', text: uuid + ' connected' });\n    timeouts[uuid] = setTimeout(function () {\n        node.status({ fill:'red', shape:'ring', text: uuid + ' disconnected' });\n        node.send({ payload:'Disconnected', uuid:uuid,\n                    firmware_version:'', uptime_s:0, rfid_enabled:false });\n    }, 90000);\n    context.set('timeouts', timeouts);\n    msg.uuid=uuid; msg.firmware_version=fw; msg.uptime_s=uptime;\n    msg.rfid_enabled=rfid_en; msg.payload='Connected';\n    return msg;\n} catch(e) {\n    node.error('Detect Heartbeat: ' + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -734,7 +734,7 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Aggregate Device Status",
-    "func": "try {\n    const names = {\n      \"32925666-155a-4a67-bf50-27c1ffa22b11\": \"ESP32-Alpha\",\n      \"6cfe177f-92eb-4699-a9a6-8a3603aae175\": \"ESP32-Bravo\",\n      \"79eb6f5f-2072-4904-b91d-50601f195c18\": \"ESP32-Charlie\"\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices  = flow.get(\"hb_devices\") || {};\n    const prev     = devices[uuid] || {};\n    const active   = msg.payload === \"Connected\" || msg.payload === \"Updating\";\n    devices[uuid] = {\n      name:         names[uuid] || uuid.slice(0,8) + \"...\",\n      uuid:         uuid,\n      status:       msg.payload,\n      firmware:     active && msg.firmware_version ? msg.firmware_version : (prev.firmware || \"—\"),\n      lastSeen:     active ? new Date().toLocaleString() : (prev.lastSeen || \"Never\"),\n      rfid_enabled: (msg.payload === \"Connected\") ? (msg.rfid_enabled === true) : (prev.rfid_enabled === true)\n    };\n    flow.set(\"hb_devices\", devices);\n    global.set(\"hb_devices\", devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error(\"Aggregate Device Status: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    const names = {\n      '32925666-155a-4a67-bf50-27c1ffa22b11': 'ESP32-Alpha',\n      '6cfe177f-92eb-4699-a9a6-8a3603aae175': 'ESP32-Bravo',\n      '79eb6f5f-2072-4904-b91d-50601f195c18': 'ESP32-Charlie'\n    };\n    const uuid = msg.uuid;\n    if (!uuid) return null;\n    const devices = flow.get('hb_devices') || {};\n    const prev    = devices[uuid] || {};\n    const active  = msg.payload === 'Connected' || msg.payload === 'Updating' || msg.payload === 'Restarting';\n    devices[uuid] = {\n      name:         names[uuid] || uuid.slice(0,8) + '...',\n      uuid:         uuid,\n      status:       msg.payload,\n      firmware:     active && msg.firmware_version ? msg.firmware_version : (prev.firmware || '—'),\n      lastSeen:     active ? new Date().toLocaleString() : (prev.lastSeen || 'Never'),\n      rfid_enabled: (msg.payload === 'Connected') ? (msg.rfid_enabled === true) : (prev.rfid_enabled === true)\n    };\n    flow.set('hb_devices', devices);\n    global.set('hb_devices', devices);\n    msg.payload = Object.values(devices).sort((a,b) => a.name.localeCompare(b.name));\n    return msg;\n} catch(e) {\n    node.error('Aggregate Device Status: ' + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -757,7 +757,7 @@
     "order": 1,
     "width": "12",
     "height": 8,
-    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No devices seen yet — waiting for heartbeats...\n    </div>\n    <div v-for=\"(d, i) in (msg && msg.payload || [])\" :key=\"i\"\n         style=\"display:flex;align-items:center;padding:12px 16px;margin-bottom:8px;border-radius:8px;background:#1e272e\">\n      <div :style=\"{\n        width:'14px', height:'14px', borderRadius:'50%', marginRight:'14px', flexShrink:0,\n        background: d.status === 'Connected' ? '#00c853' : d.status === 'Updating' ? '#ffb300' : '#d50000'\n      }\"></div>\n      <div style=\"flex:1\">\n        <div style=\"font-weight:bold;font-size:15px;color:#eceff1\">{{ d.name }}</div>\n        <div style=\"font-size:11px;color:#78909c;margin-top:2px\">\n          <span>fw {{ d.firmware }}</span>\n          <span style=\"margin-left:12px\">Last seen: {{ d.lastSeen }}</span>\n        </div>\n      </div>\n      <div style=\"text-align:center;min-width:100px\">\n        <span :style=\"{fontWeight:'bold', color: d.status === 'Connected' ? '#00c853' : d.status === 'Updating' ? '#ffb300' : '#d50000'}\">\n          {{ d.status }}\n        </span>\n      </div>\n      <button v-if=\"d.status !== 'Disconnected'\"\n              @click=\"doLocate(d.uuid)\"\n              title=\"Flash status LED for 4 s\"\n              :style=\"{\n                background: locating[d.uuid] ? '#1976d2' : '#546e7a',\n                color:'#fff', border:'none', padding:'6px 10px',\n                cursor:'pointer', borderRadius:'4px', fontSize:'11px',\n                fontWeight:'bold', marginLeft:'12px', transition:'background 0.3s'\n              }\">\n        ❆ Locate\n      </button>\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { locating: {} }; },\n  methods: {\n    doLocate(uuid) {\n      this.locating = Object.assign({}, this.locating, { [uuid]: true });\n      this.send({ topic: 'locate', payload: { uuid: uuid } });\n      const self = this;\n      setTimeout(function() {\n        const l = Object.assign({}, self.locating);\n        l[uuid] = false;\n        self.locating = l;\n      }, 4100);\n    }\n  }\n};\n</script>",
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!msg || !msg.payload || msg.payload.length === 0\"\n         style=\"color:#aaa;text-align:center;padding:24px\">\n      No devices seen yet — waiting for heartbeats...\n    </div>\n    <div v-for=\"(d, i) in (msg && msg.payload || [])\" :key=\"i\"\n         style=\"display:flex;align-items:center;padding:12px 16px;margin-bottom:8px;border-radius:8px;background:#1e272e\">\n      <div :style=\"{\n        width:'14px', height:'14px', borderRadius:'50%', marginRight:'14px', flexShrink:0,\n        background: d.status==='Connected'   ? '#00c853'\n                  : d.status==='Updating'    ? '#ffb300'\n                  : d.status==='Restarting'  ? '#ef6c00'\n                  : '#d50000'\n      }\"></div>\n      <div style=\"flex:1;min-width:0\">\n        <div style=\"font-weight:bold;font-size:15px;color:#eceff1\">{{ d.name }}</div>\n        <div style=\"font-size:11px;color:#78909c;margin-top:2px\">\n          <span>fw {{ d.firmware }}</span>\n          <span style=\"margin-left:12px\">Last seen: {{ d.lastSeen }}</span>\n        </div>\n      </div>\n      <div style=\"width:110px;flex-shrink:0;text-align:center\">\n        <span :style=\"{\n          fontWeight:'bold',\n          color: d.status==='Connected'   ? '#00c853'\n               : d.status==='Updating'    ? '#ffb300'\n               : d.status==='Restarting'  ? '#ef6c00'\n               : '#d50000'\n        }\">{{ d.status }}</span>\n      </div>\n      <button v-if=\"d.status === 'Connected'\"\n              @click=\"doLocate(d.uuid)\"\n              title=\"Flash status LED for 4 s\"\n              :style=\"{\n                background: locating[d.uuid] ? '#1976d2' : '#546e7a',\n                color:'#fff', border:'none', padding:'6px 10px',\n                cursor:'pointer', borderRadius:'4px', fontSize:'11px',\n                fontWeight:'bold', marginLeft:'12px', transition:'background 0.3s'\n              }\">\n        ❆ Locate\n      </button>\n      <div v-else style=\"width:80px;margin-left:12px\"></div>\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { locating: {} }; },\n  methods: {\n    doLocate(uuid) {\n      this.locating = Object.assign({}, this.locating, { [uuid]: true });\n      this.send({ topic: 'locate', payload: { uuid: uuid } });\n      const self = this;\n      setTimeout(function() {\n        const l = Object.assign({}, self.locating);\n        l[uuid] = false;\n        self.locating = l;\n      }, 4100);\n    }\n  }\n};\n</script>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -875,8 +875,8 @@
     "type": "function",
     "z": "0cc8e394107eb034",
     "name": "Restart All Devices",
-    "func": "try {\n    var base = flow.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var uuids = Object.keys(flow.get(\"hb_devices\") || {});\n    if (uuids.length === 0) {\n        node.warn(\"No known devices yet â€” waiting for first heartbeat\");\n        return null;\n    }\n    var msgs = [];\n    uuids.forEach(function(uuid) {\n        msgs.push({\n            topic: base + uuid + \"/cmd/restart\",\n            payload: \"\"\n        });\n    });\n    msgs.forEach(function(m) { node.send(m); });\n    return null;\n} catch(e) {\n    node.error(\"Restart All Devices: \" + e.message, msg);\n    return null;\n}",
-    "outputs": 1,
+    "func": "try {\n    var base    = flow.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    var devices = flow.get('hb_devices') || {};\n    var uuids   = Object.keys(devices);\n    if (uuids.length === 0) {\n        node.warn('No known devices — waiting for first heartbeat');\n        return null;\n    }\n    // Mark all connected devices as Restarting\n    uuids.forEach(function(u) {\n        if (devices[u] && devices[u].status === 'Connected') {\n            devices[u].status = 'Restarting';\n        }\n    });\n    flow.set('hb_devices', devices);\n    global.set('hb_devices', devices);\n    var sorted = Object.values(devices).sort(function(a,b){ return a.name.localeCompare(b.name); });\n    // Send restart MQTT commands on output 0\n    uuids.forEach(function(uuid) {\n        node.send([{ topic: base + uuid + '/cmd/restart', payload: '' }, null]);\n    });\n    // Push Restarting state to the cards on output 1\n    node.send([null, { payload: sorted }]);\n    return null;\n} catch(e) {\n    node.error('Restart All Devices: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 2,
     "noerr": 0,
     "initialize": "",
     "finalize": "",
@@ -886,6 +886,9 @@
     "wires": [
       [
         "hb_mqtt_out"
+      ],
+      [
+        "hb_status_tpl"
       ]
     ]
   },
@@ -1733,14 +1736,14 @@
     "width": "12",
     "height": "8",
     "format": "<template>\n  <div style=\"padding:8px;font-size:13px\">\n    <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:8px\">\n      <label style=\"display:flex;align-items:center;gap:6px;color:#aaa;cursor:pointer\">\n        <input type=\"checkbox\" v-model=\"allSelected\" style=\"width:15px;height:15px;cursor:pointer\">\n        Select All ({{ peers.length }})\n      </label>\n      <button @click=\"trackSelected\"\n              :disabled=\"selected.length === 0\"\n              :style=\"{ opacity: selected.length === 0 ? 0.4 : 1, padding:'4px 16px', background:'#0288d1', color:'#fff', border:'none', borderRadius:'4px', cursor:'pointer', fontSize:'12px' }\">\n        Track Selected ({{ selected.length }}/8)\n      </button>\n    </div>\n    <table style=\"width:100%;border-collapse:collapse\">\n      <thead>\n        <tr style=\"background:#263238;color:#eceff1\">\n          <th style=\"padding:8px;width:32px\"></th>\n          <th style=\"padding:8px;text-align:left\">MAC</th>\n          <th style=\"padding:8px;text-align:right\">RSSI</th>\n          <th style=\"padding:8px;text-align:right\">Distance</th>\n        </tr>\n      </thead>\n      <tbody>\n        <tr v-if=\"peers.length === 0\">\n          <td colspan=\"4\" style=\"padding:16px;text-align:center;color:#546e7a\">\n            No peers found â€” press Refresh Peers\n          </td>\n        </tr>\n        <tr v-for=\"(p, i) in peers\" :key=\"p.mac\" style=\"border-bottom:1px solid #37474f\">\n          <td style=\"padding:8px;text-align:center\">\n            <input type=\"checkbox\" :value=\"p.mac\" v-model=\"selected\"\n                   style=\"cursor:pointer;width:15px;height:15px\">\n          </td>\n          <td style=\"padding:8px;font-family:monospace;font-size:12px;color:#80cbc4\">{{ p.mac }}</td>\n          <td style=\"padding:8px;text-align:right\">{{ p.rssi }} dBm</td>\n          <td style=\"padding:8px;text-align:right\">{{ Number(p.dist_m).toFixed(1) }} m</td>\n        </tr>\n      </tbody>\n    </table>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() { return { selected: [] } },\n  computed: {\n    peers() {\n      return (this.msg && this.msg.payload && Array.isArray(this.msg.payload.peers))\n        ? this.msg.payload.peers : []\n    },\n    allSelected: {\n      get() { return this.peers.length > 0 && this.selected.length === this.peers.length },\n      set(val) { this.selected = val ? this.peers.map(p => p.mac) : [] }\n    }\n  },\n  watch: {\n    peers(newList) {\n      const macs = new Set(newList.map(p => p.mac))\n      this.selected = this.selected.filter(mac => macs.has(mac))\n    }\n  },\n  methods: {\n    trackSelected() {\n      if (this.selected.length) this.send({ payload: this.selected })\n    }\n  }\n}\n</script>",
-    "storeOutMessages": true,
+    "storeOutMessages": false,
     "resendOnRefresh": true,
     "templateScope": "local",
     "x": 590,
     "y": 40,
     "wires": [
       [
-        "espnow_set_tracked_fn"
+        "espnow_track_guard_fn"
       ]
     ]
   },
@@ -1965,7 +1968,7 @@
     "type": "function",
     "z": "espnow_flow",
     "name": "Publish Ranging Enable/Disable",
-    "func": "try {\n    var base  = global.get(\"topic_base\") || \"Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/\";\n    var devs  = global.get(\"hb_devices\") || {};\n    var uuids = Object.keys(devs);\n    if (uuids.length === 0) {\n        node.warn(\"ESP-NOW ranging cmd: no known devices yet\");\n        return null;\n    }\n    var enable = (msg.payload && msg.payload.tracking) ? \"1\" : \"0\";\n    uuids.forEach(function(uuid) {\n        node.send({\n            topic:   base + uuid + \"/cmd/espnow/ranging\",\n            payload: enable,\n            retain:  true,\n            qos:     1\n        });\n    });\n    return null;\n} catch(e) {\n    node.error(\"ESP-NOW ranging cmd: \" + e.message, msg);\n    return null;\n}",
+    "func": "try {\n    var base  = global.get('topic_base') || 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/';\n    var devs  = global.get('hb_devices') || {};\n    var uuids = Object.keys(devs);\n    if (uuids.length === 0) {\n        node.warn('ESP-NOW ranging cmd: no known devices yet');\n        return null;\n    }\n    var enable = (msg.payload && msg.payload.tracking) ? '1' : '0';\n    uuids.forEach(function(uuid) {\n        node.send({\n            topic:  base + uuid + '/cmd/espnow/ranging',\n            payload: enable,\n            retain:  false,\n            qos:     1\n        });\n    });\n    return null;\n} catch(e) {\n    node.error('ESP-NOW ranging cmd: ' + e.message, msg);\n    return null;\n}",
     "outputs": 1,
     "noerr": 0,
     "initialize": "",
@@ -1986,7 +1989,7 @@
     "name": "ESP-NOW Ranging Cmd",
     "topic": "",
     "qos": "1",
-    "retain": "true",
+    "retain": "false",
     "broker": "mqtt_broker",
     "x": 770,
     "y": 180,
@@ -2040,7 +2043,7 @@
     "order": 1,
     "width": "12",
     "height": 1,
-    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.18 &nbsp;&middot;&nbsp; 2026-04-22</span>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -2069,7 +2072,7 @@
     "order": 1,
     "width": "12",
     "height": 1,
-    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.18 &nbsp;&middot;&nbsp; 2026-04-22</span>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -2098,7 +2101,7 @@
     "order": 1,
     "width": "12",
     "height": 1,
-    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.16 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.18 &nbsp;&middot;&nbsp; 2026-04-22</span>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -2513,7 +2516,7 @@
     "order": 1,
     "width": "12",
     "height": 1,
-    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.17 &nbsp;&middot;&nbsp; 2026-04-21</span>\n  </div>\n</template>",
+    "format": "<template>\n  <div style=\"padding:4px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #263238\">\n    <span style=\"color:#546e7a;font-size:11px\">Node-RED flows</span>\n    <span style=\"color:#78909c;font-size:11px;font-family:monospace\">v0.3.18 &nbsp;&middot;&nbsp; 2026-04-22</span>\n  </div>\n</template>",
     "storeOutMessages": true,
     "resendOnRefresh": true,
     "templateScope": "local",
@@ -2918,6 +2921,25 @@
     "y": 540,
     "wires": [
       []
+    ]
+  },
+  {
+    "id": "espnow_track_guard_fn",
+    "type": "function",
+    "z": "espnow_flow",
+    "name": "Guard: only tracking selections",
+    "func": "// Only forward messages that are user tracking selections (Array of MAC strings).\n// Drop display messages like { peers:[...] } that come from refresh/discover.\ntry {\n    if (Array.isArray(msg.payload)) return msg;\n    return null;\n} catch(e) {\n    node.error('espnow_track_guard_fn: ' + e.message, msg);\n    return null;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 810,
+    "y": 100,
+    "wires": [
+      [
+        "espnow_set_tracked_fn"
+      ]
     ]
   }
 ]
