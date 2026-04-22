@@ -151,6 +151,21 @@
     "templateScope": "local",
     "x": 600,
     "y": 160,
+    "wires": [["map_anchor_guard_fn"]]
+  },
+  {
+    "id": "map_anchor_guard_fn",
+    "type": "function",
+    "z": "map_tab",
+    "name": "Guard: valid anchor cmd only",
+    "func": "// Only forward explicit anchor commands sent by the Apply button.\n// Drop any pass-through status/roster messages that arrive here\n// without a cmd/espnow/anchor topic (they have no msg.topic).\nif (!msg.topic || !msg.topic.endsWith('/cmd/espnow/anchor')) {\n    return null;\n}\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 840,
+    "y": 160,
     "wires": [["map_anchor_cmd_out"]]
   },
   {
@@ -162,7 +177,7 @@
     "qos": "1",
     "retain": "",
     "broker": "mqtt_broker",
-    "x": 840,
+    "x": 1080,
     "y": 160,
     "wires": []
   }
