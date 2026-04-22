@@ -204,9 +204,18 @@ void otaCheckNow(bool isSiblingRetry) {
     //      while the TCP stack is saturated by the download. Unsubscribing it
     //      prevents the watchdog from firing at ~40-50% progress.
     //      Safe because the device reboots immediately on success.
+    // Block reconnect timer from racing with OTA teardown.  The TCP connection
+    // may already have dropped (broker-initiated disconnect during the JSON
+    // fetch), which means onMqttDisconnect already started the 1000 ms
+    // reconnect timer.  Without this guard that timer fires from the timer
+    // task and calls _mqttClient.connect() simultaneously with our disconnect,
+    // corrupting AsyncMqttClient state and crashing _xt_context_restore.
+    _mqttOtaActive = true;
+    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);  // kill pre-existing timer
+
     _mqttClient.disconnect(true);
-    delay(200);   // Let onMqttDisconnect fire and re-arm the reconnect timer
-    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);
+    delay(200);   // Let onMqttDisconnect fire (it will NOT re-arm the timer)
+    if (_mqttReconnectTimer) xTimerStop(_mqttReconnectTimer, 0);  // defensive: kill if re-armed anyway
     TaskHandle_t asyncTcpTask = xTaskGetHandle("async_tcp");
     if (asyncTcpTask) esp_task_wdt_delete(asyncTcpTask);
 

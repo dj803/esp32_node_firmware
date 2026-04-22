@@ -83,6 +83,7 @@ static int              _mqttReconnectCount = 0;             // Consecutive fail
 static volatile bool    _mqttNeedsRediscovery = false;       // Set in disconnect callback; cleared by loop()
 static uint32_t         _mqttConnectStartMs = 0;             // millis() when connect() was last called; 0 = idle
 static uint32_t         _mqttRestartAtMs    = 0;             // Non-zero: restart device when millis() >= this value
+static volatile bool    _mqttOtaActive     = false;          // OTA in progress — block reconnect attempts
 
 // ── Sleep dispatch state (v0.3.20) ───────────────────────────────────────────
 // `cmd/sleep` and `cmd/deep_sleep` take the radio offline, so dispatch is
@@ -929,8 +930,10 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     LOG_W("MQTT", "Disconnected (%s) - retrying in %lu ms",
           mqttDisconnectReasonStr(reason), _mqttReconnectDelay);
 
-    // Only start the timer if it isn't already running (prevents timer pile-up)
-    if (xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
+    // Only start the timer if it isn't already running and OTA isn't active.
+    // During OTA, reconnect attempts race with the OTA teardown and corrupt
+    // AsyncMqttClient's internal state, crashing the FreeRTOS context switch.
+    if (!_mqttOtaActive && xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
         xTimerChangePeriod(_mqttReconnectTimer,
                            pdMS_TO_TICKS(_mqttReconnectDelay), 0);
         xTimerStart(_mqttReconnectTimer, 0);
@@ -947,6 +950,12 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
 // Only attempts to reconnect if Wi-Fi is still available; if Wi-Fi also dropped,
 // the main loop's Wi-Fi recovery code will restart the device.
 static void mqttReconnectTimerCb(TimerHandle_t) {
+    // Guard: OTA is in progress — do not attempt to reconnect.  A reconnect
+    // from the timer task while the loop task is tearing down the MQTT
+    // connection for OTA causes a race in AsyncMqttClient that corrupts the
+    // FreeRTOS task context and panics with IllegalInstruction.
+    if (_mqttOtaActive) return;
+
     if (WiFi.isConnected()) {
         LOG_I("MQTT", "Attempting reconnect...");
         _mqttConnectStartMs = millis();   // Start watchdog — loop() will restart if no callback arrives
