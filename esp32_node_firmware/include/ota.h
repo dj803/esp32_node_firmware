@@ -238,6 +238,19 @@ void otaCheckNow(bool isSiblingRetry) {
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #endif
 
+    // In arduino-esp32 3.x, loopTask is not subscribed to the TWDT by default.
+    // If we call esp_task_wdt_reset() in the progress callback without first
+    // subscribing, ESP-IDF logs an E-level "task not found" message every chunk
+    // (~hundreds of formatted prints deep inside the HTTPS call stack).  That
+    // accumulated stack pressure causes an IllegalInstruction crash at ~60%.
+    // Subscribe loopTask now; ESP_ERR_INVALID_ARG = already subscribed (benign).
+    {
+        esp_err_t wdtE = esp_task_wdt_add(NULL);
+        if (wdtE != ESP_OK && wdtE != ESP_ERR_INVALID_ARG) {
+            LOG_W("OTA", "esp_task_wdt_add(loopTask) failed: %d", wdtE);
+        }
+    }
+
     // ── Pass 2: download and flash, but do not reboot yet ────────────────────
     // UPDATE_BUT_NO_BOOT lets us publish ota_success before the connection drops.
     ledSetPattern(LedPattern::OTA_UPDATE);   // solid ON — flash write in progress
