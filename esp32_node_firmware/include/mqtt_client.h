@@ -1045,6 +1045,13 @@ static void onMqttConnect(bool sessionPresent) {
     // QoS 2 = "exactly once" delivery (used for credential rotation to prevent double-apply)
     _mqttClient.subscribe(mqttTopic("cmd").c_str(),               1);   // General commands
     _mqttClient.subscribe(mqttTopic("cmd/cred_rotate").c_str(),   2);   // Device-specific rotation
+    // QoS 0 chosen deliberately (since v0.2.15). On QoS 1 the broker
+    // would re-deliver the message at the next reconnect because the
+    // device reboots mid-OTA before sending PUBACK — re-delivery would
+    // trigger another OTA check on the new firmware, potentially looping
+    // through versions if the manifest still advertises an upgrade. QoS 0
+    // is fire-and-forget: a missed publish just means we wait for the
+    // next periodic OTA check (default 1 hour).
     _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),     0);   // QoS 0 — OTA reboots before PUBACK; re-delivery would trigger redundant check
     _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(),   1);   // Start HTTP settings portal on LAN IP
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation

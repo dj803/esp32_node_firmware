@@ -173,10 +173,22 @@ static bool _generateTlsCreds() {
 
     LOG_I("AP Portal", "Generating RSA-2048 self-signed cert (~10 s)...");
 
+    // (v0.3.37) Subscribe the calling task to TWDT explicitly so the
+    // esp_task_wdt_reset() calls below are NOT no-ops regardless of caller.
+    // Pre-v0.3.37 there was an inconsistent safety model: from setup() the
+    // loop task wasn't yet subscribed → resets were silent no-ops →
+    // unprotected; from cmd/config_mode (settings server path) the loop task
+    // WAS subscribed → resets fed the watchdog. Same code, two safety models.
+    // ESP_ERR_INVALID_ARG = already subscribed (benign), same idiom as ota.h.
+    {
+        esp_err_t wdtE = esp_task_wdt_add(NULL);
+        if (wdtE != ESP_OK && wdtE != ESP_ERR_INVALID_ARG) {
+            LOG_W("AP Portal", "esp_task_wdt_add(loopTask) failed: %d (proceeding)", wdtE);
+        }
+    }
+
     // The whole keygen call blocks the task long enough (up to ~15 s on slow
-    // entropy) that the task watchdog — if the caller is a WDT-subscribed task —
-    // will bite. Feed it around each long step. esp_task_wdt_reset() is a no-op
-    // for tasks that aren't subscribed, so this is safe from setup() too.
+    // entropy) that the task watchdog will bite. Feed it around each long step.
     esp_task_wdt_reset();
 
     const char* pers = "esp32_portal_cert";

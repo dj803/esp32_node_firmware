@@ -867,3 +867,243 @@ MISC REMINDERS
 • `arduino-cli-legacy` tag points to the last commit where the Arduino CLI
   workflow was still the canonical build path (post v0.3.00, pre-migration).
   Useful rollback anchor if the PlatformIO stack breaks badly.
+
+
+================================================================================
+v0.3.06 -> v0.3.36 EXTENSION (written 2026-04-23)
+================================================================================
+
+This block extends the consolidated log past v0.3.05. Each entry is a short
+"why this changed" — the commit message itself has the full diff, file list,
+and any cross-references. Read this log to skim the arc of the project's
+hardening; read git log for any individual change.
+
+────────────────────────────────────────────────────────────────────────────────
+
+v0.3.06 — structured logging + non-blocking WiFi recovery
+  Replaced free-form Serial.println with LOG_D/I/W/E (compile-time level
+  filtering). Replaced free-form mqttPublishStatus("event") strings with
+  the FwEvent enum + fwEventName() lookup, removing typo risk. WiFi
+  recovery moved out of blocking while/delay loops into a loop()-driven
+  state machine — first major step away from Cluster 2 (blocking-in-
+  callback) and the precondition for the v0.3.20 sleep work.
+
+v0.3.07 — HTTPS portals + CSRF
+  AP portal and settings server moved from plaintext HTTP to HTTPS via
+  esp_https_server. Self-signed cert generated on first boot, persisted
+  to NVS namespace `portal_tls`. Cert generation takes ~10s. CSRF tokens
+  added (single-use, validated on POST). Fall-back to HTTP on TLS init
+  failure so provisioning still works.
+
+v0.3.08 — wire-format versioning + NvsNs enum
+  WireBundle gained an explicit wire_version field validated on receive
+  (rejects mismatched-version bundles instead of struct-casting and
+  hoping). NvsNs enum centralises NVS namespace strings (was scattered
+  literals — drift risk). semver.h extracted from ota.h for host-side
+  unit tests.
+
+v0.3.09 — async ESP-NOW bootstrap + parallel broker scan
+  espnowBootstrapBegin/IsDone/GetResult API replaces the blocking scan
+  in setup(). 8 KB FreeRTOS task carries the bootstrap; loop() polls.
+  Broker discovery TCP port scan parallelised via a 6-wide AsyncTCP
+  sliding window (~7.6s vs ~19s previously).
+
+v0.3.10 — responder rate limiting + module accessor flags
+  ESP-NOW credential responder gained per-MAC token-bucket rate limiting
+  (3 tokens, 1 / 60s refill, 8-entry LRU table). Replaces the previous
+  flat 30-s cooldown which was either too short for repeated boots or
+  too long for fleet-recovery. Module-internal flags exposed via
+  accessor functions instead of `extern`.
+
+v0.3.11 — esp_https_server cutover (WebServer to httpd_ssl)
+  Full migration from Arduino WebServer to ESP-IDF httpd_ssl. Manual
+  POST body parsing, esp_err_t handler signatures, httpd_resp_*. Adds
+  watchdog kicks during cert keygen. WebServer was single-threaded and
+  hid the concurrency bug class that v0.3.12 then had to fix
+  immediately.
+
+v0.3.12 — XSS + CSRF + sibling-OTA-URL hardening (security audit pass)
+  htmlEscape() helper added; all attribute values in apHtml now escape.
+  isSafeOtaUrl() validates sibling-provided OTA URLs (closes the XSS
+  chain that previously let a sibling poison the admin /settings page).
+  CSRF token: 1-slot global to 2-slot ring guarded by portMUX (httpd
+  workers are concurrent in v0.3.11+). mbedtls keygen WDT kicks added
+  (cert generation can run ~10s and would trip the watchdog if not fed).
+
+v0.3.13 — lib unpinning + 6 small bugs
+  Unpinned 4 GitHub lib_deps (were SHA-pinned and stale). Restored
+  async_tcp WDT subscription on OTA failure paths
+  (_otaReaddAsyncTcpToWdt) — without it, async_tcp would run for the
+  rest of the session unmonitored after a failed OTA. Rate-limit refill
+  extracted to host-testable rateClampRefill() in rate_limit.h. AsyncTCP
+  callback detach-before-delete (callback running on freed object).
+  RFID UID normalisation deduplicated. JSON builders moved from String
+  concat to snprintf. NimBLE 1.x build guard added to ble.h.
+
+v0.3.14 — strict semverParse + WireBundle as standalone header
+  semverParse() rewritten with strict overload that rejects malformed /
+  missing-component / trailing-garbage versions (lexicographic
+  comparator was a hidden hazard since v0.2). WireBundle struct
+  extracted to include/wire_bundle.h with a host-testable 176-byte LE
+  wire contract. 14 new host tests, total ~54.
+
+v0.3.15 — WiFi outage recovery + AP-mode background STA scan
+  OPERATIONAL state now holds indefinite exponential backoff for WiFi
+  loss (15s/30s/1m/2m/5m/10m, last value used forever) instead of
+  triggering 3-attempt restart loop. Separate wifi_outage NVS counter
+  (max 10) prevents router blips from exhausting the generic
+  DEVICE_RESTART_MAX. AP-mode runs APSTA so it can rescan for the
+  configured SSID every 30s and auto-restart into OPERATIONAL when the
+  router returns. Closes the v0.3.14-era "stuck in AP after router
+  outage" field issue.
+
+v0.3.16 — pioarduino platform bump 54.03.21 to 55.03.38-1
+  pioarduino 54.x lacked package.json which PlatformIO 6.x+ needs;
+  55.x adds it. Also Node-RED version-badge fix. No firmware behaviour
+  change.
+
+v0.3.17 — RFID read/write playground
+  cmd/rfid/program / cmd/rfid/read_block / cmd/rfid/cancel handlers
+  added. Profile-based block guard, trailer-block guard, mode state
+  machine with deadline. Pure feature.
+
+v0.3.18 — LED Control + non-blocking locate
+  Status LED cmd/locate no longer uses delay() in the MQTT callback
+  context; uses a state machine driven by ledLoop(). Closes a
+  remaining Cluster 2 (blocking-in-callback) hazard. Node-RED LED
+  Control tab added.
+
+v0.3.19 — Node-RED UX polish
+  Tab names, version badges, Restarting state surfaced in dashboard.
+
+v0.3.20 — MQTT-controlled sleep modes
+  cmd/sleep (light), cmd/deep_sleep, cmd/modem_sleep added. Defer the
+  actual sleep action via _mqttSleepAtMs deadline rather than call
+  sleep from the MQTT callback (would deadlock async_tcp).
+  modify_link_path.py adds 2 KB IRAM segment for esp_sleep code.
+
+v0.3.21 — Sleep Control panel in Node-RED
+  Dashboard UI for the v0.3.20 sleep modes.
+
+v0.3.22 — re-arm MQTT reconnect timer post-light-sleep
+  After light sleep, WiFi state may be torn down by the time the loop
+  resumes; without re-arming the MQTT reconnect timer, the next
+  publish hangs forever. Latent regression introduced by v0.3.20.
+
+v0.3.23 — reset loopTask WDT during blocking OTA fetch/download
+  OTA library blocks the loop task for ~0.8s (manifest fetch) plus
+  download. TWDT bites at ~3s. Added esp_task_wdt_reset() in the
+  per-chunk progress callback + before the manifest fetch. NOT yet
+  subscribing loopTask — see v0.3.27 for the regression.
+
+v0.3.24 — prevent reconnect-timer race during OTA teardown
+  MQTT broker dropped the TCP connection during the v0.3.23 manifest
+  fetch, which fired onMqttDisconnect, re-armed the reconnect timer,
+  fired _mqttClient.connect() concurrently with our deliberate
+  disconnect, corrupted AsyncMqttClient state,
+  _xt_context_restore IllegalInstruction crash. Fix: _mqttOtaActive
+  guard flag + xTimerStop before disconnect + defensive xTimerStop
+  after.
+
+v0.3.25 — increase loopTask stack to 16 KB
+  IDF 5.x deeper call chains (mbedTLS, lwIP) blow the default 8 KB
+  loop-task stack. Triggered by the v0.3.23 OTA-download path. Bumped
+  via -DARDUINO_LOOP_STACK_SIZE=16384 in build_flags.
+
+v0.3.26 — free BLE heap + restart on OTA flash failure
+  Update.begin() failed because mbedTLS + NimBLE fragmented the heap.
+  NimBLEDevice::deinit(true) frees ~30 KB before flash write. Restart
+  on flash failure regardless (state is degraded — better to reboot
+  fresh than continue with MQTT+BLE both torn down).
+
+v0.3.27 — subscribe loopTask to TWDT BEFORE OTA download
+  v0.3.23 called esp_task_wdt_reset() in the progress callback, but
+  arduino-esp32 3.x does NOT subscribe loopTask to TWDT by default.
+  Each reset of an unsubscribed task printed an [E]-level "task not
+  found" log line. Hundreds during a 1.7 MB download cumulatively
+  overflowed the 16 KB stack at ~60 % progress. Fix:
+  esp_task_wdt_add(NULL) before the download, ESP_ERR_INVALID_ARG
+  treated as benign.
+
+v0.3.28 — remove dead _otaReaddAsyncTcpToWdt helper
+  v0.3.27's pre-subscription model obsoletes the v0.3.13 re-add helper.
+  Cleanup, no behaviour change.
+
+v0.3.29 — ESPNOW ranging F1+F3+F4 (friendly names, calibration, EMA)
+  Per-node friendly name (NVS) + RSSI calibration (tx_power_dbm,
+  path_loss_n) + EMA drift filter for stable distance readings.
+  Pure feature.
+
+v0.3.30 — F2+F5+LWT (MAC filter, anchor role, wifi_channel) + LWT-topic
+            use-after-free fix
+  ESPNOW ranging gained a track-only-these-MACs filter and an anchor-
+  role config (x/y/z coords). LWT topic was previously stored in a
+  String local to onMqttConnect — went out of scope after the callback
+  returned, leaving AsyncMqttClient with a dangling pointer. Same root
+  cause shape as the v0.1.7 setClientId/host fix. Fix: static-scope
+  LWT topic String.
+
+v0.3.31 — LWT use-after-free fix verification
+  Confirmed v0.3.30 fix persists across reboot + reconnect cycles.
+
+v0.3.32 — OTA per-chunk progress watchdog + trigger-time heap log
+  Field incident on Charlie: OTA stalled mid-download without tripping
+  TWDT (CDN black-hole). Added a one-shot FreeRTOS timer armed before
+  the download, reset on every progress callback; fires ESP.restart()
+  if no callback for OTA_PROGRESS_TIMEOUT_MS (default 30s). Trigger-
+  time heap snapshot logged so future freezes can be correlated with
+  heap state at OTA initiation.
+
+v0.3.33 — OTA bulletproofing Phase 1
+  Pre-flight heap gate (free >= 80 KB, largest block >= 32 KB) before
+  Update.begin(). Hardcoded fallback URL chain (Pages, raw GH,
+  siblings). boot_reason field in retained .../status. Stage-tagged
+  OTA failure events (preflight | manifest | flash). 5-min AP-mode
+  idle timeout — AP mode is intended only for first-boot or hands-on
+  dev work; no longer sits invisible to the fleet forever.
+
+v0.3.34 — OTA bulletproofing Phase 2 (post-OTA self-validation)
+  NVS-flag-based detection: OLD firmware writes incoming version to
+  NVS just before ESP.restart(); NEW firmware reads on boot, arms a
+  5-min validation deadline. Calls esp_ota_mark_app_valid_cancel
+  _rollback() after the boot announcement publish lands. If the
+  deadline expires without confirmation, calls esp_ota_mark_app
+  _invalid_rollback_and_reboot() — works without bootloader
+  CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE.
+
+v0.3.35 — OTA bulletproofing Phase 3 (esp_https_ota writer)
+  Replaced ESP32-OTA-Pull's blocking download writer with Espressif's
+  esp_https_ota. partial_http_download=true to enable HTTP Range
+  support so a stalled download can resume on retry. Custom
+  ArduinoJson manifest re-fetch to extract the .bin URL (ESP32-OTA-Pull
+  does not expose it after Pass 1). ESP32-OTA-Pull retained for Pass 1
+  only. See SUGGESTED_IMPROVEMENTS.txt #25/#26 for the deferred Phase 4
+  (bootloader rollback + recovery partition).
+
+v0.3.36 — Phase A concurrency hardening across subsystems
+  Closes the dual-core / cross-context race conditions identified in
+  the v0.3.xx cross-cutting hardening investigation. Pattern: state
+  shared between callback contexts (MQTT/BLE/ESP-NOW handlers) and
+  the main loop without explicit synchronisation. Same root cause that
+  bit v0.1.7 (setClientId dangling) and v0.3.30 (LWT topic) in
+  different shapes.
+
+  Changes:
+    - mqtt_client.h: volatile qualifiers on _mqttRestartAtMs +
+      _mqttSleepAtMs/DurationS/Kind + _mqttModemSleepUntilMs (deferred-
+      action globals, written from MQTT callback, read from loop()).
+    - espnow_responder.h: new _respMux portMUX guarding
+      _brokerRespReceived / _otaUrlRespReceived callback writes,
+      multi-byte response fields, _responderHealthFlags bitwise OR/AND,
+      and the rate-limit token-bucket read-modify-write.
+    - rfid.h: new _rfidWhitelistMux guarding the whitelist.
+      _rfidWhitelistSave uses snapshot-then-flash so we never hold the
+      mux during NVS I/O.
+    - ble.h: _blePublishTracked() snapshots tracked-beacon arrays under
+      _bleMutex (writes were guarded; reads were not — torn-read race
+      on the 4-byte float distM in particular).
+    - ap_portal.h: latch _apShouldExit so a flapping router producing
+      two GOT_IP events in quick succession can not slip the restart
+      window.
+    - main.cpp: documented why delay(500) on the auth-fail-restart path
+      is intentional (final drain before ESP.restart).

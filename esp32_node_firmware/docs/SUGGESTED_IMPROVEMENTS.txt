@@ -340,3 +340,108 @@ Phase 4 — DEFERRED items                                          (2026-04-23)
     PRIORITY: Low for current 3-device fleet (all serial-accessible).
               Promote when fleet grows past ~10 devices or when nodes
               are deployed without easy serial access.
+
+
+────────────────────────────────────────────────────────────────────────────────
+v0.3.36 → v0.4.01 — cross-cutting hardening Phase C / D follow-ups (2026-04-23)
+────────────────────────────────────────────────────────────────────────────────
+
+The v0.3.36 (Phase A concurrency hardening) + v0.4.01 (Phase B observability +
+docs) milestones close most of the recurring v0.3.xx root-cause clusters.
+These items are the architectural follow-ups that need a v0.4.x cycle:
+
+27. Library-API regression test in CI
+    GAP:      v0.3.03 PlatformIO migration only checks binary-size delta
+              (was 4 KB, widened to 128 KB after Bluedroid 700 KB miss).
+              Will not catch a future NimBLE 1→3 silent ABI break or
+              AsyncMqttClient API drift. Lib SHAs are pinned (good) but
+              there is no synthetic-API test that would catch a deliberate
+              version bump quietly breaking a function signature.
+    FIX:      Add a tiny test in test/test_native/ that exercises one
+              symbol from each pinned lib (NimBLEDevice::init,
+              AsyncMqttClient::setClientId, MFRC522::PCD_Init); CI fails
+              to compile if any signature drifted. Bonus: re-pin SHA-pin
+              comments with the version number they correspond to so a
+              deliberate bump is intentional.
+    PRIORITY: Medium — has bitten us once (NimBLE 1→2 in v0.2.10).
+
+28. NVS / static-string lifetime audit + naming convention
+    GAP:      Cluster 3 has bitten v0.1.7 (setClientId .c_str() dangling),
+              v0.3.00, v0.3.11, v0.3.30 (LWT topic), v0.3.31. Each fix
+              was reactive. Pattern: caller passes String::c_str() from
+              a temporary; library stores the pointer; use-after-free at
+              next call. Will recur the next time a developer adds an
+              MQTT setter or httpd handler that takes const char*.
+    FIX:      One-time sweep: every callsite that takes String::c_str()
+              and passes to a library function — categorise as "library
+              copies (safe)" or "library stores pointer (must outlive)".
+              Add a naming convention (e.g. gMqttHostStatic, gLwtTopicStatic)
+              for any string passed-by-pointer that must have static
+              lifetime. Document in a new docs/STRING_LIFETIME.md.
+    PRIORITY: Medium — pattern recurs roughly every major feature cycle.
+
+29. WDT-heartbeat audit for all blocking I/O
+    GAP:      v0.3.27/0.3.32 fixed OTA. Same risk shape lives in: broker
+              discovery's AsyncTCP callbacks (v0.3.13 added detach but no
+              per-result WDT kick), BLE onResult callback, MFRC522 SPI
+              transactions during heavy WiFi.
+    FIX:      Audit every blocking-or-async-callback site for "is the
+              calling task subscribed to TWDT, and does this op exceed
+              the timeout?". Document the per-task TWDT-subscription
+              policy (which tasks ARE subscribed; which routinely block
+              for long enough to need explicit feeds).
+    PRIORITY: Low — no observed field issue outside OTA, but the
+              architectural risk shape is identical.
+
+30. AsyncTCP fork swap (marvinroger → mathieucarbou)
+    Mathieucarbou's maintained fork has known leak fixes and is what
+    production fleets standardise on. Risk: behaviour deltas in
+    reconnect timing might surface new bugs. Defer to v0.4.x cycle
+    that includes a soak test on Alpha first.
+    PRIORITY: Low — current fork works. Promote when next fleet
+              reliability incident traces to AsyncTCP.
+
+31. Pin LED + RFID tasks to Core 1
+    App tasks currently default to Core 0 alongside WiFi. Pinning LED
+    to Core 1 + RFID to Core 1 frees Core 0 for network. Small change
+    but RFID polling timing is sensitive — needs a careful smoke test.
+    PRIORITY: Low — would help WiFi/BLE jitter under heavy LED render.
+
+32. Heap-headroom gate at boot for each subsystem
+    Mirrors v0.3.33's OTA preflight gate. Before bringing each
+    subsystem up (BLE init, MQTT connect, etc.), check
+    esp_get_free_internal_heap_size() against a per-subsystem
+    threshold (~40 KB headroom for mbedTLS handshakes). Gracefully
+    skip and re-try on the next loop.
+    PRIORITY: Low — no observed OOM crashes in current fleet, but
+              the OTA bulletproofing investigation flagged this as
+              the highest-leverage single change for 4 MB classic
+              ESP32 running all subsystems concurrently.
+
+33. Versioned MQTT topic prefixes
+    Enigma/JHBDev/... is unversioned; schema drift between firmware
+    versions silently breaks Node-RED consumers. Future deployments
+    should use v1/Enigma/.... Existing fleet would need a Node-RED
+    bridge for backwards compat — significant deployment cost for
+    marginal gain at 3 devices.
+    PRIORITY: Low until fleet > 5 devices.
+
+34. Captive portal DNS responder
+    AP portal currently doesn't trigger iOS / Android captive sheets —
+    admin must manually browse to 192.168.4.1. Optional UX win.
+    PRIORITY: Low.
+
+35. Operational practice: canary OTA pattern
+    Even at 3 devices: OTA Alpha first, soak ~1 h, then OTA Bravo +
+    Charlie. The v0.3.33-v0.3.35 rollout's Bravo/Charlie panic on
+    v0.3.33→v0.3.35 OTA would have been caught earlier with this
+    discipline. Not a code change — operational practice.
+    STATUS:   Adopted as habit going forward.
+
+36. Operational practice: heartbeat / boot-reason monitoring
+    Confirm 60s heartbeat is sufficient for Node-RED's 90s offline
+    detector. If devices ever report boot_reason=task_wdt or panic in
+    the wild, treat as a real bug to investigate, not a transient.
+    Build a Node-RED dashboard tile that surfaces non-poweron
+    boot_reason values across the fleet.
+    PRIORITY: Medium — easy Node-RED change, high diagnostic value.

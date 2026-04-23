@@ -119,8 +119,17 @@ static float _bleCalcDist(int8_t rssi, int8_t txPower) {
 // ── NVS helpers ───────────────────────────────────────────────────────────────
 static void _bleNvsLoad() {
     Preferences p;
-    p.begin(BLE_NVS_NAMESPACE, /*readOnly=*/true);
-    String csv = p.getString(BLE_NVS_KEY_TRACKED, "");
+    if (!p.begin(BLE_NVS_NAMESPACE, /*readOnly=*/true)) {
+        // (v0.3.37) Namespace doesn't exist yet (fresh device, no
+        // cmd/ble/track ever received). Silent default — Preferences
+        // would otherwise log "[E] nvs_open failed: NOT_FOUND" on every boot.
+        _bleTrackedCount = 0;
+        return;
+    }
+    // (v0.3.37) isKey() pre-check suppresses
+    // "[E] getString(): nvs_get_str len fail: tracked_mac NOT_FOUND" on every
+    // boot of a device that has never been told to track a beacon.
+    String csv = p.isKey(BLE_NVS_KEY_TRACKED) ? p.getString(BLE_NVS_KEY_TRACKED, "") : String();
     p.end();
     _bleTrackedCount = 0;
     if (csv.length() == 0) return;

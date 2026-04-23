@@ -140,8 +140,14 @@ public:
         // Lambda helper: read one NVS string key into `out`.
         // If the key is missing or empty, copies the compile-time `def` instead.
         // Always null-terminates within maxLen bytes.
+        //
+        // (v0.3.37) prefs.isKey() pre-check suppresses the
+        // "[E][Preferences.cpp:506] getString(): nvs_get_str len fail: ...
+        //  NOT_FOUND" log spam every boot for keys not yet set. The error
+        // is harmless (key just doesn't exist), but it logs at E (error)
+        // level which drowns real errors during diagnostics.
         auto readStr = [&](const char* key, char* out, size_t maxLen, const char* def) {
-            if (opened) {
+            if (opened && prefs.isKey(key)) {
                 String val = prefs.getString(key, "");
                 if (val.length() > 0) {
                     strncpy(out, val.c_str(), maxLen - 1);
