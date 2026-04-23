@@ -2,6 +2,11 @@
 
 #include <Arduino.h>
 #include <ESP32OTAPull.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <esp_https_ota.h>     // (v0.3.35) Phase 3 — replace ESP32-OTA-Pull's writer
+#include <esp_http_client.h>
+#include <esp_crt_bundle.h>    // built-in CA bundle for esp-tls
 #include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
 #include "config.h"
 #include "logging.h"
@@ -73,6 +78,137 @@ static void _otaProgressTimeout(TimerHandle_t /*xTimer*/) {
     ESP.restart();
 }
 
+
+
+// ── otaExtractBinaryUrl ───────────────────────────────────────────────────────
+// (v0.3.35 / Phase 3) Re-fetches the manifest at `manifestUrl` and pulls
+// out the .bin URL of the first profile that matches our board (or has no
+// Board filter set). Mirrors ESP32-OTA-Pull's selection logic so existing
+// manifests work unchanged.
+//
+// Why a second fetch? ESP32-OTA-Pull does NOT expose the URL it found
+// during Pass 1 — it only stores Version. For Pass 2 we now use
+// esp_https_ota (resume-capable, actively maintained) which needs the
+// .bin URL directly. The duplicate fetch is ~200 bytes of JSON over the
+// already-warm TLS connection — cheap.
+//
+// Returns: empty String on failure; .bin URL on success. Caller must
+// validate that the returned String is non-empty before passing it to
+// esp_https_ota_begin().
+static String otaExtractBinaryUrl(const char* manifestUrl) {
+    HTTPClient http;
+    http.setTimeout(10000);
+    if (!http.begin(manifestUrl)) {
+        LOG_W("OTA", "otaExtractBinaryUrl: http.begin failed");
+        return String();
+    }
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        LOG_W("OTA", "otaExtractBinaryUrl: GET %s -> %d", manifestUrl, code);
+        http.end();
+        return String();
+    }
+    String payload = http.getString();
+    http.end();
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+        LOG_W("OTA", "otaExtractBinaryUrl: JSON parse error %s", err.c_str());
+        return String();
+    }
+
+    JsonArray configs = doc["Configurations"].as<JsonArray>();
+    for (JsonObject cfg : configs) {
+        const char* board = cfg["Board"]   | "";
+        const char* url   = cfg["URL"]     | "";
+        // Match if Board is empty/missing or equals our board.
+        if (strlen(board) > 0 && strcmp(board, ARDUINO_BOARD) != 0) continue;
+        if (strlen(url) == 0) continue;
+        return String(url);
+    }
+    return String();
+}
+
+
+// ── otaPerformWithEspIdf ──────────────────────────────────────────────────────
+// (v0.3.35 / Phase 3) The replacement for ESP32-OTA-Pull's Pass 2.
+// Uses Espressif's esp_https_ota with partial_http_download=true so a stalled
+// download can resume (where the server supports HTTP Range requests).
+// Returns 0 on success, negative on any failure.
+//
+// Caller is responsible for:
+//   - MQTT teardown + async_tcp WDT unsubscribe (handled in otaCheckNow)
+//   - BLE deinit (handled in otaCheckNow)
+//   - Pre-flight heap gate (handled in otaCheckNow)
+//   - LoopTask TWDT subscribe (handled in otaCheckNow)
+//   - Progress watchdog arm (handled in otaCheckNow)
+//
+// This function only owns the perform-loop and progress logging.
+static int otaPerformWithEspIdf(const char* binaryUrl) {
+    LOG_I("OTA", "esp_https_ota: starting download from %s", binaryUrl);
+
+    esp_http_client_config_t http_cfg = {};
+    http_cfg.url                  = binaryUrl;
+    http_cfg.crt_bundle_attach    = esp_crt_bundle_attach;   // use framework's CA bundle
+    http_cfg.timeout_ms           = 30000;
+    http_cfg.keep_alive_enable    = true;
+
+    esp_https_ota_config_t ota_cfg = {};
+    ota_cfg.http_config           = &http_cfg;
+    ota_cfg.partial_http_download = true;   // enable HTTP Range support
+    ota_cfg.max_http_request_size = 16 * 1024;  // chunk size cap
+
+    esp_https_ota_handle_t handle = nullptr;
+    esp_err_t err = esp_https_ota_begin(&ota_cfg, &handle);
+    if (err != ESP_OK) {
+        LOG_E("OTA", "esp_https_ota_begin failed: %d (%s)", err, esp_err_to_name(err));
+        return -1;
+    }
+
+    int totalSize = esp_https_ota_get_image_size(handle);
+    LOG_I("OTA", "esp_https_ota: image size = %d bytes", totalSize);
+
+    int lastPct = -1;
+    while (true) {
+        // Reset watchdogs on every iteration. esp_https_ota_perform processes
+        // one HTTP chunk per call so this is the analogue of ESP32-OTA-Pull's
+        // SetCallback chunk-by-chunk hook.
+        esp_task_wdt_reset();
+        if (_otaProgressWatchdog) xTimerReset(_otaProgressWatchdog, 0);
+
+        err = esp_https_ota_perform(handle);
+        if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) break;
+
+        int writtenBytes = esp_https_ota_get_image_len_read(handle);
+        int pct = (totalSize > 0) ? (writtenBytes * 100 / totalSize) : 0;
+        if (pct / 10 != lastPct / 10) {
+            LOG_I("OTA", "Progress: %d%%", pct);
+            lastPct = pct;
+        }
+    }
+
+    if (err != ESP_OK) {
+        LOG_E("OTA", "esp_https_ota_perform failed: %d (%s)", err, esp_err_to_name(err));
+        esp_https_ota_abort(handle);
+        return -2;
+    }
+
+    if (!esp_https_ota_is_complete_data_received(handle)) {
+        LOG_E("OTA", "esp_https_ota: incomplete image received");
+        esp_https_ota_abort(handle);
+        return -3;
+    }
+
+    err = esp_https_ota_finish(handle);
+    if (err != ESP_OK) {
+        LOG_E("OTA", "esp_https_ota_finish failed: %d (%s)", err, esp_err_to_name(err));
+        return -4;
+    }
+
+    LOG_I("OTA", "esp_https_ota: download + verify complete");
+    return 0;
+}
 
 
 // ── otaCheckNow ───────────────────────────────────────────────────────────────
@@ -351,19 +487,34 @@ void otaCheckNow(bool isSiblingRetry) {
     }
     if (_otaProgressWatchdog) xTimerStart(_otaProgressWatchdog, 0);
 
-    // Re-use the same URL that succeeded for the manifest fetch (v0.3.33).
-    // The library re-fetches the JSON internally and follows the URL field
-    // for the .bin download, so passing the working manifest URL gives us
-    // the best chance the .bin server is reachable from the same path.
-    const char* downloadUrl = (successfulUrl != nullptr) ? successfulUrl : gAppConfig.ota_json_url;
-    ret = ota.CheckForOTAUpdate(downloadUrl,
-                                "0.0.0",
-                                ESP32OTAPull::UPDATE_BUT_NO_BOOT);
+    // (v0.3.35 / Phase 3) Pass 2 now uses esp_https_ota with HTTP resume
+    // support, replacing ESP32-OTA-Pull's blocking writer. Steps:
+    //   1. Re-fetch the manifest to extract the .bin URL (ESP32-OTA-Pull
+    //      does not expose this after Pass 1).
+    //   2. Hand the .bin URL to esp_https_ota with partial_http_download=true.
+    //   3. esp_https_ota_perform() loop with progress + watchdog hooks.
+    const char* manifestUrlForBinary = (successfulUrl != nullptr)
+                                       ? successfulUrl : gAppConfig.ota_json_url;
+    String binaryUrl = otaExtractBinaryUrl(manifestUrlForBinary);
+    if (binaryUrl.length() == 0) {
+        LOG_E("OTA", "Could not extract binary URL from manifest %s", manifestUrlForBinary);
+        if (_otaProgressWatchdog) xTimerStop(_otaProgressWatchdog, 0);
+        char extra[192];
+        snprintf(extra, sizeof(extra),
+            "\"stage\":\"manifest_url\","
+            "\"error\":\"binary URL extraction failed\","
+            "\"current_version\":\"" FIRMWARE_VERSION "\"");
+        mqttPublishStatus(FwEvent::OTA_FAILED, extra);
+        delay(200);
+        ESP.restart();
+    }
+
+    int otaResult = otaPerformWithEspIdf(binaryUrl.c_str());
 
     // Download returned (success or failure) — disarm the stall watchdog.
     if (_otaProgressWatchdog) xTimerStop(_otaProgressWatchdog, 0);
 
-    if (ret == ESP32OTAPull::UPDATE_OK) {
+    if (otaResult == 0) {
         LOG_I("OTA", "Flash succeeded - restarting");
         mqttPublishStatus(FwEvent::OTA_SUCCESS,
             ("\"new_version\":\"" + targetVersion + "\"").c_str());
@@ -375,14 +526,22 @@ void otaCheckNow(bool isSiblingRetry) {
         delay(500);     // Give the MQTT publish time to be sent before disconnect
         ESP.restart();  // Boot into the new firmware — watchdog state doesn't matter
     } else {
-        LOG_E("OTA", "Flash failed (code %d) — restarting to recover", ret);
+        LOG_E("OTA", "Flash failed (esp_https_ota result %d) — restarting to recover", otaResult);
         { LedEvent e{}; e.type = LedEventType::OTA_DONE; ws2812PostEvent(e); }
-        // MQTT was deliberately disconnected before the download so
-        // mqttPublishStatus would silently drop. BLE was also deinited.
-        // The device is in a degraded state (MQTT + BLE both torn down) —
+        char extra[160];
+        snprintf(extra, sizeof(extra),
+            "\"stage\":\"flash\","
+            "\"error\":\"esp_https_ota failed\","
+            "\"code\":%d,"
+            "\"current_version\":\"" FIRMWARE_VERSION "\"",
+            otaResult);
+        // MQTT was deliberately disconnected before the download — publish
+        // is best-effort (will be retained on the device-level LWT path).
+        // BLE was also deinited. The device is in a degraded state —
         // restart cleanly rather than re-adding async_tcp to the WDT, which
         // would resume processing buffered data through a torn-down
         // AsyncMqttClient and crash with an InstrFetchProhibited null-vtable panic.
+        mqttPublishStatus(FwEvent::OTA_FAILED, extra);
         delay(200);   // Let the LED OTA_DONE event post to the WS2812 task
         ESP.restart();
     }
