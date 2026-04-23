@@ -88,7 +88,11 @@ static uint32_t         _mqttReconnectDelay = 1000;          // Current reconnec
 static int              _mqttReconnectCount = 0;             // Consecutive failure count; reset on connect
 static volatile bool    _mqttNeedsRediscovery = false;       // Set in disconnect callback; cleared by loop()
 static uint32_t         _mqttConnectStartMs = 0;             // millis() when connect() was last called; 0 = idle
-static uint32_t         _mqttRestartAtMs    = 0;             // Non-zero: restart device when millis() >= this value
+// (v0.3.36) volatile — written from MQTT callback context (async_tcp task),
+// read from loop(). Without volatile the compiler may cache the read across
+// the task-switch boundary and the deferred restart never fires (or fires
+// twice). Same rationale as _mqttNeedsRediscovery above.
+static volatile uint32_t _mqttRestartAtMs   = 0;             // Non-zero: restart device when millis() >= this value
 static volatile bool    _mqttOtaActive     = false;          // OTA in progress — block reconnect attempts
 
 // ── Sleep dispatch state (v0.3.20) ───────────────────────────────────────────
@@ -97,10 +101,14 @@ static volatile bool    _mqttOtaActive     = false;          // OTA in progress 
 // `cmd/modem_sleep` is different: the radio stays associated with the AP and
 // MQTT stays connected, so we only need an expiry timer to revert.
 enum class SleepKind : uint8_t { NONE, LIGHT, DEEP };
-static uint32_t         _mqttSleepAtMs        = 0;            // Non-zero: enter sleep when millis() >= this value
-static uint32_t         _mqttSleepDurationS   = 0;            // Seconds to sleep for (timer wake-up)
-static SleepKind        _mqttSleepKind        = SleepKind::NONE;
-static uint32_t         _mqttModemSleepUntilMs = 0;           // Non-zero: exit modem sleep when millis() >= this value
+// (v0.3.36) volatile — same task-switch caching rationale as _mqttRestartAtMs.
+// Set in onMqttMessage callback for cmd/sleep / cmd/deep_sleep / cmd/modem_sleep,
+// read in mqttHeartbeat() loop. Without volatile a stale 0 may persist in a
+// register and the deferred sleep never fires.
+static volatile uint32_t _mqttSleepAtMs       = 0;            // Non-zero: enter sleep when millis() >= this value
+static volatile uint32_t _mqttSleepDurationS  = 0;            // Seconds to sleep for (timer wake-up)
+static volatile SleepKind _mqttSleepKind      = SleepKind::NONE;
+static volatile uint32_t _mqttModemSleepUntilMs = 0;          // Non-zero: exit modem sleep when millis() >= this value
 
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
 static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid

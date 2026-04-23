@@ -316,17 +316,50 @@ static void _blePublishResults() {
 }
 
 static void _blePublishTracked() {
+    // (v0.3.36) Snapshot tracked beacons under _bleMutex, then publish from
+    // the snapshot without holding the mutex. Previously this loop read
+    // _bleTrackedRssi / _bleTrackedDistM / _bleTrackedName / _bleTrackedSeenMs
+    // without any guard while onResult writes those same fields under the
+    // mutex — torn-read race on the 4-byte float in particular. Holding the
+    // mutex through the mqttPublishJson() call would block the BLE stack
+    // task on async_tcp send, hence the snapshot pattern.
+    struct Snap {
+        char     mac[18];
+        char     name[32];
+        int8_t   rssi;
+        float    distM;
+        uint32_t seenMs;
+    };
+    Snap snaps[BLE_MAX_TRACKED];
+    uint8_t snapCount = 0;
+
+    if (xSemaphoreTake(_bleMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        snapCount = _bleTrackedCount;
+        for (uint8_t i = 0; i < snapCount; i++) {
+            strncpy(snaps[i].mac, _bleTrackedMac[i], sizeof(snaps[i].mac) - 1);
+            snaps[i].mac[sizeof(snaps[i].mac) - 1] = '\0';
+            strncpy(snaps[i].name, _bleTrackedName[i], sizeof(snaps[i].name) - 1);
+            snaps[i].name[sizeof(snaps[i].name) - 1] = '\0';
+            snaps[i].rssi   = _bleTrackedRssi[i];
+            snaps[i].distM  = _bleTrackedDistM[i];
+            snaps[i].seenMs = _bleTrackedSeenMs[i];
+        }
+        xSemaphoreGive(_bleMutex);
+    } else {
+        return;   // mutex contended — skip this publish, next loop tick will retry
+    }
+
     // Publish one MQTT message per tracked beacon — skip stale (> 10 s) or unseen
     uint32_t now = millis();
-    for (uint8_t i = 0; i < _bleTrackedCount; i++) {
-        if (_bleTrackedMac[i][0] == '\0' || _bleTrackedSeenMs[i] == 0) continue;
-        if (now - _bleTrackedSeenMs[i] > 10000UL) continue;
+    for (uint8_t i = 0; i < snapCount; i++) {
+        if (snaps[i].mac[0] == '\0' || snaps[i].seenMs == 0) continue;
+        if (now - snaps[i].seenMs > 10000UL) continue;
 
         JsonDocument doc;
-        doc["mac"]    = _bleTrackedMac[i];
-        doc["rssi"]   = _bleTrackedRssi[i];
-        doc["dist_m"] = serialized(String(_bleTrackedDistM[i], 1));
-        doc["name"]   = _bleTrackedName[i];
+        doc["mac"]    = snaps[i].mac;
+        doc["rssi"]   = snaps[i].rssi;
+        doc["dist_m"] = serialized(String(snaps[i].distM, 1));
+        doc["name"]   = snaps[i].name;
 
         mqttPublishJson("ble", doc);
     }

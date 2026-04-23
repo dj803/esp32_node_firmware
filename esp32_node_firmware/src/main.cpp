@@ -606,6 +606,11 @@ void loop() {
                     ledSetPattern(LedPattern::ERROR);
                     CredentialStore::setCredStale(true);
                     CredentialStore::incrementRestartCount(RestartReason::CRED_BAD);
+                    // (v0.3.36) Intentional final-drain delay: gives the
+                    // log line above + the NVS write of the cred-stale flag
+                    // time to flush before the reboot wipes RAM. Only ever
+                    // executes on the path to ESP.restart(), so the brief
+                    // starvation of BLE/ranging is bounded and one-shot.
                     delay(500);
                     ESP.restart();
                 }

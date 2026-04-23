@@ -74,6 +74,20 @@ static uint32_t               _rfidQuietUntilMs = 0;     // Suppress re-arm unti
 static char    _rfidWhitelist[RFID_MAX_WHITELIST][RFID_UID_STR_LEN] = {};
 static uint8_t _rfidWhitelistCount = 0;
 
+// (v0.3.36) Spinlock guarding all access to _rfidWhitelist[] +
+// _rfidWhitelistCount. The mutators (rfidWhitelistAdd/Remove) are called
+// from MQTT command handlers that run on the async_tcp task; the reader
+// (rfidWhitelistContains) is called from rfidLoop() on the main task when
+// a card is read. Without this, a card-present callback racing a
+// cmd/rfid/whitelist add could read past _rfidWhitelistCount or read a
+// half-overwritten UID slot.
+//
+// Critical sections are short (≤8 strncmp's of a 9-byte string) and
+// contain no I/O. NVS writes from _rfidWhitelistSave() snapshot the
+// whitelist UNDER the mux first, then write the snapshot from outside
+// the critical section so we don't hold the mux during flash I/O.
+static portMUX_TYPE _rfidWhitelistMux = portMUX_INITIALIZER_UNLOCKED;
+
 // ── Playground state (v0.3.17) ───────────────────────────────────────────────
 // The module spends virtually all its time in RfidMode::IDLE. A single
 // cmd/rfid/program or cmd/rfid/read_block transitions it into a transient
@@ -103,17 +117,27 @@ static void rfidNormaliseUid(char* uid) {
 // ── Whitelist NVS helpers ─────────────────────────────────────────────────────
 
 static void _rfidWhitelistSave() {
+    // (v0.3.36) Snapshot under the mux, then write the snapshot to NVS
+    // from outside the critical section. Holding the mux across NVS flash
+    // I/O would block card reads for tens of ms.
+    char    snapshot[RFID_MAX_WHITELIST][RFID_UID_STR_LEN];
+    uint8_t snapshotCount;
+    portENTER_CRITICAL(&_rfidWhitelistMux);
+    snapshotCount = _rfidWhitelistCount;
+    memcpy(snapshot, _rfidWhitelist, sizeof(snapshot));
+    portEXIT_CRITICAL(&_rfidWhitelistMux);
+
     Preferences p;
     p.begin(RFID_NVS_NAMESPACE, false);
     // NvsPutIfChanged skips writes when the slot already holds the same UID.
     // Whitelist persists across boots, so repeat calls with an unchanged list
     // (e.g. after a retained MQTT cmd/rfid/whitelist replay on reconnect)
     // should not re-write every slot.
-    NvsPutIfChanged(p, "count", (uint8_t)_rfidWhitelistCount);
-    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+    NvsPutIfChanged(p, "count", (uint8_t)snapshotCount);
+    for (uint8_t i = 0; i < snapshotCount; i++) {
         char key[4];
         snprintf(key, sizeof(key), "u%d", i);
-        NvsPutIfChanged(p, key, _rfidWhitelist[i]);
+        NvsPutIfChanged(p, key, snapshot[i]);
     }
     p.end();
 }
@@ -137,22 +161,48 @@ void rfidWhitelistLoad() {
 
 // ── Whitelist public API ──────────────────────────────────────────────────────
 
+// (v0.3.36) All three functions take _rfidWhitelistMux to prevent the
+// reader (rfidLoop on main task, calling Contains via the published-card
+// path) from racing the mutators (MQTT cmd/rfid/whitelist on async_tcp).
+// Save is called OUTSIDE the critical section by Add/Remove because
+// _rfidWhitelistSave snapshots the array under its own mux acquire and
+// then performs flash I/O without holding the mux.
+
 static bool rfidWhitelistContains(const char* uid) {
+    bool found = false;
+    portENTER_CRITICAL(&_rfidWhitelistMux);
     for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
-        if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) return true;
+        if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) { found = true; break; }
     }
-    return false;
+    portEXIT_CRITICAL(&_rfidWhitelistMux);
+    return found;
 }
 
 bool rfidWhitelistAdd(const char* uid) {
-    if (_rfidWhitelistCount >= RFID_MAX_WHITELIST) return false;
-    if (rfidWhitelistContains(uid)) return true;   // already present — idempotent
-    strlcpy(_rfidWhitelist[_rfidWhitelistCount++], uid, RFID_UID_STR_LEN);
-    _rfidWhitelistSave();
-    return true;
+    bool needSave = false;
+    bool ok       = false;
+    portENTER_CRITICAL(&_rfidWhitelistMux);
+    // Inline duplicate-check to avoid recursive mux acquire from Contains.
+    bool duplicate = false;
+    for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
+        if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) { duplicate = true; break; }
+    }
+    if (duplicate) {
+        ok = true;   // already present — idempotent
+    } else if (_rfidWhitelistCount < RFID_MAX_WHITELIST) {
+        strlcpy(_rfidWhitelist[_rfidWhitelistCount++], uid, RFID_UID_STR_LEN);
+        ok       = true;
+        needSave = true;
+    }
+    portEXIT_CRITICAL(&_rfidWhitelistMux);
+    if (needSave) _rfidWhitelistSave();
+    return ok;
 }
 
 bool rfidWhitelistRemove(const char* uid) {
+    bool needSave = false;
+    bool ok       = false;
+    portENTER_CRITICAL(&_rfidWhitelistMux);
     for (uint8_t i = 0; i < _rfidWhitelistCount; i++) {
         if (strncmp(_rfidWhitelist[i], uid, RFID_UID_STR_LEN) == 0) {
             // Compact array: overwrite with last entry
@@ -160,11 +210,14 @@ bool rfidWhitelistRemove(const char* uid) {
                 memcpy(_rfidWhitelist[i], _rfidWhitelist[_rfidWhitelistCount - 1],
                        RFID_UID_STR_LEN);
             memset(_rfidWhitelist[--_rfidWhitelistCount], 0, RFID_UID_STR_LEN);
-            _rfidWhitelistSave();
-            return true;
+            ok       = true;
+            needSave = true;
+            break;
         }
     }
-    return false;
+    portEXIT_CRITICAL(&_rfidWhitelistMux);
+    if (needSave) _rfidWhitelistSave();
+    return ok;
 }
 
 void rfidWhitelistClear() {

@@ -107,10 +107,16 @@ static inline void apTouchAdminActivity() {
 // (cleanest path back to OPERATIONAL — no portal/HTTPS teardown complexity).
 static void apStaGotIpHandler(WiFiEvent_t event, WiFiEventInfo_t /*info*/) {
     if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-        _apShouldExit = true;
-        _apExitAtMs   = millis() + AP_STA_RECONNECT_GRACE_MS;
-        LOG_I("AP Portal", "STA got IP — scheduling restart in %d ms",
-              AP_STA_RECONNECT_GRACE_MS);
+        // (v0.3.36) Latch — only the FIRST GOT_IP after entering AP mode
+        // schedules the restart. A flapping router that produces two GOT_IP
+        // events in quick succession would otherwise overwrite _apExitAtMs
+        // with a fresh deadline and slip the restart window indefinitely.
+        if (!_apShouldExit) {
+            _apShouldExit = true;
+            _apExitAtMs   = millis() + AP_STA_RECONNECT_GRACE_MS;
+            LOG_I("AP Portal", "STA got IP — scheduling restart in %d ms",
+                  AP_STA_RECONNECT_GRACE_MS);
+        }
     }
 }
 

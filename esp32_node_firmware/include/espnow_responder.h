@@ -11,6 +11,17 @@
 #include "led.h"
 
 #include "espnow_ranging_fwd.h"   // espnowRangingObserve() — defined in espnow_ranging.h
+#include <freertos/FreeRTOS.h>   // (v0.3.36) portMUX_TYPE for SMP-safe shared state
+
+// (v0.3.36) Single spinlock guarding all cross-task shared state in this
+// module: _brokerRespReceived/_otaUrlRespReceived/_siblingBrokerHost/Port
+// (written from ESP-NOW Wi-Fi callback context, possibly Core 1 under
+// coexistence; read from main loop on Core 0); _responderHealthFlags
+// (written from MQTT/OTA/ESP-NOW handlers across both cores); _rateBuckets[]
+// (read+modify+write from concurrent ESP-NOW receives). Single mux is
+// fine — these are sub-microsecond operations. portMUX is the same
+// idiom Espressif uses for IDF-internal SMP-shared globals.
+static portMUX_TYPE _respMux = portMUX_INITIALIZER_UNLOCKED;
 
 // =============================================================================
 // espnow_responder.h  —  Serve credential bundles to bootstrapping siblings
@@ -58,9 +69,15 @@ static volatile uint8_t _responderHealthFlags = 0x00;
 
 // Set or clear a single health flag bit. Safe to call from any context.
 // bit: 0=WiFi, 1=MQTT, 2=GitHub
+//
+// (v0.3.36) Wrapped in _respMux. The bitwise OR/AND is a read-modify-write
+// on a shared byte; without the mux, two concurrent calls from different
+// tasks (e.g. MQTT handler vs OTA handler) can lose one of the bit changes.
 inline void responderSetHealthFlag(uint8_t bit, bool set) {
+    portENTER_CRITICAL(&_respMux);
     if (set) _responderHealthFlags |=  (uint8_t)(1u << bit);
     else      _responderHealthFlags &= (uint8_t)~(1u << bit);
+    portEXIT_CRITICAL(&_respMux);
 }
 
 
@@ -101,8 +118,17 @@ static uint8_t _rateBucketNext = 0;   // Round-robin eviction pointer
 // Returns true (rate-limited) if the MAC has no tokens left.
 // Otherwise consumes one token and returns false (caller may serve).
 // Side-effects: refills tokens based on elapsed time before consuming.
+//
+// (v0.3.36) Whole search + refill + consume is wrapped in _respMux.
+// Concurrent ESP-NOW receives from two different siblings would otherwise
+// both read the same stale token count and both pass the rate gate against
+// the same bucket. The critical section is short (table is 8 slots, no I/O).
 static bool responderIsRateLimited(const uint8_t* mac) {
     uint32_t now = millis();
+    bool rateLimited = false;
+    bool handled     = false;
+
+    portENTER_CRITICAL(&_respMux);
 
     // Search for an existing bucket for this MAC
     for (int i = 0; i < RATE_MAC_SLOTS; i++) {
@@ -115,17 +141,25 @@ static bool responderIsRateLimited(const uint8_t* mac) {
             _rateBuckets[i].lastRefillMs = now;
         }
 
-        if (_rateBuckets[i].tokens == 0) return true;   // bucket empty — drop
-        _rateBuckets[i].tokens--;
-        return false;   // token consumed — allow
+        if (_rateBuckets[i].tokens == 0) {
+            rateLimited = true;     // bucket empty — drop
+        } else {
+            _rateBuckets[i].tokens--;   // token consumed — allow
+        }
+        handled = true;
+        break;
     }
 
-    // MAC not seen before — evict round-robin slot, init with (CAP-1) tokens
-    memcpy(_rateBuckets[_rateBucketNext].mac, mac, 6);
-    _rateBuckets[_rateBucketNext].tokens       = RATE_BUCKET_CAP - 1;  // use 1 now
-    _rateBuckets[_rateBucketNext].lastRefillMs = now;
-    _rateBucketNext = (_rateBucketNext + 1) % RATE_MAC_SLOTS;
-    return false;   // allowed (first request from this MAC)
+    if (!handled) {
+        // MAC not seen before — evict round-robin slot, init with (CAP-1) tokens
+        memcpy(_rateBuckets[_rateBucketNext].mac, mac, 6);
+        _rateBuckets[_rateBucketNext].tokens       = RATE_BUCKET_CAP - 1;  // use 1 now
+        _rateBuckets[_rateBucketNext].lastRefillMs = now;
+        _rateBucketNext = (_rateBucketNext + 1) % RATE_MAC_SLOTS;
+    }
+
+    portEXIT_CRITICAL(&_respMux);
+    return rateLimited;
 }
 
 void espnowResponderSetBundle(const CredentialBundle& b) {
@@ -318,7 +352,6 @@ static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
     if (len < 2) return;
     if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
     if (len < 10) return;              // 2 header + 6 mac + 1 len_byte + ≥1 char
-    if (_otaUrlRespReceived) return;   // Already accepted one — first response wins
     uint8_t urlLen = data[8];
     if (urlLen == 0 || urlLen > 200) return;
     if (len < (int)(9 + urlLen)) return;
@@ -326,10 +359,21 @@ static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
         LOG_W("ESP-NOW", "OTA URL response rejected — malformed or non-http(s)");
         return;
     }
-    memcpy(_receivedOtaUrl, data + 9, urlLen);
-    _receivedOtaUrl[urlLen] = '\0';
-    _otaUrlRespReceived = true;
-    LOG_I("ESP-NOW", "OTA URL received from sibling: %s", _receivedOtaUrl);
+    // (v0.3.36) Atomic check-and-write under _respMux. Without this, two
+    // concurrent OTA_URL_RESP arrivals from different siblings could both
+    // see _otaUrlRespReceived==false, both copy their URL into the same
+    // buffer (memcpy interleave), and the consumer would read a torn URL.
+    portENTER_CRITICAL(&_respMux);
+    bool alreadyAccepted = _otaUrlRespReceived;
+    if (!alreadyAccepted) {
+        memcpy(_receivedOtaUrl, data + 9, urlLen);
+        _receivedOtaUrl[urlLen] = '\0';
+        _otaUrlRespReceived = true;
+    }
+    portEXIT_CRITICAL(&_respMux);
+    if (!alreadyAccepted) {
+        LOG_I("ESP-NOW", "OTA URL received from sibling: %s", _receivedOtaUrl);
+    }
 }
 
 
@@ -342,8 +386,13 @@ static void onEspNowOtaUrlResponse(const esp_now_recv_info_t* recvInfo,
 // Called by ota.h when a GitHub fetch fails. ESP-NOW MUST already be initialized
 // (espnowResponderStart() was called during OPERATIONAL setup).
 bool espnowRequestOtaUrl() {
+    // (v0.3.36) Atomic reset of the response state under _respMux. Prevents
+    // the requester from racing with a still-in-flight callback from a
+    // previous request that arrived just after the deadline.
+    portENTER_CRITICAL(&_respMux);
     _otaUrlRespReceived = false;
     memset(_receivedOtaUrl, 0, sizeof(_receivedOtaUrl));
+    portEXIT_CRITICAL(&_respMux);
 
     // Broadcast peer may already exist from responder setup; add it if not
     esp_now_peer_info_t bcastPeer = {};
@@ -467,18 +516,27 @@ static void onEspNowBrokerRequest(const esp_now_recv_info_t* recvInfo,
 // when this node has broadcast a BROKER_REQ and a sibling replies.
 static void onEspNowBrokerResponse(const esp_now_recv_info_t* recvInfo,
                                    const uint8_t* data, int len) {
-    if (_brokerRespReceived) return;   // first response wins
     if (len < 2) return;
     if (data[1] != ESPNOW_PROTOCOL_VERSION) return;
     if (len < 5) return;               // need at least 1 byte host + 2 byte port
     uint8_t hostLen = data[2];
     if (hostLen == 0 || hostLen > 63) return;
     if (len < (int)(3 + hostLen + 2)) return;
-    memcpy(_siblingBrokerHost, data + 3, hostLen);
-    _siblingBrokerHost[hostLen] = '\0';
-    memcpy(&_siblingBrokerPort, data + 3 + hostLen, 2);
-    _brokerRespReceived = true;
-    LOG_I("Responder", "BROKER_RESP from sibling: %s:%d", _siblingBrokerHost, _siblingBrokerPort);
+    // (v0.3.36) Atomic check-and-write under _respMux. Same rationale as
+    // onEspNowOtaUrlResponse: prevents a second concurrent BROKER_RESP from
+    // racing with the first and corrupting the host string mid-copy.
+    portENTER_CRITICAL(&_respMux);
+    bool alreadyAccepted = _brokerRespReceived;
+    if (!alreadyAccepted) {
+        memcpy(_siblingBrokerHost, data + 3, hostLen);
+        _siblingBrokerHost[hostLen] = '\0';
+        memcpy(&_siblingBrokerPort, data + 3 + hostLen, 2);
+        _brokerRespReceived = true;
+    }
+    portEXIT_CRITICAL(&_respMux);
+    if (!alreadyAccepted) {
+        LOG_I("Responder", "BROKER_RESP from sibling: %s:%d", _siblingBrokerHost, _siblingBrokerPort);
+    }
 }
 
 
@@ -488,9 +546,13 @@ static void onEspNowBrokerResponse(const esp_now_recv_info_t* recvInfo,
 // Returns true and populates host/port if a sibling responded.
 // ESP-NOW MUST already be initialized (espnowResponderStart() called).
 bool espnowGetSiblingBroker(char* hostOut, size_t hostOutLen, uint16_t* portOut) {
+    // (v0.3.36) Atomic reset under _respMux — same rationale as
+    // espnowRequestOtaUrl above.
+    portENTER_CRITICAL(&_respMux);
     _brokerRespReceived = false;
     memset(_siblingBrokerHost, 0, sizeof(_siblingBrokerHost));
     _siblingBrokerPort = 0;
+    portEXIT_CRITICAL(&_respMux);
 
     // Ensure the broadcast peer exists on the current channel
     esp_now_peer_info_t bcastPeer = {};
