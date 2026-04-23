@@ -76,6 +76,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_log.h>   // (v0.4.02) esp_log_level_set — silence Preferences spam
 
 #include "config.h"
 #include "logging.h"
@@ -95,6 +96,12 @@
 #ifdef BLE_ENABLED
 #include "ble.h"           // MUST come last — uses mqttPublish from mqtt_client.h
 #endif
+
+// (v0.4.02) Compile-time guards on third-party library APIs. Pure
+// static_assert + #error block; no runtime cost. Catches a silent
+// signature drift (e.g. accidental NimBLE / AsyncMqttClient version bump
+// in platformio.ini) at build time rather than in the field.
+#include "lib_api_assert.h"
 
 
 // ── State machine definition ──────────────────────────────────────────────────
@@ -208,6 +215,19 @@ void setup() {
     ws2812TaskStart();
     Serial.println();
     LOG_I("BOOT", "ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
+
+    // (v0.4.02) Silence the arduino-esp32 Preferences class's E-level
+    // "nvs_open failed: NOT_FOUND" log lines. They fire INSIDE prefs.begin()
+    // before our isKey() / return-value checks can run, every boot, for any
+    // namespace that does not yet exist (post-OTA-validation namespace, BLE
+    // tracked-MAC namespace before any cmd/ble/track, etc.). All callers
+    // already handle begin() returning false gracefully — this just stops
+    // the harmless errors from drowning real ones in the boot log.
+    //
+    // Real Preferences corruption surfaces via getString() returning ""
+    // (which we already gate on) and via nvs_flash_init() at the IDF level
+    // (independent log channel — not silenced).
+    esp_log_level_set("Preferences", ESP_LOG_NONE);
 
     // MAC address is readable only after Wi-Fi mode is set.
     // Register WiFiEvent early so it is active before any WiFi.begin() call.

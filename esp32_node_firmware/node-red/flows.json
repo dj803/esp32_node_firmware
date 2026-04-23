@@ -244,6 +244,16 @@
     "groupType": "default"
   },
   {
+    "id": "boot_history_grp",
+    "type": "ui-group",
+    "name": "Recent Abnormal Reboots",
+    "page": "hb_ui_page",
+    "width": "12",
+    "order": 3,
+    "showTitle": true,
+    "groupType": "default"
+  },
+  {
     "id": "espnow_ui_tab",
     "type": "ui-page",
     "name": "ESP-NOW Tracking",
@@ -2514,7 +2524,8 @@
     "y": 320,
     "wires": [
       [
-        "67bf8dcee18c68fb"
+        "67bf8dcee18c68fb",
+        "boot_history_fn"
       ]
     ]
   },
@@ -3320,6 +3331,38 @@
     "className": "",
     "x": 100,
     "y": 500,
+    "wires": [[]]
+  },
+  {
+    "id": "boot_history_fn",
+    "type": "function",
+    "z": "0cc8e394107eb034",
+    "name": "Boot history (filter abnormal reboots)",
+    "func": "// Tap on the broadcast .../status mqtt-in. Filter for boot announcements\n// where boot_reason is anything other than 'poweron' (the expected reason\n// after a manual press of EN/RST or a fresh power-on). Accumulate the last\n// 20 abnormal reboots in flow.context so a deploy doesn't wipe history.\ntry {\n    var p = msg.payload || {};\n    if (p.event !== 'boot') return null;\n    var reason = p.boot_reason || '';\n    if (!reason || reason === 'poweron') return null;\n\n    var devices = global.get('hb_devices') || {};\n    var name = (devices[p.device_id] && devices[p.device_id].name) || (p.node_name || (p.device_id || 'unknown').slice(0,8) + '...');\n\n    var entry = {\n        ts:        new Date().toLocaleString(),\n        ts_ms:     Date.now(),\n        device:    name,\n        uuid:      p.device_id || '',\n        firmware:  p.firmware_version || '',\n        reason:    reason\n    };\n    var history = flow.get('boot_history') || [];\n    history.unshift(entry);\n    if (history.length > 20) history.length = 20;\n    flow.set('boot_history', history);\n    return { payload: history };\n} catch(e) { node.error('boot_history_fn: ' + e.message, msg); return null; }",
+    "outputs": 1,
+    "x": 380,
+    "y": 380,
+    "wires": [["boot_history_tpl"]]
+  },
+  {
+    "id": "boot_history_tpl",
+    "type": "ui-template",
+    "z": "0cc8e394107eb034",
+    "group": "boot_history_grp",
+    "page": "",
+    "ui": "",
+    "name": "Boot history table",
+    "order": 1,
+    "width": "12",
+    "height": "0",
+    "head": "",
+    "format": "<template>\n  <div style=\"padding:8px\">\n    <div v-if=\"!entries.length\" style=\"color:#78909c;text-align:center;padding:24px;font-size:13px\">\n      No abnormal reboots seen since this dashboard loaded.\n      <div style=\"font-size:11px;margin-top:6px;color:#546e7a\">\n        (poweron / external resets are filtered out — only software, panic, watchdog, brownout etc. are shown.)\n      </div>\n    </div>\n    <div v-else>\n      <div style=\"display:grid;grid-template-columns:120px 1fr 80px 110px 90px;gap:8px;padding:6px 12px;color:#78909c;font-size:11px;font-weight:bold;border-bottom:1px solid #455a64\">\n        <div>When</div><div>Device</div><div>FW</div><div>Reason</div><div></div>\n      </div>\n      <div v-for=\"(e, i) in entries\" :key=\"i\"\n           style=\"display:grid;grid-template-columns:120px 1fr 80px 110px 90px;gap:8px;padding:8px 12px;align-items:center;border-bottom:1px solid #263238;font-size:12px\">\n        <div style=\"color:#90a4ae;font-family:monospace\">{{ shortTime(e.ts) }}</div>\n        <div style=\"color:#eceff1;font-weight:bold\">{{ e.device }}</div>\n        <div style=\"color:#78909c;font-family:monospace\">{{ e.firmware }}</div>\n        <div :style=\"{ color: reasonColor(e.reason), fontWeight:'bold', fontFamily:'monospace' }\">{{ e.reason }}</div>\n        <div :style=\"{ background: reasonColor(e.reason), color:'#000', padding:'2px 6px', borderRadius:'3px', fontSize:'10px', fontWeight:'bold', textAlign:'center', textTransform:'uppercase' }\">\n          {{ severity(e.reason) }}\n        </div>\n      </div>\n    </div>\n  </div>\n</template>\n<script>\nexport default {\n  data() { return { entries: [] }; },\n  watch: {\n    msg(nv) {\n      if (!nv) return;\n      if (Array.isArray(nv.payload)) this.entries = nv.payload;\n    }\n  },\n  methods: {\n    shortTime(s) {\n      if (!s) return '';\n      var parts = s.split(', ');\n      return parts.length > 1 ? parts[1] : s;\n    },\n    reasonColor(r) {\n      if (r === 'panic' || r === 'brownout') return '#ef5350';\n      if (r === 'int_wdt' || r === 'task_wdt' || r === 'other_wdt') return '#ffa726';\n      if (r === 'software') return '#42a5f5';\n      if (r === 'external') return '#90a4ae';\n      if (r === 'deepsleep') return '#7e57c2';\n      return '#bdbdbd';\n    },\n    severity(r) {\n      if (r === 'panic' || r === 'brownout') return 'CRIT';\n      if (r === 'int_wdt' || r === 'task_wdt' || r === 'other_wdt') return 'WDT';\n      if (r === 'software') return 'INFO';\n      if (r === 'external') return 'MANUAL';\n      if (r === 'deepsleep') return 'WAKE';\n      return '?';\n    }\n  }\n};\n</script>",
+    "storeOutMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 700,
+    "y": 380,
     "wires": [[]]
   }
 ]

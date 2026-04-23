@@ -111,10 +111,16 @@ static volatile SleepKind _mqttSleepKind      = SleepKind::NONE;
 static volatile uint32_t _mqttModemSleepUntilMs = 0;          // Non-zero: exit modem sleep when millis() >= this value
 
 static String           _deviceId;                        // UUID from DeviceId::get(), set in mqttBegin()
-static String           _mqttClientId;                    // kept alive so setClientId()'s raw ptr stays valid
-static String           _mqttHost;                        // kept alive so setServer()'s raw ptr stays valid
-static String           _mqttWillTopic;                   // kept alive so setWill()'s raw ptr stays valid
-static CredentialBundle _mqttBundle;                      // Copy of credentials, kept for rotation key access
+// LIFETIME: the next four globals are passed by .c_str() / raw-pointer to
+// AsyncMqttClient setters that STORE the pointer without copying. They MUST
+// remain alive (module-static) for the lifetime of _mqttClient. See
+// docs/STRING_LIFETIME.md for the codebase-wide convention. Do not move
+// these to function-local scope or pass a temporary in their place — that
+// is the v0.1.7 / v0.3.30 / v0.3.31 use-after-free shape recurring.
+static String           _mqttClientId;                    // LIFETIME: setClientId()
+static String           _mqttHost;                        // LIFETIME: setServer()
+static String           _mqttWillTopic;                   // LIFETIME: setWill()
+static CredentialBundle _mqttBundle;                      // LIFETIME: setCredentials() (mqtt_username/password)
 
 
 // ── Topic builders ─────────────────────────────────────────────────────────────
