@@ -9,6 +9,13 @@
 #include "semver.h"   // semverIsNewer() — extracted to allow host-side unit testing
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 #include "led.h"
+
+// (v0.3.34) Forward-declared from ota_validation.h. Cannot #include directly
+// because the validation module needs to be ordered after mqtt_client.h
+// (uses mqttPublishStatus) but before ota.h (provides otaValidationArmRollback
+// for the ESP.restart path below). Decoupling via forward decl avoids the
+// circular include.
+void otaValidationArmRollback(const char* targetVersion);
 #ifdef BLE_ENABLED
 #include <NimBLEDevice.h>   // NimBLEDevice::deinit() — free BLE heap before OTA flash write
 #endif
@@ -360,6 +367,11 @@ void otaCheckNow(bool isSiblingRetry) {
         LOG_I("OTA", "Flash succeeded - restarting");
         mqttPublishStatus(FwEvent::OTA_SUCCESS,
             ("\"new_version\":\"" + targetVersion + "\"").c_str());
+        // (v0.3.34) Arm the post-OTA validation gate. The NEW firmware reads
+        // this NVS flag in otaValidationCheckBoot() — if it sees its own
+        // FIRMWARE_VERSION as the pending version, it sets the validation
+        // deadline and rolls back if MQTT doesn't come back up in time.
+        otaValidationArmRollback(targetVersion.c_str());
         delay(500);     // Give the MQTT publish time to be sent before disconnect
         ESP.restart();  // Boot into the new firmware — watchdog state doesn't matter
     } else {

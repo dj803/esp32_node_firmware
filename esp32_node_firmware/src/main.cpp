@@ -89,6 +89,7 @@
 #include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
+#include "ota_validation.h"  // Phase 2 / v0.3.34 — post-OTA self-test + rollback
 #include "espnow_ranging.h"  // MUST come after mqtt_client.h — uses mqttPublish/mqttConnected
 #include "rfid.h"          // MUST come after mqtt_client.h AND ws2812.h
 #ifdef BLE_ENABLED
@@ -218,6 +219,11 @@ void setup() {
     // Falls back to config.h compile-time defaults for any field not yet saved.
     // Must run BEFORE mqttBegin() (topic building) and otaCheckNow() (OTA URL).
     AppConfigStore::load();
+
+    // (v0.3.34) Detect post-OTA boot. If the running partition is in
+    // PENDING_VERIFY state, set a deadline; otaValidationConfirmHealth() must
+    // be called before it expires or the bootloader will roll us back.
+    otaValidationCheckBoot();
 
     // ─────────────────────────────────────────────────────────────────────────
     // STATE: BOOT
@@ -636,6 +642,11 @@ void loop() {
 
     // ── OTA version check ─────────────────────────────────────────────────────
     otaLoop();
+
+    // (v0.3.34) Validate / roll back if we're inside the post-OTA window.
+    // No-op outside the window (and on boots where the partition wasn't in
+    // PENDING_VERIFY state to begin with).
+    otaValidationTick();
 
     // ── ESP-NOW ranging ───────────────────────────────────────────────────────
     espnowRangingLoop();

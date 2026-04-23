@@ -22,6 +22,11 @@
 #include "ota_fwd.h"     // otaCheckNow(), otaTrigger()
 #include "ws2812_fwd.h"  // ws2812PostEvent(), ws2812PublishState()
 
+// (v0.3.34) Forward-declared from ota_validation.h. Cannot #include directly
+// because ota_validation.h depends on mqttPublishStatus, defined in this file.
+void otaValidationOnMqttConnect();
+void otaValidationConfirmHealth();
+
 // rfid.h whitelist API — rfid.h is included AFTER mqtt_client.h.
 // These cannot move to rfid_fwd.h without pulling in RFID_UID_STR_LEN,
 // so they remain here where config.h (which defines it) is already included.
@@ -1064,6 +1069,14 @@ static void onMqttConnect(bool sessionPresent) {
     // that subscribe after boot still see this device's last known state.
     mqttPublishStatus(FwEvent::BOOT);
     LOG_I("MQTT", "Boot announcement published (v" FIRMWARE_VERSION ")");
+
+    // (v0.3.34) If this is a post-OTA boot, announce OTA_VALIDATING and call
+    // mark_app_valid_cancel_rollback() now — MQTT is healthy enough to publish
+    // the boot announcement, which is the strongest signal we have that the
+    // network stack works. ota_validation.h gates this so it's a no-op outside
+    // the post-OTA window.
+    otaValidationOnMqttConnect();
+    otaValidationConfirmHealth();
 
     // Re-publish current LED strip state (retained) so Node-RED re-syncs after
     // a broker restart or reconnect without requiring a reboot.
