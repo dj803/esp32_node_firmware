@@ -99,7 +99,13 @@ inline void otaValidationCheckBoot() {
     {
         Preferences prefs;
         if (prefsTryBegin(prefs, OTA_VALIDATION_NVS_NS, true)) {   // (v0.4.03) silent if missing
-            String pendingVer = prefs.getString(OTA_VALIDATION_NVS_KEY, "");
+            // (v0.4.04) isKey() pre-check suppresses '[E] getString(): nvs_get_str
+            // len fail: pending_ver NOT_FOUND' — fires every boot after a
+            // successful validation (key is cleared in otaValidationConfirmHealth
+            // so the namespace exists but the key does not).
+            String pendingVer = prefs.isKey(OTA_VALIDATION_NVS_KEY)
+                                ? prefs.getString(OTA_VALIDATION_NVS_KEY, "")
+                                : String();
             prefs.end();
             if (pendingVer.length() > 0) {
                 if (pendingVer == FIRMWARE_VERSION) {
