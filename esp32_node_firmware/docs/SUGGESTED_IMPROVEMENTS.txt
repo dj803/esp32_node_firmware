@@ -237,3 +237,106 @@ OTA — v0.3.28 follow-ups                                   (flagged 2026-04-22
                  immediately after "Update available" — before MQTT/BLE
                  teardown — so future freezes can be correlated with heap state
                  at the moment of OTA initiation, not just after teardown.
+
+────────────────────────────────────────────────────────────────────────────────
+OTA bulletproofing — v0.3.33 → v0.3.35 shipped, v0.4.0 deferred  (2026-04-23)
+────────────────────────────────────────────────────────────────────────────────
+
+Reference: see git log v0.3.32..v0.3.35 for the 3-phase OTA-bulletproofing
+rollout that closed most of the gaps from the OTA-failure investigation.
+Phases 1+2+3 shipped and are running on Alpha + Bravo + Charlie.
+
+  Phase 1 (v0.3.33): pre-flight heap gate, hardcoded URL fallback chain,
+                     boot_reason field in retained status, stage-tagged OTA
+                     failure events, AP-mode 5-min idle timeout.
+  Phase 2 (v0.3.34): NVS-flag-based post-OTA validation. The OLD firmware
+                     writes the incoming version to NVS just before
+                     ESP.restart(); the NEW firmware reads it on boot,
+                     arms a 5-min validation deadline, and calls
+                     esp_ota_mark_app_invalid_rollback_and_reboot() if
+                     MQTT doesn't recover in time. Works without bootloader
+                     ROLLBACK_ENABLE — manually marks the running partition
+                     ABORTED and boots the previous valid OTA slot.
+  Phase 3 (v0.3.35): replaced ESP32-OTA-Pull's blocking writer with
+                     esp_https_ota for the actual flash. partial_http_download
+                     enables HTTP Range support so a stalled download can
+                     resume on retry. Custom ArduinoJson manifest re-fetch
+                     to extract the .bin URL (ESP32-OTA-Pull doesn't expose
+                     it after Pass 1).
+
+────────────────────────────────────────────────────────────────────────────────
+Phase 4 — DEFERRED items                                          (2026-04-23)
+────────────────────────────────────────────────────────────────────────────────
+
+25. Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
+    GAP:      Phase 2's NVS-flag rollback only fires if our app code runs
+              far enough to read NVS and arm the deadline. If a new firmware
+              hard-crashes during early boot (before app_main / setup),
+              there's no auto-revert — the device boot-loops the bad app.
+              The bootloader option closes this last gap by making OTA'd
+              partitions enter PENDING_VERIFY state; bootloader auto-reverts
+              after N consecutive boots without the app calling
+              esp_ota_mark_app_valid_cancel_rollback().
+    BLOCKED:  Tested 2026-04-23. Adding `custom_sdkconfig =
+              CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` to platformio.ini
+              triggers a full pioarduino framework rebuild (~22 min). The
+              rebuild produces a framework that's missing arduino-esp32's
+              __wrap_log_printf symbol — NetworkClientSecure (used by our
+              HTTPS OTA path) calls log_printf which the platform normally
+              wraps via -Wl,--wrap=log_printf to redirect through Arduino's
+              HAL log macros. The wrap directive is injected by the
+              platform's build script and is NOT preserved through the
+              custom_sdkconfig rebuild. Adding -Wl,--wrap=log_printf to
+              build_flags doesn't help because the wrap target itself
+              (Arduino's log_printf implementation) is missing from the
+              rebuilt framework, not just the wrap directive.
+    REPRO:    1. Place a copy of min_spiffs.csv in esp32_node_firmware/
+                 (pioarduino's custom_sdkconfig flow looks for it there).
+              2. Uncomment the custom_sdkconfig block in platformio.ini.
+              3. Run `pio run -e esp32dev`.
+              4. Wait ~22 min for framework rebuild.
+              5. Build fails at link step:
+                 "undefined reference to __wrap_log_printf" (multiple sites
+                 in NetworkClientSecure/src/ssl_client.cpp).
+    PATHS:    a) File a pioarduino issue, wait for upstream fix.
+              b) Provide our own __wrap_log_printf stub in main.cpp that
+                 vfprintf's to Serial — workaround, may break Arduino HAL
+                 log level filtering.
+              c) Switch to platform-espressif32 (the official platform)
+                 instead of pioarduino — but it ships arduino-esp32 2.x,
+                 not the 3.x our code targets.
+              d) Skip pioarduino's custom_sdkconfig and build a custom
+                 bootloader manually via ESP-IDF + flash-only-bootloader
+                 step in CI. Significant build pipeline rework.
+    PRIORITY: Low — Phase 2 covers ~95% of the safety-net value. The
+              remaining gap (early-boot crash) is rare and our existing
+              bootloader does fall back to the previous valid app on a
+              boot-time partition-validation failure (just doesn't auto-
+              detect "valid app boots but is broken").
+
+26. Recovery partition app
+    GAP:      If BOTH ota_0 and ota_1 ever end up corrupted (very rare —
+              would need a botched flash + power loss), the device is
+              bricked. A recovery partition (factory app with WiFi +
+              esp_https_ota only) gives the bootloader a known-good
+              fallback that can re-flash the OTA slots from scratch.
+    BLOCKED:  Doesn't fit on 4 MB flash with our current main app size.
+              Math: nvs (20K) + otadata (8K) + recovery (~256K min) +
+              ota_0 (1.7M) + ota_1 (1.7M) = 3.69M, leaving 320K for
+              spiffs/coredump. But our main app is 1.83M (93% of the
+              standard 1.875M ota slot), so shrinking to 1.7M needs
+              ~150K of code reduction. Removing ESP32-OTA-Pull (still
+              used for Pass 1 manifest fetch) saves ~30K. Removing RFID
+              or BLE saves more but is a feature regression.
+    PATHS:    a) Move to 8 MB flash hardware. Recommended.
+              b) Slim main app: drop ESP32-OTA-Pull, replace with custom
+                 manifest fetch (50 lines using existing HTTPClient +
+                 ArduinoJson). Saves ~30 K. Combined with disabling
+                 unused FastLED palettes / NimBLE features, might reach
+                 1.7 M, but tight.
+              c) Skip recovery partition, rely on the existing bootloader
+                 fallback chain (otadata invalid → previous slot) plus
+                 Phase 2's runtime rollback.
+    PRIORITY: Low for current 3-device fleet (all serial-accessible).
+              Promote when fleet grows past ~10 devices or when nodes
+              are deployed without easy serial access.
