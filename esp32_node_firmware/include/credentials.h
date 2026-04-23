@@ -4,6 +4,7 @@
 #include <Preferences.h>   // Arduino ESP32 wrapper around ESP-IDF NVS (Non-Volatile Storage)
 #include "config.h"
 #include "nvs_utils.h"     // NvsPutIfChanged — compare-before-write wrappers
+#include "prefs_quiet.h"   // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 // =============================================================================
 // credentials.h  —  Credential bundle definition and NVS storage helpers
@@ -71,7 +72,7 @@ public:
     static bool load(CredentialBundle& out) {
         Preferences prefs;
         // Open NVS namespace in read-only mode (true = read-only)
-        if (!prefs.begin(NVS_NAMESPACE, true)) return false;
+        if (!prefsTryBegin(prefs, NVS_NAMESPACE, true)) return false;
 
         out.timestamp = prefs.getULong64("ts", 0);            // 0 = not stored
         out.source    = (CredSource)prefs.getUChar("src", 0); // default: SIBLING
@@ -132,7 +133,7 @@ public:
     // already configured this device there is no need to ask siblings for credentials.
     static bool hasPrimary() {
         Preferences prefs;
-        if (!prefs.begin(NVS_NAMESPACE, true)) return false;
+        if (!prefsTryBegin(prefs, NVS_NAMESPACE, true)) return false;
         bool primary = prefs.getUChar("src", 0) == (uint8_t)CredSource::ADMIN;
         prefs.end();
         return primary;
@@ -187,7 +188,7 @@ public:
     // close to the restart limit before attempting to connect.
     static uint8_t getRestartCount() {
         Preferences prefs;
-        if (!prefs.begin(NVS_NAMESPACE, true)) return 0;
+        if (!prefsTryBegin(prefs, NVS_NAMESPACE, true)) return 0;
         uint8_t n = prefs.getUChar("restarts", 0);
         prefs.end();
         return n;
@@ -199,7 +200,7 @@ public:
     // separately so a long router outage can't poison DEVICE_RESTART_MAX.
     static uint8_t getWifiOutageCount() {
         Preferences prefs;
-        if (!prefs.begin(NVS_NAMESPACE, true)) return 0;
+        if (!prefsTryBegin(prefs, NVS_NAMESPACE, true)) return 0;
         uint8_t n = prefs.getUChar(NVS_KEY_WIFI_OUTAGE, 0);
         prefs.end();
         return n;
@@ -241,7 +242,7 @@ public:
     // A true result forces BOOTSTRAP_REQUEST even for admin-provisioned devices.
     static bool isCredStale() {
         Preferences prefs;
-        if (!prefs.begin(NVS_NAMESPACE, true)) return false;
+        if (!prefsTryBegin(prefs, NVS_NAMESPACE, true)) return false;
         bool stale = prefs.getUChar(NVS_KEY_CRED_STALE, 0) != 0;
         prefs.end();
         return stale;

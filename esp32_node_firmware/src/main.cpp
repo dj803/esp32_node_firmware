@@ -103,6 +103,18 @@
 // in platformio.ini) at build time rather than in the field.
 #include "lib_api_assert.h"
 
+// (v0.4.03) Heap-phase logging — one-line macro callable from setup()
+// + loop() at major subsystem-init boundaries. Output format:
+//   [I][Heap] <phase>: free=12345 largest=6789
+// Tag matches the existing OTA path's "Heap at trigger" / "Heap after
+// BLE deinit" lines so field log analysis can grep one tag for all
+// memory-phase events.
+#define LOG_HEAP(phase)                                                      \
+    LOG_I("Heap", "%s: free=%u largest=%u",                                  \
+          (phase),                                                            \
+          (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),                \
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
+
 
 // ── State machine definition ──────────────────────────────────────────────────
 // The firmware progresses through these states once during setup().
@@ -216,27 +228,14 @@ void setup() {
     Serial.println();
     LOG_I("BOOT", "ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
-    // (v0.4.02) ATTEMPTED but ineffective — kept here as a tombstone so the
-    // next person doesn't re-discover this dead end. The arduino-esp32
-    // Preferences class calls log_e() which (when USE_ESP_IDF_LOG is NOT
-    // defined — the framework default) expands to log_printf() going
-    // straight to the Arduino HAL printer, NOT through esp_log_write().
-    // esp_log_level_set() therefore has no effect on these lines.
-    //
-    // To actually silence them you would need ONE of:
-    //   - Build framework with -DUSE_ESP_IDF_LOG (large blast radius — all
-    //     framework log_e calls become silenceable but the format is also
-    //     different).
-    //   - Lower CORE_DEBUG_LEVEL at build time (compile-time silence of ALL
-    //     log_e in the framework — including useful ones).
-    //   - Replace log_printf with a wrapper that filters specific patterns
-    //     (custom hook via esp_log_set_vprintf, but only routes
-    //     esp_log_write traffic — not Arduino's).
-    //   - Patch arduino-esp32 Preferences.cpp to gate the log on isKey().
-    //
-    // Documented in SUGGESTED_IMPROVEMENTS.txt #4 and FIXES_LOG.txt v0.4.02.
-    // Left as a no-op call below so the intent is visible from grep.
-    esp_log_level_set("Preferences", ESP_LOG_NONE);
+    // (v0.4.03) Preferences NOT_FOUND log spam is now suppressed structurally
+    // via prefsTryBegin() in include/prefs_quiet.h — every read-only NVS
+    // open pre-checks namespace existence via nvs_open(), so the Arduino
+    // log_e() inside Preferences::begin() is never reached when the
+    // namespace is genuinely missing. The v0.4.02 esp_log_level_set
+    // tombstone has been removed.
+
+    LOG_HEAP("after-serial");
 
     // MAC address is readable only after Wi-Fi mode is set.
     // Register WiFiEvent early so it is active before any WiFi.begin() call.
@@ -540,6 +539,7 @@ void loop() {
         if (!_servicesStarted) {
             _servicesStarted = true;
             LOG_I("BOOT", "Wi-Fi connected — starting services");
+            LOG_HEAP("after-wifi");
 
             espnowResponderSetBundle(activeBundle);
             espnowResponderStart();
@@ -558,12 +558,14 @@ void loop() {
             { LedEvent e{}; e.type = LedEventType::RESET; ws2812PostEvent(e); }
 
             mqttBegin(activeBundle, broker);
+            LOG_HEAP("after-mqtt");
 
 #ifdef RFID_ENABLED
             rfidInit();   // SPI free now that ESP-NOW channel scan is complete
 #endif
 #ifdef BLE_ENABLED
             bleInit();    // BLE + WiFi share 2.4 GHz; ESP-IDF handles coexistence
+            LOG_HEAP("after-ble");
 #endif
             return;   // Give other tasks a cycle before entering the regular loop
         }

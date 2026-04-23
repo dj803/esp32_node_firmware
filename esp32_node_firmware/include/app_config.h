@@ -5,6 +5,7 @@
 #include "config.h"
 #include "led.h"         // LedPattern::LOCATE — used by ledFlashLocate()
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
+#include "prefs_quiet.h" // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 // =============================================================================
 // app_config.h  —  Runtime-configurable application settings (NVS namespace
@@ -135,7 +136,7 @@ public:
     static void load() {
         Preferences prefs;
         // true = read-only mode; safe to call even if NVS is uninitialised
-        bool opened = prefs.begin(APP_CONFIG_NVS_NAMESPACE, true);
+        bool opened = prefsTryBegin(prefs, APP_CONFIG_NVS_NAMESPACE, true);   // (v0.4.03) silent if missing
 
         // Lambda helper: read one NVS string key into `out`.
         // If the key is missing or empty, copies the compile-time `def` instead.
@@ -248,7 +249,7 @@ public:
     // compile-time placeholder URL in config.h.
     static bool hasCustomOtaUrl() {
         Preferences prefs;
-        if (!prefs.begin(APP_CONFIG_NVS_NAMESPACE, true)) return false;
+        if (!prefsTryBegin(prefs, APP_CONFIG_NVS_NAMESPACE, true)) return false;   // (v0.4.03) silent
         String url = prefs.getString("ota_json_url", "");
         prefs.end();
         return url.length() > 0;   // Empty string means never saved via portal

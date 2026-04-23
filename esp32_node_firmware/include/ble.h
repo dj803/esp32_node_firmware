@@ -62,6 +62,7 @@
 
 #include "config.h"
 #include "ranging_math.h"   // rssiToDistance() — shared with espnow_ranging.h
+#include "prefs_quiet.h"    // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 
 // ── Beacon record ─────────────────────────────────────────────────────────────
@@ -119,10 +120,10 @@ static float _bleCalcDist(int8_t rssi, int8_t txPower) {
 // ── NVS helpers ───────────────────────────────────────────────────────────────
 static void _bleNvsLoad() {
     Preferences p;
-    if (!p.begin(BLE_NVS_NAMESPACE, /*readOnly=*/true)) {
-        // (v0.3.37) Namespace doesn't exist yet (fresh device, no
-        // cmd/ble/track ever received). Silent default — Preferences
-        // would otherwise log "[E] nvs_open failed: NOT_FOUND" on every boot.
+    // (v0.4.03) prefsTryBegin pre-checks namespace existence via nvs_open
+    // (silent on NOT_FOUND in IDF 5.x), so we no longer hit the Preferences
+    // E-level log on every boot of a fresh device. Behaviour unchanged.
+    if (!prefsTryBegin(p, BLE_NVS_NAMESPACE, /*readOnly=*/true)) {
         _bleTrackedCount = 0;
         return;
     }

@@ -18,6 +18,7 @@
 #include "app_config.h"
 #include "device_id.h"
 #include "wifi_recovery.h"   // apStaScanShouldRun() — background STA scan gate
+#include "prefs_quiet.h"     // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 // =============================================================================
 // ap_portal.h  —  Configuration portals (HTTPS)
@@ -124,7 +125,9 @@ static void apStaGotIpHandler(WiFiEvent_t event, WiFiEventInfo_t /*info*/) {
 // Loads TLS credentials from NVS. Returns true on success.
 static bool _loadTlsCreds() {
     Preferences prefs;
-    prefs.begin(PORTAL_TLS_NVS_NAMESPACE, true);   // read-only
+    // (v0.4.03) prefsTryBegin: silent if portal_tls namespace missing
+    // (fresh device, never generated TLS cert before).
+    if (!prefsTryBegin(prefs, PORTAL_TLS_NVS_NAMESPACE, true)) return false;
     bool hasCert = prefs.isKey(PORTAL_TLS_CERT_KEY);
     bool hasKey  = prefs.isKey(PORTAL_TLS_PKEY_KEY);
     if (!hasCert || !hasKey) { prefs.end(); return false; }

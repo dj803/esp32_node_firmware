@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include "config.h"
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
+#include "prefs_quiet.h" // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 // =============================================================================
 // ws2812.h  —  WS2812B addressable LED strip control
@@ -151,7 +152,13 @@ static void _ledNvsSave() {
 
 static void _ledNvsLoad() {
     Preferences p;
-    p.begin(LED_STRIP_NVS_NAMESPACE, true);
+    // (v0.4.03) prefsTryBegin: silent on missing namespace (fresh device).
+    // If begin fails, the getUChar defaults still apply.
+    if (!prefsTryBegin(p, LED_STRIP_NVS_NAMESPACE, true)) {
+        _ledActiveBrightness = LED_MAX_BRIGHTNESS;
+        _ledActiveCount      = LED_DEFAULT_COUNT;
+        return;
+    }
     _ledActiveBrightness = p.getUChar("brightness", LED_MAX_BRIGHTNESS);
     _ledActiveCount      = p.getUChar("count",      LED_DEFAULT_COUNT);
     p.end();

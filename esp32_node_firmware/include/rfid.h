@@ -52,6 +52,7 @@
 #include "config.h"
 #include "led.h"
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
+#include "prefs_quiet.h" // (v0.4.03) prefsTryBegin — silent on missing namespace
 #include "rfid_types.h"  // RfidMode, RfidProgramRequest, RfidReadRequest, guards
 
 static MFRC522DriverPinSimple _rfidSsPin(RFID_SS_PIN);
@@ -144,7 +145,13 @@ static void _rfidWhitelistSave() {
 
 void rfidWhitelistLoad() {
     Preferences p;
-    p.begin(RFID_NVS_NAMESPACE, true);
+    // (v0.4.03) prefsTryBegin: silent on missing namespace (fresh device,
+    // no cmd/rfid/whitelist add ever received).
+    if (!prefsTryBegin(p, RFID_NVS_NAMESPACE, true)) {
+        _rfidWhitelistCount = 0;
+        Serial.printf("[RFID] Whitelist loaded: 0 UID(s)\n");
+        return;
+    }
     _rfidWhitelistCount = p.getUChar("count", 0);
     if (_rfidWhitelistCount > RFID_MAX_WHITELIST)
         _rfidWhitelistCount = 0;

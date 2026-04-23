@@ -6,6 +6,7 @@
 #include "config.h"
 #include "logging.h"
 #include "fwevent.h"
+#include "prefs_quiet.h"   // (v0.4.03) prefsTryBegin — silent on missing namespace
 
 // =============================================================================
 // ota_validation.h  —  Post-OTA app self-validation (Phase 2 / v0.3.34)
@@ -97,7 +98,7 @@ inline void otaValidationCheckBoot() {
     // Path 1: NVS flag (universal)
     {
         Preferences prefs;
-        if (prefs.begin(OTA_VALIDATION_NVS_NS, true)) {   // read-only
+        if (prefsTryBegin(prefs, OTA_VALIDATION_NVS_NS, true)) {   // (v0.4.03) silent if missing
             String pendingVer = prefs.getString(OTA_VALIDATION_NVS_KEY, "");
             prefs.end();
             if (pendingVer.length() > 0) {
