@@ -216,17 +216,26 @@ void setup() {
     Serial.println();
     LOG_I("BOOT", "ESP32 Credential Bootstrap Firmware v" FIRMWARE_VERSION);
 
-    // (v0.4.02) Silence the arduino-esp32 Preferences class's E-level
-    // "nvs_open failed: NOT_FOUND" log lines. They fire INSIDE prefs.begin()
-    // before our isKey() / return-value checks can run, every boot, for any
-    // namespace that does not yet exist (post-OTA-validation namespace, BLE
-    // tracked-MAC namespace before any cmd/ble/track, etc.). All callers
-    // already handle begin() returning false gracefully — this just stops
-    // the harmless errors from drowning real ones in the boot log.
+    // (v0.4.02) ATTEMPTED but ineffective — kept here as a tombstone so the
+    // next person doesn't re-discover this dead end. The arduino-esp32
+    // Preferences class calls log_e() which (when USE_ESP_IDF_LOG is NOT
+    // defined — the framework default) expands to log_printf() going
+    // straight to the Arduino HAL printer, NOT through esp_log_write().
+    // esp_log_level_set() therefore has no effect on these lines.
     //
-    // Real Preferences corruption surfaces via getString() returning ""
-    // (which we already gate on) and via nvs_flash_init() at the IDF level
-    // (independent log channel — not silenced).
+    // To actually silence them you would need ONE of:
+    //   - Build framework with -DUSE_ESP_IDF_LOG (large blast radius — all
+    //     framework log_e calls become silenceable but the format is also
+    //     different).
+    //   - Lower CORE_DEBUG_LEVEL at build time (compile-time silence of ALL
+    //     log_e in the framework — including useful ones).
+    //   - Replace log_printf with a wrapper that filters specific patterns
+    //     (custom hook via esp_log_set_vprintf, but only routes
+    //     esp_log_write traffic — not Arduino's).
+    //   - Patch arduino-esp32 Preferences.cpp to gate the log on isKey().
+    //
+    // Documented in SUGGESTED_IMPROVEMENTS.txt #4 and FIXES_LOG.txt v0.4.02.
+    // Left as a no-op call below so the intent is visible from grep.
     esp_log_level_set("Preferences", ESP_LOG_NONE);
 
     // MAC address is readable only after Wi-Fi mode is set.
