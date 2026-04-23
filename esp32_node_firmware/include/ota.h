@@ -88,6 +88,7 @@ void otaCheckNow(bool isSiblingRetry) {
     if (!validScheme || strlen(otaUrl) < 10) {
         LOG_E("OTA", "Skipping check - invalid OTA JSON URL: '%s'", otaUrl);
         mqttPublishStatus(FwEvent::OTA_FAILED,
+            "\"stage\":\"preflight\","
             "\"error\":\"invalid ota_json_url (missing scheme or empty)\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
         return;
@@ -119,10 +120,44 @@ void otaCheckNow(bool isSiblingRetry) {
     // the JSON and returns UPDATE_AVAILABLE (its lexicographic comparator breaks
     // on double-digit patch numbers, e.g. "0.2.7" > "0.2.15"). We then apply
     // our own numeric semver comparison via semverIsNewer().
-    esp_task_wdt_reset();   // JSON fetch blocks loop() for ~0.8 s — pre-reset the loopTask WDT
-    int ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
-                                    "0.0.0",
-                                    ESP32OTAPull::DONT_DO_UPDATE);
+    //
+    // URL fallback chain (v0.3.33): primary (NVS-stored gAppConfig.ota_json_url)
+    // is tried first; on any HTTP/library failure we walk OTA_FALLBACK_URLS in
+    // config.h. If the entire chain returns network-level errors we then ask
+    // siblings (sibling-URL fallback unchanged from v0.3.32). This means a dead
+    // CDN / Pages outage / bad portal entry no longer strands the device on
+    // the first failure.
+    int ret = -1;
+    const char* successfulUrl = nullptr;
+    {
+        // Build the candidate list: primary URL first, then any fallbacks
+        // that don't equal the primary (de-dup so a portal that points at
+        // the GitHub Pages URL doesn't try the same URL twice in a row).
+        const char* candidates[1 + OTA_FALLBACK_URL_COUNT];
+        uint8_t candCount = 0;
+        candidates[candCount++] = gAppConfig.ota_json_url;
+        for (uint8_t i = 0; i < OTA_FALLBACK_URL_COUNT; i++) {
+            if (strcmp(OTA_FALLBACK_URLS[i], gAppConfig.ota_json_url) != 0) {
+                candidates[candCount++] = OTA_FALLBACK_URLS[i];
+            }
+        }
+
+        for (uint8_t i = 0; i < candCount; i++) {
+            esp_task_wdt_reset();   // JSON fetch blocks loop() for ~0.8 s — pre-reset the loopTask WDT
+            LOG_I("OTA", "Manifest fetch %u/%u: %s", i + 1, candCount, candidates[i]);
+            ret = ota.CheckForOTAUpdate(candidates[i], "0.0.0", ESP32OTAPull::DONT_DO_UPDATE);
+            if (ret == ESP32OTAPull::UPDATE_AVAILABLE ||
+                ret == ESP32OTAPull::NO_UPDATE_AVAILABLE ||
+                ret == ESP32OTAPull::NO_UPDATE_PROFILE_FOUND) {
+                successfulUrl = candidates[i];
+                if (i > 0) {
+                    LOG_I("OTA", "Manifest fetched from fallback URL #%u", i);
+                }
+                break;
+            }
+            LOG_W("OTA", "Manifest fetch %u/%u failed (code %d)", i + 1, candCount, ret);
+        }
+    }
 
     if (ret == ESP32OTAPull::UPDATE_AVAILABLE) {
         // JSON fetched — now apply our own semver check
@@ -153,12 +188,19 @@ void otaCheckNow(bool isSiblingRetry) {
 
     if (ret != ESP32OTAPull::UPDATE_AVAILABLE) {
         // Positive ret values are raw HTTP error codes; negative are library codes.
-        // JSON fetch failed — GitHub is not reachable from this node right now.
+        // JSON fetch failed on EVERY URL in the candidate chain — GitHub /
+        // configured CDN are not reachable from this node right now.
         responderSetHealthFlag(2, false);
-        LOG_W("OTA", "JSON fetch failed (code %d)", ret);
-        mqttPublishStatus(FwEvent::OTA_FAILED,
-            "\"error\":\"OTA JSON unreachable\","
-            "\"current_version\":\"" FIRMWARE_VERSION "\"");
+        LOG_W("OTA", "All %d manifest URLs unreachable (last code %d)",
+              1 + OTA_FALLBACK_URL_COUNT, ret);
+        char extra[160];
+        snprintf(extra, sizeof(extra),
+            "\"stage\":\"manifest\","
+            "\"error\":\"all manifest URLs unreachable\","
+            "\"last_code\":%d,"
+            "\"current_version\":\"" FIRMWARE_VERSION "\"",
+            ret);
+        mqttPublishStatus(FwEvent::OTA_FAILED, extra);
 
         // Ask siblings for a working OTA URL and retry once with it.
         // espnowRequestOtaUrl() is defined in espnow_responder.h (included before
@@ -238,6 +280,39 @@ void otaCheckNow(bool isSiblingRetry) {
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #endif
 
+    // ── Pre-flight heap gate (v0.3.33) ───────────────────────────────────────
+    // After all teardown / deinit has completed but BEFORE we kick off the
+    // blocking download, verify we have enough headroom for mbedTLS record
+    // buffers (~16 KB IN + 16 KB OUT) PLUS Update.begin's 4 KB write buffer.
+    // If we don't, abort cleanly. The next OTA_CHECK_INTERVAL_MS retry will
+    // try again from a freshly-rebooted heap state.
+    {
+        size_t freeNow    = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        size_t largestNow = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        if (freeNow < OTA_PREFLIGHT_HEAP_FREE_MIN ||
+            largestNow < OTA_PREFLIGHT_HEAP_BLOCK_MIN) {
+            LOG_E("OTA", "Pre-flight heap gate FAILED: free=%u (min %u) largest=%u (min %u)",
+                  (unsigned)freeNow, (unsigned)OTA_PREFLIGHT_HEAP_FREE_MIN,
+                  (unsigned)largestNow, (unsigned)OTA_PREFLIGHT_HEAP_BLOCK_MIN);
+            // Re-init what we tore down so the device stays useful until next retry.
+            // BLE will re-init on next boot anyway when ESP.restart() runs;
+            // we restart here too to guarantee a known-good state.
+            char extra[192];
+            snprintf(extra, sizeof(extra),
+                "\"stage\":\"preflight\","
+                "\"error\":\"heap_low\","
+                "\"free\":%u,\"largest\":%u,"
+                "\"free_min\":%u,\"largest_min\":%u,"
+                "\"current_version\":\"" FIRMWARE_VERSION "\"",
+                (unsigned)freeNow, (unsigned)largestNow,
+                (unsigned)OTA_PREFLIGHT_HEAP_FREE_MIN,
+                (unsigned)OTA_PREFLIGHT_HEAP_BLOCK_MIN);
+            mqttPublishStatus(FwEvent::OTA_PREFLIGHT, extra);
+            delay(200);     // let the publish drain
+            ESP.restart();  // fresh heap on next boot — natural retry
+        }
+    }
+
     // In arduino-esp32 3.x, loopTask is not subscribed to the TWDT by default.
     // If we call esp_task_wdt_reset() in the progress callback without first
     // subscribing, ESP-IDF logs an E-level "task not found" message every chunk
@@ -269,7 +344,12 @@ void otaCheckNow(bool isSiblingRetry) {
     }
     if (_otaProgressWatchdog) xTimerStart(_otaProgressWatchdog, 0);
 
-    ret = ota.CheckForOTAUpdate(gAppConfig.ota_json_url,
+    // Re-use the same URL that succeeded for the manifest fetch (v0.3.33).
+    // The library re-fetches the JSON internally and follows the URL field
+    // for the .bin download, so passing the working manifest URL gives us
+    // the best chance the .bin server is reachable from the same path.
+    const char* downloadUrl = (successfulUrl != nullptr) ? successfulUrl : gAppConfig.ota_json_url;
+    ret = ota.CheckForOTAUpdate(downloadUrl,
                                 "0.0.0",
                                 ESP32OTAPull::UPDATE_BUT_NO_BOOT);
 

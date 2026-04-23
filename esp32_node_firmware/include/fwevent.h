@@ -37,6 +37,10 @@ enum class FwEvent : uint8_t {
     DEEP_SLEEPING        = 11,   // cmd/deep_sleep — deep sleep for duration_s seconds
     MODEM_SLEEPING       = 12,   // cmd/modem_sleep — Wi-Fi modem sleep for duration_s seconds
     LOCATING             = 13,   // cmd/locate — status LED locate flash in progress (4 s)
+    OTA_PREFLIGHT        = 14,   // pre-flight heap / URL gate before download starts
+    OTA_VALIDATING       = 15,   // post-OTA boot — running self-test before mark_app_valid
+    OTA_VALIDATED        = 16,   // self-test passed — esp_ota_mark_app_valid_cancel_rollback called
+    OTA_ROLLED_BACK      = 17,   // boot detected via esp_ota_get_state_partition as PENDING_VERIFY/INVALID/ABORTED
 };
 
 
@@ -60,6 +64,10 @@ inline const char* fwEventName(FwEvent ev) {
         case FwEvent::DEEP_SLEEPING:         return "deep_sleeping";
         case FwEvent::MODEM_SLEEPING:        return "modem_sleeping";
         case FwEvent::LOCATING:             return "locating";
+        case FwEvent::OTA_PREFLIGHT:         return "ota_preflight";
+        case FwEvent::OTA_VALIDATING:        return "ota_validating";
+        case FwEvent::OTA_VALIDATED:         return "ota_validated";
+        case FwEvent::OTA_ROLLED_BACK:       return "ota_rolled_back";
         default:                             return "unknown";
     }
 }

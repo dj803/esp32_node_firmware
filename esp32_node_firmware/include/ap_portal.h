@@ -842,7 +842,7 @@ void apPortalStart(const CredentialBundle* staBundle = nullptr) {
     const char* scheme = tlsOk ? "https" : "http";
     LOG_I("AP Portal", "Waiting for admin — browse to %s://192.168.4.1/", scheme);
 
-    // The httpd task handles connections. This main-task loop does two jobs:
+    // The httpd task handles connections. This main-task loop does three jobs:
     //   1. Poll _apShouldExit (set by apStaGotIpHandler when the background
     //      scan re-associated with the router) and restart after the grace
     //      period so OPERATIONAL can resume cleanly.
@@ -850,13 +850,32 @@ void apPortalStart(const CredentialBundle* staBundle = nullptr) {
     //      is pending, kick off a WiFi.begin() to poke the STA side into
     //      trying again. The ESP-IDF WiFi stack handles scan/associate
     //      internally — we just need to nudge it periodically.
-    uint32_t lastScanMs = 0;
+    //   3. (v0.3.33) Idle-timeout: if no admin activity AND no STA reconnect
+    //      for AP_MODE_IDLE_TIMEOUT_MS, hard-restart. AP mode is intended
+    //      only for first-boot provisioning or hands-on dev work; a node
+    //      that fell to AP mode from a transient failure should not sit
+    //      there invisible to the fleet forever. The timer effectively
+    //      resets on every admin HTTPS hit (via _lastAdminActivityMs).
+    uint32_t lastScanMs   = 0;
+    uint32_t apEnteredMs  = millis();
     while (true) {
         uint32_t now = millis();
 
         if (_apShouldExit && (int32_t)(now - _apExitAtMs) >= 0) {
             LOG_I("AP Portal", "STA reconnected — restarting to resume OPERATIONAL");
             delay(200);            // let any in-flight HTTPS response drain
+            ESP.restart();
+        }
+
+        // (v0.3.33) Idle-timeout: take the more-recent of "AP entered" and
+        // "last admin activity" — that's the timer's reference point.
+        // If neither has happened recently enough, restart.
+        uint32_t idleRef = (_lastAdminActivityMs > apEnteredMs)
+                           ? _lastAdminActivityMs : apEnteredMs;
+        if ((now - idleRef) > AP_MODE_IDLE_TIMEOUT_MS) {
+            LOG_W("AP Portal", "Idle for %u ms — restarting (AP_MODE_IDLE_TIMEOUT_MS=%u)",
+                  (unsigned)(now - idleRef), (unsigned)AP_MODE_IDLE_TIMEOUT_MS);
+            delay(200);
             ESP.restart();
         }
 

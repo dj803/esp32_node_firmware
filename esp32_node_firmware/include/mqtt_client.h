@@ -4,6 +4,7 @@
 #include <AsyncMqttClient.h>   // Non-blocking MQTT client (marvinroger/async-mqtt-client)
 #include <ArduinoJson.h>       // JSON parsing for cmd/led and cmd/rfid/whitelist handlers
 #include <esp_wifi.h>          // esp_wifi_get_mac / WIFI_IF_STA
+#include <esp_system.h>        // esp_reset_reason() — boot-reason telemetry (v0.3.33)
 #include "config.h"
 #include "logging.h"
 #include "fwevent.h"
@@ -159,6 +160,27 @@ static void mqttPublish(const char* prefix, const String& payload,
     _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
 }
 
+// Map esp_reset_reason() → short string for telemetry (v0.3.33).
+// Captured ONCE at startup (before the watchdog or any other reset overwrites
+// it during this boot's lifetime) and emitted in the retained boot announcement
+// so the fleet manager can correlate field reboots with their cause.
+static esp_reset_reason_t _firstBootReason = ESP_RST_UNKNOWN;
+static const char* bootReasonStr(esp_reset_reason_t r) {
+    switch (r) {
+        case ESP_RST_POWERON:   return "poweron";
+        case ESP_RST_EXT:       return "external";
+        case ESP_RST_SW:        return "software";
+        case ESP_RST_PANIC:     return "panic";
+        case ESP_RST_INT_WDT:   return "int_wdt";
+        case ESP_RST_TASK_WDT:  return "task_wdt";
+        case ESP_RST_WDT:       return "other_wdt";
+        case ESP_RST_DEEPSLEEP: return "deepsleep";
+        case ESP_RST_BROWNOUT:  return "brownout";
+        case ESP_RST_SDIO:      return "sdio";
+        default:                return "unknown";
+    }
+}
+
 // Build and publish a standard status JSON message to the .../status topic.
 // All status messages share the same JSON structure so Node-RED flows can
 // parse them with a single JSON node.
@@ -194,13 +216,21 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // Anchor snippet (F5) — only non-empty when this node is configured as a
     // fixed anchor. Node-RED reads the retained .../status boot announcement
     // to build the anchor registry for the 2-D map.
-    char anchorSnip[96] = "";
+    // Boot-reason snippet (v0.3.33) — only emitted on the boot event so the
+    // fleet manager can correlate the reset cause without bloating heartbeats.
+    char anchorSnip[160] = "";
+    int anchorOff = 0;
     if (gAppConfig.anchor_role == 1) {
-        snprintf(anchorSnip, sizeof(anchorSnip),
+        anchorOff = snprintf(anchorSnip, sizeof(anchorSnip),
             ",\"anchor\":{\"role\":\"anchor\",\"x_m\":%.3f,\"y_m\":%.3f,\"z_m\":%.3f}",
             gAppConfig.anchor_x_mm / 1000.0f,
             gAppConfig.anchor_y_mm / 1000.0f,
             gAppConfig.anchor_z_mm / 1000.0f);
+        if (anchorOff < 0 || anchorOff >= (int)sizeof(anchorSnip)) anchorOff = 0;
+    }
+    if (strcmp(event, "boot") == 0 && anchorOff < (int)sizeof(anchorSnip) - 32) {
+        snprintf(anchorSnip + anchorOff, sizeof(anchorSnip) - anchorOff,
+            ",\"boot_reason\":\"%s\"", bootReasonStr(_firstBootReason));
     }
 
     char buf[640];
@@ -1123,6 +1153,14 @@ static void mqttReconnectTimerCb(TimerHandle_t) {
 // so the rotation handler can access the rotation key later.
 void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     memcpy(&_mqttBundle, &bundle, sizeof(CredentialBundle));   // Keep a local copy
+
+    // Capture the reset reason once per boot — emitted in the retained boot
+    // announcement (v0.3.33). Calling esp_reset_reason() later in the boot
+    // can return ESP_RST_UNKNOWN if a software reset has been requested
+    // mid-boot, so we snapshot it here before any possible restart path.
+    if (_firstBootReason == ESP_RST_UNKNOWN) {
+        _firstBootReason = esp_reset_reason();
+    }
 
     // Use the persistent UUID as the device identity in all MQTT topics.
     // DeviceId::init() is called at the start of setup() before mqttBegin().

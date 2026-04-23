@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.3.32"
+#define FIRMWARE_VERSION           "0.3.33"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745452800ULL   // 2026-04-24 00:00:00 UTC
 
@@ -137,6 +137,19 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 #define AP_ADMIN_IDLE_MS            60000   // Skip scan if admin HTTPS handler ran within
                                             // this window
 
+// ── AP-mode idle timeout (v0.3.33) ──────────────────────────────────────────
+// AP mode is intended only for first-boot provisioning or hands-on dev work.
+// If no admin activity (HTTPS handler hit) and no STA reconnect happens for
+// AP_MODE_IDLE_TIMEOUT_MS, the device hard-restarts. This prevents a node
+// that fell to AP mode from a transient failure from sitting there forever
+// invisible to the fleet. A real operator session resets the timer on every
+// HTTPS request.
+#define AP_MODE_IDLE_TIMEOUT_MS    300000   // 5 minutes — short enough that a
+                                            // misclassified failure is not a
+                                            // long outage; long enough that
+                                            // an operator can actually fill
+                                            // out the form.
+
 
 // -----------------------------------------------------------------------------
 // Runtime intervals
@@ -172,6 +185,39 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
                                            // CDN slow-starts but catch a true stall like
                                            // the v0.3.28 Charlie freeze (see SUGGESTED
                                            // _IMPROVEMENTS #24).
+
+// ── Pre-flight gate (v0.3.33) ────────────────────────────────────────────────
+// Checked AFTER NimBLE deinit, BEFORE the blocking download. If either limit
+// is breached we publish ota_preflight failure + abort cleanly. Restart-and-
+// retry on next interval is preferable to a torn-down failure mid-flash.
+//
+// Numbers are conservative defaults validated against arduino-esp32 3.1.1 +
+// mbedTLS + AsyncTCP heap usage. Tighten with telemetry once we have it.
+#define OTA_PREFLIGHT_HEAP_FREE_MIN  80000  // bytes — total free heap (MALLOC_CAP_8BIT)
+#define OTA_PREFLIGHT_HEAP_BLOCK_MIN 32000  // bytes — largest contiguous free block
+
+// ── Hardcoded fallback OTA manifest URLs (v0.3.33) ───────────────────────────
+// Tried in order if gAppConfig.ota_json_url (NVS) returns a non-2xx HTTP code.
+// Last-resort safety net so a misconfigured portal entry, a Pages outage, or
+// a dead CDN doesn't permanently strand the device. Sibling-URL fallback
+// runs AFTER this list is exhausted (so a healthy fleet recovers without
+// touching the network at all if any one device has a working URL).
+//
+// Edit these to match the deployed CDN paths. The first entry SHOULD match
+// the OTA_JSON_URL default below; the second is the GitHub release-asset URL
+// (works even if Pages is down, but version-specific so requires updating
+// the manifest schema slightly — currently best-effort).
+#define OTA_FALLBACK_URL_COUNT       2
+static const char* const OTA_FALLBACK_URLS[OTA_FALLBACK_URL_COUNT] = {
+    "https://dj803.github.io/esp32_node_firmware/ota.json",
+    "https://raw.githubusercontent.com/dj803/esp32_node_firmware/gh-pages/ota.json"
+};
+
+// ── App validation deadline (Phase 2 — used in v0.3.34) ──────────────────────
+// After an OTA boot, the new firmware must observe Wi-Fi + MQTT + 1 heartbeat
+// within this window before calling esp_ota_mark_app_valid_cancel_rollback().
+// If the deadline expires the bootloader will roll back on the next reset.
+#define OTA_VALIDATION_DEADLINE_MS   300000  // 5 minutes
 
 
 // -----------------------------------------------------------------------------
