@@ -621,7 +621,22 @@ void loop() {
             uint32_t waitMs = WIFI_BACKOFF_STEPS_MS[_wifiBackoffIdx];
             LOG_I("Loop", "WiFi reconnect attempt (next backoff step %u ms)",
                   (unsigned)waitMs);
-            WiFi.reconnect();   // cheaper than disconnect+begin; keeps saved config
+            if (_wifiBackoffIdx >= WIFI_FULL_RECONNECT_AFTER_IDX) {
+                // WiFi.reconnect() has now failed WIFI_FULL_RECONNECT_AFTER_IDX
+                // times without success. Switch to the heavy path used by the
+                // bootstrap phase (lines ~300-301): disconnect+begin forces a full
+                // re-association negotiation. WiFi.reconnect() silently fails after
+                // BEACON_TIMEOUT (complete router power loss + return) — this is
+                // the fix for devices that stay powered while the router cycles.
+                LOG_W("Loop", "WiFi.reconnect() failed %u times — switching to "
+                              "disconnect+begin (BEACON_TIMEOUT workaround)",
+                      (unsigned)_wifiBackoffIdx);
+                WiFi.disconnect(true);
+                delay(100);
+                WiFi.begin(activeBundle.wifi_ssid, activeBundle.wifi_password);
+            } else {
+                WiFi.reconnect();   // sufficient for brief blips (< ~105 s)
+            }
             _wifiNextAttemptMs = millis() + waitMs;
             _wifiBackoffIdx    = wifiBackoffAdvance(_wifiBackoffIdx,
                                                     (uint8_t)WIFI_BACKOFF_STEPS_COUNT);

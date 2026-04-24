@@ -113,6 +113,14 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 // an AUTH_EXPIRE / HANDSHAKE_TIMEOUT disconnect reason before treating the
 // credentials as truly wrong and falling to AP mode. Two cycles avoids false
 // positives from rare transient auth failures (e.g. CPU-starved WPA handshake).
+// After this many consecutive failed WiFi.reconnect() attempts, switch to the
+// heavier WiFi.disconnect(true)+WiFi.begin() path. WiFi.reconnect() is sufficient
+// for brief blips but silently fails after BEACON_TIMEOUT / complete AP power loss.
+// Index 3 = after 15 s + 30 s + 60 s have failed (~105 s elapsed). Subsequent
+// attempts (120 s, 300 s, 600 s spacing) use disconnect+begin which is identical
+// to the bootstrap path and is proven to work after a full router power cycle.
+#define WIFI_FULL_RECONNECT_AFTER_IDX  3
+
 #define WIFI_AUTH_FAIL_CYCLES       2
 
 // NVS key holding the wifi-outage restart counter.
