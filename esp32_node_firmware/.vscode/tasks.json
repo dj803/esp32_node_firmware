@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PIO: Build",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32dev"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "PIO: Upload (COM5)",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32dev", "-t", "upload", "--upload-port", "COM5"],
+      "group": "build",
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "PIO: Monitor (COM5 @ 115200)",
+      "type": "shell",
+      "command": "pio",
+      "args": ["device", "monitor", "-p", "COM5", "-b", "115200"],
+      "presentation": { "reveal": "always", "panel": "dedicated", "echo": true }
+    },
+    {
+      "label": "PIO: Upload + Monitor",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32dev", "-t", "upload", "-t", "monitor", "--upload-port", "COM5", "--monitor-port", "COM5"],
+      "group": "build",
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "PIO: Native Tests",
+      "type": "shell",
+      "command": "pio",
+      "args": ["test", "-e", "native", "-v"],
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$gcc"],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+    {
+      "label": "PIO: Clean",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32dev", "-t", "clean"],
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ]
+}

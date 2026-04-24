@@ -65,6 +65,23 @@ jobs:
         # positional argument: 'ctx'" during the bootloader.bin build step.
         run: pip install --upgrade "platformio" "click<8.2"
 
+      # Cache the PlatformIO home (platforms, toolchains, package archives) and
+      # the per-project libdeps. The cache key includes platformio.ini so any
+      # dependency pin change invalidates the cache cleanly.
+      # First cold build on a fresh key: ~3.5 min.
+      # Subsequent builds with cache hit:   ~45 s (platform + toolchain reused).
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            esp32_node_firmware/.pio/libdeps
+          key: pio-${{ runner.os }}-${{ hashFiles('esp32_node_firmware/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
       - name: Extract firmware version
         id: version
         run: |
