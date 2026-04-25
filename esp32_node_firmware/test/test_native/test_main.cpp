@@ -501,6 +501,150 @@ void test_peer_tracker_expire_keeps_young_drops_old() {
 
 
 // =============================================================================
+// peer_tracker.h — outlier-streak EMA-reseed coverage (added 2026-04-25)
+//
+// Original outlier gate would silently drop every frame whose deviation
+// exceeded outlier_db. After a real environmental step-change (device moved,
+// repowered via a different supply, etc.) the EMA stayed stuck at the
+// pre-change value forever and `rejects` climbed indefinitely. The fix
+// tracks a signed streak counter: PEER_TRACKER_OUTLIER_RESEED_N consecutive
+// same-direction outliers force-reseed the EMA at the latest sample.
+// =============================================================================
+
+// Helper: use a fixed alpha and outlier_db that exercise the gate without
+// the EMA itself drifting too much per accepted sample.
+static const uint8_t TEST_ALPHA   = 30;   // 0.30
+static const uint8_t TEST_OUTLIER = 15;   // 15 dB
+
+void test_peer_tracker_single_outlier_does_not_reseed() {
+    // Establish stable EMA at -60 dBm, then send ONE outlier sample.
+    // Expect: rejects=1, EMA unchanged, outlier_streak=+1 (single-arm).
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(2000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+
+    // 30 dB jump is well over the 15 dB threshold.
+    tracker.setNow(3000); tracker.observe("MM", -30, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+
+    bool found = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "MM") == 0) {
+            found = true;
+            TEST_ASSERT_EQUAL_INT16(-600, p.rssi_ema_x10);   // EMA stayed at -60×10
+            TEST_ASSERT_EQUAL_UINT16(1, p.rejects);
+            TEST_ASSERT_EQUAL_INT8(1, p.outlier_streak);
+        }
+    });
+    TEST_ASSERT_TRUE(found);
+}
+
+void test_peer_tracker_n_same_direction_outliers_reseed() {
+    // PEER_TRACKER_OUTLIER_RESEED_N consecutive same-direction outliers
+    // should reseed the EMA at the Nth sample.
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(2000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+
+    // Send N consecutive outliers all 30 dB above the EMA.
+    for (int i = 0; i < PEER_TRACKER_OUTLIER_RESEED_N; i++) {
+        tracker.setNow(3000 + 1000 * i);
+        tracker.observe("MM", -30, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+    }
+
+    bool found = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "MM") == 0) {
+            found = true;
+            // After N same-direction outliers, EMA is reseeded at the latest sample.
+            TEST_ASSERT_EQUAL_INT16(-300, p.rssi_ema_x10);
+            // The reseeding sample is NOT counted as a reject.
+            TEST_ASSERT_EQUAL_UINT16(PEER_TRACKER_OUTLIER_RESEED_N - 1, p.rejects);
+            // Streak resets after reseed.
+            TEST_ASSERT_EQUAL_INT8(0, p.outlier_streak);
+        }
+    });
+    TEST_ASSERT_TRUE(found);
+}
+
+void test_peer_tracker_alternating_direction_outliers_do_not_reseed() {
+    // Outliers alternating above/below the EMA should NOT reseed —
+    // that's the brief-noise pattern the gate is designed to filter.
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(2000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+
+    // 6 alternating outliers: +30, -30, +30, -30, +30, -30 (well over threshold each).
+    int8_t alternating[] = { -30, -90, -30, -90, -30, -90 };
+    for (int i = 0; i < 6; i++) {
+        tracker.setNow(3000 + 1000 * i);
+        tracker.observe("MM", alternating[i], 0.5f, TEST_ALPHA, TEST_OUTLIER);
+    }
+
+    bool found = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "MM") == 0) {
+            found = true;
+            // EMA still at -60 — never reseeded because direction kept flipping.
+            TEST_ASSERT_EQUAL_INT16(-600, p.rssi_ema_x10);
+            // All 6 frames counted as rejects.
+            TEST_ASSERT_EQUAL_UINT16(6, p.rejects);
+        }
+    });
+    TEST_ASSERT_TRUE(found);
+}
+
+void test_peer_tracker_accepted_frame_clears_streak() {
+    // An in-range frame after some outliers should clear the streak,
+    // so the next sustained step-change still needs N more outliers.
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(2000); tracker.observe("MM", -60, 2.0f, TEST_ALPHA, TEST_OUTLIER);
+
+    // 2 outliers (one short of reseed), then an in-range sample.
+    tracker.setNow(3000); tracker.observe("MM", -30, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(4000); tracker.observe("MM", -30, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(5000); tracker.observe("MM", -62, 2.1f, TEST_ALPHA, TEST_OUTLIER);
+
+    bool found = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "MM") == 0) {
+            found = true;
+            // Streak cleared by the in-range -62 sample.
+            TEST_ASSERT_EQUAL_INT8(0, p.outlier_streak);
+            TEST_ASSERT_EQUAL_UINT16(2, p.rejects);
+            // EMA shifted slightly toward -62: 0.30*(-620) + 0.70*(-600) = -606
+            TEST_ASSERT_EQUAL_INT16(-606, p.rssi_ema_x10);
+        }
+    });
+    TEST_ASSERT_TRUE(found);
+}
+
+void test_peer_tracker_reseed_works_for_negative_step() {
+    // Symmetric of the positive-step test: N consecutive outliers BELOW the
+    // EMA should also trigger reseed. The streak counter is signed.
+    PeerTracker<4> tracker;
+    tracker.setNow(1000); tracker.observe("MM", -50, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+    tracker.setNow(2000); tracker.observe("MM", -50, 0.5f, TEST_ALPHA, TEST_OUTLIER);
+
+    // N consecutive outliers 30 dB below the EMA.
+    for (int i = 0; i < PEER_TRACKER_OUTLIER_RESEED_N; i++) {
+        tracker.setNow(3000 + 1000 * i);
+        tracker.observe("MM", -80, 6.0f, TEST_ALPHA, TEST_OUTLIER);
+    }
+
+    bool found = false;
+    tracker.forEach([&](const PeerEntry& p) {
+        if (strcmp(p.mac, "MM") == 0) {
+            found = true;
+            TEST_ASSERT_EQUAL_INT16(-800, p.rssi_ema_x10);
+            TEST_ASSERT_EQUAL_INT8(0, p.outlier_streak);
+        }
+    });
+    TEST_ASSERT_TRUE(found);
+}
+
+
+// =============================================================================
 // rate_limit.h — rateClampRefill() boundary tests (v0.3.14)
 //
 // Guards against a future edit re-introducing the overflow smell that lived
@@ -880,6 +1024,13 @@ int main(int /*argc*/, char** /*argv*/) {
     // peer_tracker — additional coverage (v0.3.14)
     RUN_TEST(test_peer_tracker_reobserve_full_table_updates_in_place);
     RUN_TEST(test_peer_tracker_expire_keeps_young_drops_old);
+
+    // peer_tracker — outlier-streak EMA-reseed (added 2026-04-25)
+    RUN_TEST(test_peer_tracker_single_outlier_does_not_reseed);
+    RUN_TEST(test_peer_tracker_n_same_direction_outliers_reseed);
+    RUN_TEST(test_peer_tracker_alternating_direction_outliers_do_not_reseed);
+    RUN_TEST(test_peer_tracker_accepted_frame_clears_streak);
+    RUN_TEST(test_peer_tracker_reseed_works_for_negative_step);
 
     // rate_limit — token-bucket refill boundaries (v0.3.14)
     RUN_TEST(test_rate_clamp_at_cap_returns_cap);

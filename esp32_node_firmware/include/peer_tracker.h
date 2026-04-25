@@ -35,13 +35,32 @@
 // =============================================================================
 
 struct PeerEntry {
-    char     mac[18]      = {};    // "XX:XX:XX:XX:XX:XX\0"
-    int8_t   rssi         = 0;     // raw RSSI of the most recent frame
-    float    distM        = 0.0f;  // raw distance from most recent RSSI
-    uint32_t seenMs       = 0;     // millis() of last observation
-    int16_t  rssi_ema_x10 = 0;     // EMA-smoothed RSSI × 10; 0 = uninitialised
-    uint16_t rejects      = 0;     // frames dropped by the outlier gate
+    char     mac[18]        = {};    // "XX:XX:XX:XX:XX:XX\0"
+    int8_t   rssi           = 0;     // raw RSSI of the most recent frame
+    float    distM          = 0.0f;  // raw distance from most recent RSSI
+    uint32_t seenMs         = 0;     // millis() of last observation
+    int16_t  rssi_ema_x10   = 0;     // EMA-smoothed RSSI × 10; 0 = uninitialised
+    uint16_t rejects        = 0;     // frames dropped by the outlier gate
+    int8_t   outlier_streak = 0;     // signed count of consecutive same-direction
+                                     //   outliers since last accepted sample.
+                                     //   +N = N consecutive samples ABOVE EMA.
+                                     //   −N = N consecutive samples BELOW EMA.
+                                     //   When |streak| reaches OUTLIER_RESEED_N the
+                                     //   EMA is forcibly reseeded at the latest sample
+                                     //   (recovers from real environmental step-changes
+                                     //    that would otherwise leave EMA stuck forever).
 };
+
+// Number of consecutive same-direction outliers required to forcibly reseed the EMA.
+// Lower = faster recovery from step-changes, but more vulnerable to brief glitches
+// hijacking the EMA. Higher = more glitch-tolerant but longer stuck-EMA recovery.
+// 3 = ~9 s at the default 3 s beacon interval — well below the 15 s peer stale
+// timeout, so a peer that crosses outlier_db once-only doesn't trigger reseed
+// (single-frame interference burst), but a sustained move triggers reseed before
+// the peer would be evicted entirely.
+#ifndef PEER_TRACKER_OUTLIER_RESEED_N
+#define PEER_TRACKER_OUTLIER_RESEED_N 3
+#endif
 
 template <uint8_t N>
 class PeerTracker {
@@ -76,25 +95,52 @@ public:
         _slots[slot].distM   = distM;
         _slots[slot].seenMs  = _nowMs;
         if (!samePeer) {
-            _slots[slot].rssi_ema_x10 = 0;   // reset EMA when peer changes
-            _slots[slot].rejects      = 0;
+            _slots[slot].rssi_ema_x10   = 0;   // reset EMA when peer changes
+            _slots[slot].rejects        = 0;
+            _slots[slot].outlier_streak = 0;
         }
 
         // EMA + outlier update
         if (alpha_x100 == 0 || _slots[slot].rssi_ema_x10 == 0) {
             // Initialise or run without filtering: track raw RSSI
-            _slots[slot].rssi_ema_x10 = (int16_t)(rssi * 10);
+            _slots[slot].rssi_ema_x10   = (int16_t)(rssi * 10);
+            _slots[slot].outlier_streak = 0;
         } else {
             int16_t prevEma = _slots[slot].rssi_ema_x10;
             // Outlier gate: reject if deviation exceeds threshold
             if (outlier_db > 0) {
-                int16_t devAbs = (int16_t)(rssi * 10) - prevEma;
-                if (devAbs < 0) devAbs = -devAbs;   // abs without <stdlib.h>
+                int16_t dev    = (int16_t)(rssi * 10) - prevEma;     // signed deviation
+                int16_t devAbs = (dev < 0) ? -dev : dev;             // |dev|
                 if (devAbs > (int16_t)(outlier_db * 10)) {
+                    // Outlier. Track consecutive same-direction streak.
+                    int8_t dir = (dev > 0) ? +1 : -1;
+                    if ((_slots[slot].outlier_streak > 0 && dir > 0) ||
+                        (_slots[slot].outlier_streak < 0 && dir < 0)) {
+                        // Same direction as previous outlier — extend streak (saturating).
+                        if (_slots[slot].outlier_streak < INT8_MAX && dir > 0)
+                            _slots[slot].outlier_streak++;
+                        else if (_slots[slot].outlier_streak > INT8_MIN && dir < 0)
+                            _slots[slot].outlier_streak--;
+                    } else {
+                        // First outlier or direction flipped — start fresh.
+                        _slots[slot].outlier_streak = dir;
+                    }
+
+                    // Reseed if the streak has reached the threshold.
+                    int8_t absStreak = _slots[slot].outlier_streak;
+                    if (absStreak < 0) absStreak = -absStreak;
+                    if (absStreak >= PEER_TRACKER_OUTLIER_RESEED_N) {
+                        _slots[slot].rssi_ema_x10   = (int16_t)(rssi * 10);
+                        _slots[slot].outlier_streak = 0;
+                        return;   // EMA reseeded; this frame is the new baseline
+                    }
+
                     _slots[slot].rejects++;
-                    return;   // skip EMA update for this frame
+                    return;   // not yet at reseed threshold — skip EMA update
                 }
             }
+            // Sample passed the gate (or gate disabled): clear outlier streak.
+            _slots[slot].outlier_streak = 0;
             // α×rssi×10 + (1−α)×prevEma, all × 100 for integer math
             int32_t updated = (int32_t)alpha_x100 * (rssi * 10)
                             + (int32_t)(100 - alpha_x100) * prevEma;
