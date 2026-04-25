@@ -445,3 +445,490 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     Build a Node-RED dashboard tile that surfaces non-poweron
     boot_reason values across the fleet.
     PRIORITY: Medium — easy Node-RED change, high diagnostic value.
+
+37. ESP-NOW ranging — A↔B asymmetry causes and mitigations
+    OBSERVATION (2026-04-25):  In the dashboard's per-direction chart,
+    A→B and B→A distances on the same physical pair frequently disagree
+    by 30–60% on uncalibrated devices. Operators ask why.
+    ROOT CAUSES, ranked by impact in this fleet:
+       1. Per-device calibration constants left at compile-time defaults
+          (txPower_dBm=-59, path_loss_n=2.5). Each device's real TX
+          power and antenna gain vary by 2–8 dB → log-distance formula
+          translates that into ~2× distance error.
+          MITIGATION: run the 3-step wizard on every node-pair.
+       2. Antenna orientation — ESP32-WROOM PCB trace antennas have a
+          figure-of-8 radiation pattern, not omnidirectional. A→B and
+          B→A pick up different lobes.
+          MITIGATION: cannot fully fix in firmware; document for
+          installers. External antennas would close the gap.
+       3. Asymmetric path obstructions (laptop / mug / cable near one
+          side). Real RF reciprocity breaks down in cluttered spaces.
+       4. AGC + noise floor differences between two radios. ±2 dB even
+          for identical chips.
+       5. EMA history skew during fast distance changes — converges
+          within ~10–20 s.
+       6. Local interference (USB hub, WiFi AP, microwave) near one node
+          but not the other.
+    POSSIBLE FUTURE WORK:
+       a. Pair-aware calibration mode: run the wizard once per pair
+          (instead of per-device), store per-peer calibration constants
+          rather than the current single-tx-power-per-node. Closes the
+          calibration-mismatch gap entirely. ~half-day of firmware work
+          (extend AppConfig to a small per-MAC calibration map).
+       b. Auto-calibration: when 3 nodes are at known fixed positions
+          (anchors), compute path-loss exponents per pair from the
+          observed RSSI-vs-known-distance data. No operator wizard
+          required. ~1 day of firmware work.
+       c. Dashboard "asymmetry health" badge: per pair, compute |A→B − B→A|
+          and colour-code green / yellow / red against a threshold.
+          Surfaces calibration drift without operator interpretation.
+          Pure Node-RED change.
+       d. Document the figure-of-8 antenna pattern in the operator
+          install guide so site planners orient nodes thoughtfully.
+    PRIORITY: Medium for (a) and (c) — both improve perceived accuracy
+              materially without big effort. Low for (b) — needs anchors,
+              which the current sites don't have.
+
+39. ESP-NOW calibration — multi-point + arbitrary-distance variants
+    OBSERVATION (2026-04-25):  The current calibration wizard is hard-coded
+    to 1 m + 1 operator-chosen distance. Two real-world gaps emerged:
+       (a) Ceiling-mounted nodes can't easily be brought down to 1 m.
+       (b) The 2-point fit has no outlier resistance — if either of the
+           two median samples is contaminated (passing person, wall
+           reflection burst), the resulting tx_power_dbm / path_loss_n
+           are silently bad, with no way for the operator to know.
+    PROPOSAL — two new modes coexisting with the current one:
+
+    A. ARBITRARY two-point mode
+       New cmd: cmd/espnow/calibrate {"cmd":"measure_at","peer_mac":"...","distance_m":2.5,"samples":30}
+       Operator runs measure_at twice at two known distances (any two,
+       not constrained to 1 m). Commit fits both unknowns simultaneously:
+           tx_power_dbm = rssi_a + 10*n*log10(d_a)
+           n = (rssi_a - rssi_b) / (10 * (log10(d_b) - log10(d_a)))
+       Use case: ceiling installs where 1 m is impractical.
+       Effort:   ~1 h firmware (extend espnowCalibrateCmd state machine).
+
+    B. MULTI-POINT mode
+       Operator collects N >= 3 measurements (e.g. defaults 1 m / 3 m /
+       5 m / 10 m, editable). Firmware accumulates the (d, rssi_median)
+       pairs in RAM. On commit, performs least-squares linear fit in
+       (log10(d), rssi) space and computes:
+         - tx_power_dbm and path_loss_n (best-fit values)
+         - R^2 of the fit (model goodness-of-fit, 1.0 = perfect)
+         - residuals per point (operator-visible diagnostic)
+       Publishes the full result set to .../response so Node-RED can
+       render: a fit-quality badge (green if R^2 >= 0.9, yellow 0.7-0.9,
+       red below) and an optional residuals plot.
+       Use case: warehouse / outdoor / known-multipath sites where the
+       2-point estimate is unreliable.
+       Effort:   ~half-day firmware (RAM buffer + linreg) + ~half-day
+                 Node-RED (dynamic form for adding measurement points,
+                 residuals visualisation).
+
+    PRIORITY: Low-medium. The current 2-point flow is adequate for the
+              dominant office-install case. These modes pay off in
+              awkward installs (ceiling, warehouse) and for operators
+              who want quantitative confidence in the calibration.
+              Worth bundling A + B together since they share most of
+              the state-machine extension.
+
+38. ESP-NOW ranging — runtime-tunable beacon / publish intervals
+    WHERE:    include/config.h (ESPNOW_BEACON_INTERVAL_MS = 3000UL,
+              ESPNOW_PUBLISH_INTERVAL_MS, ENR_PEER_STALE_MS) — currently
+              compile-time only.
+    PROBLEM:  3 s beacon / 2 s publish is comfortable for slow-walking-pace
+              tracking but too sluggish for active testing or fast-motion
+              detection. Operators have no way to switch modes per session
+              short of editing config.h, rebuilding, and OTA-ing the fleet.
+    FIX:      Add three retained MQTT command topics (or a single bundled
+              cmd/espnow/timing taking a JSON object):
+                cmd/espnow/timing → {"beacon_ms":500,"publish_ms":500,"stale_ms":3000}
+              Apply at runtime; persist in NVS alongside the existing
+              calibration constants. Validate ranges (e.g. beacon_ms ∈
+              [200, 60000]) and reject out-of-band values silently.
+    PRACTICAL VALUES (from 2026-04-25 walk-through discussion):
+       - "Walk-pace" (current default): 3000 / 2000 / 15000
+       - "Active testing":              500  / 500  / 3000   (alpha→0.5)
+       - "Sub-second motion":           200  / 500  / 1500   (alpha→0.6)
+    CONSTRAINTS:
+       - Floor: ~200 ms beacon — below this the ±20% jitter window
+         collapses and channel contention with WiFi MQTT path matters.
+       - Battery devices: keep beacon ≥3 s; sub-second beacon prevents
+         any meaningful sleep.
+       - At fast intervals, EMA alpha needs to rise (less smoothing,
+         since you have more samples per second). Calibration also
+         finishes proportionally faster — net positive.
+    BENEFIT:  Operator can pick a regime that matches the test scenario
+              without a firmware build. Pairs well with a Node-RED preset
+              dropdown ("Slow / Standard / Fast / Sub-second").
+    PRIORITY: Medium — clear UX win for the ESP-NOW v2 dashboard tab.
+              Defer until interval tuning is actually wanted in the field.
+
+41. Hardware finding — breakout board + RFID-RC522 distort the WROOM antenna
+    OBSERVATION (2026-04-25): During calibration walk-through, ran an A/B/C/D
+    test of the same two devices in different mounting configurations. The
+    breakout board in use is the "ESP32-S 30P expansion board" with an
+    MFRC522 RFID module wired to its 8 SPI/IRQ/RST/3v3/GND pins. Distance
+    Alpha-to-Charlie was held constant for the comparisons.
+
+    Configuration                                                              Alpha->Charlie   Charlie->Alpha   Asymmetry
+    A. Alpha on breakout (RFID powered),    Charlie bare                              -76              -53        23 dB
+    B. Both bare                                                                      -77              -72         5 dB    <- baseline
+    C. Charlie on breakout (RFID powered),  Alpha bare                                -76              -70         6 dB
+    D. Charlie on breakout (RFID UN-powered),  Alpha bare                             -80              -67        13 dB
+    E. Alpha on breakout (RFID UN-powered), Charlie bare                              -72              -61        11 dB
+       (Alpha powered via its own micro-USB)
+    F. Alpha on breakout (RFID UN-powered), powered VIA breakout VIN, Charlie bare    ~-50*            -67       ~17 dB
+       *raw RSSI jumped from -72 to ~-47 dBm (+25 dB on Alpha's TX)
+       but Charlie's outlier gate rejected the new samples (deviation > 15 dB
+       from old EMA), so rssi_ema stayed stuck at -83 and rejects climbed
+       continuously. EMA only updates after a power-cycle / 15 s peer
+       eviction / outlier_db widening.
+    G. Charlie on breakout (RFID UN-powered), powered VIA breakout VIN, Alpha bare    -79              -56        23 dB
+       (Charlie's TX boosted ~+20 dB vs C/D where it was on the breakout but
+       USB-powered. Charlie's RX path unchanged at ~-79. Confirms the
+       power-path effect is reproducible: whichever device is powered via
+       its breakout's VIN gains the TX boost. Asymmetry direction therefore
+       depends on which device is on the breakout — it always favours the
+       powered-via-VIN device's TX path.)
+
+    H. Charlie on breakout, VIN-powered, RFID powered + correctly wired, Alpha bare  -85              -57        28 dB
+       Compared to G (same setup, RFID off): Charlie's RX dropped 6 dB
+       (-79 -> -85) while TX held steady at -57 (already at the VIN-powered
+       max). Confirms the RFID coil reduces RX sensitivity of the host
+       WROOM by ~6 dB even when the breakout regulator is healthy. TX
+       was already saturated by the VIN-power effect, so the coil's
+       additional perturbation could not push it further.
+
+    I. Alpha on breakout, VIN-powered, RFID powered, Charlie bare                     -63              -42        21 dB
+       Mirror of H with Alpha on the breakout instead of Charlie. Both
+       directions stronger than the USB-powered RFID variant (config A:
+       -76 / -53). Alpha's TX (Charlie's view): -76 -> -63 = +13 dB from
+       VIN power. Alpha's RX (its own view of Charlie): -53 -> -42 = +11 dB.
+       Charlie's bare TX at -42 dBm is approaching receiver-saturation
+       territory; EMA tracking can become non-linear above approximately
+       -40 dBm because the WROOM's AGC compresses. Per-device asymmetry
+       direction: VIN-powered+RFID side dominates BOTH TX and RX in this
+       case, but the RX dominance came from the breakout coupling rather
+       than directly from VIN power (we observed earlier in config G that
+       VIN power alone primarily boosts TX). Adding RFID amplifies the
+       RX-coupling component on the host device.
+
+    Cautionary footnote (originally captured as the broken H):
+       During this test we accidentally hit a separate failure mode: an
+       RC522 wired with 3v3/GND SWAPPED appears identical to a real
+       brownout from the dashboard side (peer goes silent, retained LWT
+       persists, no boot event arrives). When debugging "device suddenly
+       offline after I touched the wiring", verify polarity FIRST and
+       inspect for damaged components on both the RC522 and the breakout
+       regulator before assuming a software / radio issue.
+
+    STATISTICAL SUMMARY (10-config sweep, see docs/RF_CONFIG_TEST_2026_04_25.md
+    for the raw data and full analysis):
+
+       Reproducibility (bare-bare measured twice):
+          Asymmetry noise floor: ~2 dB.  Absolute RSSI noise: ~5 dB.
+          So differences smaller than ~5 dB across configurations are
+          not statistically significant.
+
+       Mean asymmetry change vs bare-bare baseline (4 dB):
+          Adding the breakout PCB alone           +8 dB asymmetry
+          Adding the RFID coil to the breakout    -7 to +12 dB (per-device)
+                                                  range 19 dB,
+                                                  unpredictable direction
+          Switching USB power -> VIN power        +9 dB asymmetry
+                                                  but +7 dB stronger TX
+
+       Mean signal level change vs bare-bare:
+          USB-cable removal (VIN power)           +7 dB stronger
+          Otherwise +/- 2 dB across configs.
+
+       Worst-case stack (breakout + RFID + VIN power, configs H/I):
+          +17 to +24 dB worse asymmetry than baseline.
+          Translates to ~9x distance error in one direction relative to
+          the other at typical office path-loss exponent (n=2.5).
+
+       Per-device variation:
+          The same physical configuration gives noticeably different
+          asymmetry depending on which WROOM module is on the breakout
+          (up to 17 dB spread for "breakout + RFID + USB-power").
+          Calibration constants are NOT transferable between mountings.
+
+    REVISED PRIORITY ORDER for the user's current hardware (descending impact):
+       1. Mount RC522 on a separate small board, >=5 cm from WROOM antenna.
+          (Restores most of the lost reciprocity. Cheap mechanical fix.)
+       2. Standardise power path: pick USB or VIN for the whole fleet, not
+          mixed. Reproduce in both calibration and operation.
+       3. Standardise breakout-vs-bare for the whole fleet. Don't mix.
+       4. Route USB power cables AWAY from the WROOM antenna (>=10 cm
+          clearance, perpendicular if possible). USB cables in the antenna
+          near-field cost 5-10 dB asymmetry and up to 25 dB TX boost on
+          one direction (parasitic radiator effect).
+       5. Calibrate each device in its exact final mounting AND position.
+          Both hardware AND room multipath contribute to ranging behaviour.
+          A device calibrated at desk position A will be wrong at position B
+          even with identical hardware mounting.
+       6. (Firmware) Add EMA-reseed-on-step-change to peer_tracker.h —
+          avoids stuck-EMA failure mode after any environmental change.
+       7. (Firmware) Add per-peer calibration constants — partial fix
+          for residual per-pair asymmetry that hardware redesign does not
+          fully eliminate.
+
+    POSITION-VS-HARDWARE DECOMPOSITION (added 2026-04-25 from Part B
+    swap experiments — see RF_CONFIG_TEST_2026_04_25.md Section B):
+       Apparent per-device "Charlie's TX is +18 dB stronger" decomposes
+       into:
+          ~8-12 dB genuine per-device hardware variation
+                 (still well over ESP32 datasheet ±2 dB spec)
+          ~5-10 dB per-position multipath effect
+                 (Charlie's original spot was an environmentally favourable
+                 location for TX in Bravo's direction by ~9 dB)
+       Position effect was confirmed by physically swapping Alpha and
+       Charlie — when Alpha occupied Charlie's old spot, Bravo's view of
+       Alpha's TX gained +9 dB versus when Alpha was at its original spot.
+       Implication: in real deployments, ranging accuracy depends on the
+       SPECIFIC mounting LOCATION, not just the device + cable + antenna
+       configuration. Calibration must be done at the deployment location;
+       moving a calibrated device 1 m laterally invalidates the calibration
+       by ~5-10 dB.
+
+    Side observation — accidental anchor persistence:
+       During the same dashboard walk-through, an Anchor-form click
+       slipped through and committed Alpha as anchor at (0, 0, 0):
+         retained: cmd/espnow/anchor = {"role":"anchor","x_m":0,"y_m":0,"z_m":0}
+       This persists in NVS and rides on every status heartbeat.
+       Implications:
+         (a) Future Map-tab multilateration will treat Alpha as a fixed
+             anchor at the origin — almost certainly wrong physically,
+             would corrupt position estimates of mobile peers.
+         (b) The dashboard makes it easy to commit an anchor with default
+             values (0, 0, 0) by clicking Save without filling in real
+             coordinates. Form should default `is_anchor` to false and
+             require an explicit confirmation when committing (0, 0, 0)
+             coordinates with `is_anchor: true`.
+       Cleanup: publish retained `{"role":"mobile"}` to Alpha's
+       cmd/espnow/anchor topic (or use the Anchor form with is_anchor
+       UNticked) before any production use.
+
+    Take-aways (cross-comparing configs):
+       - Bare-bare (B) is the most symmetric configuration. The 5 dB delta
+         is plausible random antenna-pattern variation between two boards.
+       - The breakout alone (without RFID) still distorts: configs D and E
+         both show 11-13 dB asymmetry. The expansion board's metal traces
+         and ground plane are themselves enough to reshape the WROOM's
+         antenna pattern. RFID is not the only culprit.
+       - The RFID coil ON TOP of the breakout adds another layer:
+            Compare A (Alpha + breakout + RFID powered) vs E (Alpha +
+            breakout + RFID disconnected): with RFID powered, Alpha's RX
+            of Charlie went from -61 to -53 (an extra 8 dB RX boost).
+            The TX side moved from -72 to -76 (4 dB worse).
+            So the powered RFID coil is a strong parasitic radiator that
+            HELPS RX but HURTS TX of the device it sits on.
+       - Effect is per-device-per-direction. Configs A (Alpha + breakout +
+         RFID) and C (Charlie + breakout + RFID) at the same physical
+         distance give very different asymmetries (23 vs 6 dB), even though
+         it's the "same" configuration just on a different module. So the
+         specific physical interaction between THIS WROOM and THIS breakout
+         matters — likely down to PCB tolerances or how cleanly the WROOM
+         seats in the headers.
+       - POWER-PATH effect (configs F + G): changing where the WROOM's
+         power feeds in (its own micro-USB vs. through the breakout's VIN
+         pin) added ~20-25 dB to that device's TX strength. RX side stays
+         essentially unchanged. This is the SINGLE LARGEST EFFECT measured
+         in the seven configurations — bigger than the breakout itself
+         (~10 dB), bigger than the RFID coil (~8 dB). Reproduced on both
+         Alpha (config F) and Charlie (config G), confirming it's not a
+         per-device quirk.
+         Likely mechanism: the micro-USB cable (when used for power) acts
+         as a parasitic antenna near the WROOM trace antenna. Its length,
+         position, shield grounding, and proximity to the antenna pull the
+         WROOM's radiation pattern off-axis and absorb / re-radiate energy.
+         Removing the USB cable (powering via breakout VIN instead) removes
+         that parasitic and recovers the WROOM's intended TX behaviour.
+         POWER WIRING IS PART OF THE RF DESIGN. Mounting AND cable layout
+         must be reproduced exactly during calibration and during operation.
+         For accurate ranging, the recommended deployment power path is
+         **through the breakout's VIN pin (or a similar non-USB path)**,
+         with the calibration done in that exact configuration.
+
+    Secondary firmware finding from config F:
+       Charlie's peer_tracker outlier gate (default 15 dB) silently
+       discarded every strong frame after Alpha's TX jumped, leaving its
+       rssi_ema and dist_m stuck at the old weak values while the rejects
+       counter climbed continuously. There is no way for the EMA to
+       recover from a real-world step-change of >15 dB except via peer
+       eviction (15 s silence), full reset, or temporarily widening the
+       outlier threshold. CONSIDER: an "EMA-jump-detection + reset" branch
+       in peer_tracker.h that, if N consecutive frames all deviate the
+       same direction by more than outlier_db, accepts them and re-seeds
+       the EMA. Avoids a stuck EMA when a device is moved, repowered, or
+       the install changes. Half-day firmware change.
+    INTERPRETATION:
+       The breakout + RFID combination acts as a parasitic structure that
+       reshapes the WROOM's antenna radiation pattern. The effect is
+       per-device, per-direction, and per-RFID-state. RSSI reciprocity
+       (the fundamental assumption of all RSSI-distance models) is broken
+       in hard-to-predict ways even within a uniform-hardware fleet.
+    IMPLICATIONS:
+       1. Calibration on a breakout-mounted device captures the boosted TX
+          but the RX side is still the unboosted trace antenna. Distance
+          estimates Alpha-computes-from-Charlie's-frames will always be
+          dominated by Alpha's weaker RX, not the boosted-TX numbers
+          that calibration step 1 captured. Mismatch between step 1 and
+          runtime behaviour.
+       2. The Pair Chart's bidirectional-distance asymmetry is largely
+          this hardware effect, not a real geometric asymmetry.
+       3. For accurate ranging, ALL devices should be in the SAME hardware
+          configuration AND that configuration should ideally not introduce
+          parasitic radiation. Bare board with deliberate ground plane is
+          probably more honest than the current breakout.
+    RECOMMENDATIONS:
+       a. For accurate ranging, prefer BARE BOARDS or a clean carrier PCB
+          designed for RF (proper ground plane, antenna keep-out zone, no
+          metal traces or coils within 3 cm of the WROOM antenna). The
+          current "ESP32-S 30P + RC522" combo is the worst case — the RFID
+          coil sits very close to the WROOM trace antenna.
+       b. If RFID functionality is required, mount the RC522 on a SEPARATE
+          board connected by a short cable, with the coil placed >5 cm
+          from the WROOM antenna. Or move the RFID coil to the opposite
+          end of the device chassis from the antenna.
+       c. Consider an ESP32-WROOM module variant with U.FL connector +
+          external antenna — that sidesteps the trace-antenna detune
+          problem entirely.
+       d. Document the breakout/RFID effect in the install guide so
+          operators don't mix configurations within a fleet, and so that
+          ranging accuracy expectations are realistic in this hardware.
+       e. Add a fleet-config consistency check to the dashboard: surface a
+          warning if pair RSSI asymmetry exceeds ~15 dB consistently —
+          that's a near-certain hardware-config or mounting-config mismatch
+          rather than an environmental effect.
+       f. Calibrate every device IN THE EXACT MOUNTING IT WILL DEPLOY IN.
+          Same breakout. Same orientation. Same RFID power state. Same
+          nearby cables. Otherwise calibration constants do not transfer.
+    PRIORITY: Medium for documentation (entry #40 install guide should
+              cite this). Medium for separating the RFID coil from the
+              WROOM antenna in any v2 hardware design — that's the cheap
+              hardware fix that recovers reciprocity.
+
+40. Operator install guide — ESP32-WROOM antenna orientation
+    OBSERVATION (2026-04-25):  During calibration walk-through a tx_power_dbm
+    of -91 was seen at "1 m" — ~36 dB worse than the typical -50 to -55 dBm
+    a normally-oriented WROOM gives at 1 m. Almost certainly antenna
+    null / parasitic absorption from a nearby cable. There is currently no
+    documentation telling field installers how to orient nodes.
+    ROOT CAUSE: ESP32-WROOM PCB trace antennas are NOT omnidirectional.
+    The radiation pattern is a figure-of-8 in the plane of the PCB:
+       - Two strong lobes off the antenna END of the board.
+       - Two deep nulls off the long EDGES of the board.
+       - Sensitivity to nearby metal (ground planes, USB cables, batteries)
+         within ~3 cm of the antenna trace — those detune the radiator
+         and reshape the pattern unpredictably.
+    DELIVERABLE: a short install-guide section (Markdown in docs/, or a
+    page inside the AP-portal HTML) with:
+       1. A figure-of-8 pattern diagram showing the antenna end vs edges.
+       2. Orientation rules:
+          - Antennas pointed AT each other (board-end to board-end). Best.
+          - Avoid edge-on alignment between two nodes — that's the null.
+          - Keep ≥3 cm clear around the antenna (no cables / metal / hand).
+          - Do NOT mount directly on a metal surface (use plastic standoffs).
+          - Calibrate in the SAME orientation the device will be deployed in.
+            A desk calibration does not transfer to a ceiling install.
+       3. A field-test recipe: rotate one device 90° while watching the
+          Live signal in the v2 wizard, find the orientation that gives the
+          MOST positive RSSI (least negative dBm), calibrate from there.
+       4. RF environment checklist (added 2026-04-25 after observing
+          calibration values consistent with receiver desense):
+          - WiFi router proximity: keep at least 2 m between the test
+            devices and the AP during calibration. A router transmitting
+            1-2 m away can desense the ESP32 LNA enough to lose 5-15 dB of
+            apparent RSSI on faint ESP-NOW frames. Symptom: stuck low
+            RSSI values like -88..-91 at supposed 1 m, with very tight
+            variance (only the strongest beacons make it through; weak
+            ones drop out entirely so the distribution is skewed).
+          - WiFi channel: ESP-NOW is channel-pinned to the AP's channel
+            (currently channel 6 in this fleet). If neighbouring WiFi
+            networks are crowded on the same channel, ESP-NOW competes
+            for airtime. Mitigation: configure the AP on channel 1 or 11
+            so channel 6 is quiet for ESP-NOW. (Or vice versa — pick
+            whichever channel is least crowded in the installation.)
+            Use `netsh wlan show networks mode=bssid` (Windows) to survey.
+          - WiFi MQTT activity: heavy MQTT upload bursts monopolise the
+            shared radio briefly and cause ESP-NOW frame loss windows.
+            Calibrate during quiet periods if possible.
+          - Bluetooth devices in the room: BT headsets, mice, trackpads
+            transmit in the same 2.4 GHz band and add to the noise floor.
+            Switch them off during calibration if practical.
+          - Microwave ovens within ~5 m: leaky 2.4 GHz emitter, will
+            ruin RSSI measurements while running.
+          - Time of day: in offices, neighbouring WiFi traffic is lighter
+            06:00-08:00 and 20:00-22:00. Calibrate at off-peak if the
+            channel survey is bad.
+          - Test recipe: do an A/B run of the same calibration pair, once
+            close to the router and once 3 m from it. If the RSSI shifts
+            by >5 dB between the two, the RF environment is dominating
+            the measurement and any calibration there is unreliable.
+    BENEFIT:  Closes the single biggest source of bad first-time calibration
+              data. Especially valuable when handing the system to a
+              non-RF-aware installer.
+    PRIORITY: High for any deployment outside the dev bench. Cheap to
+              produce — half a day of writing + one diagram.
+
+42. ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
+    OBSERVATION (2026-04-25): Calibration takes 30 samples per step at the
+    default 3 s beacon interval = ~90 s per step, ~3 minutes total per
+    device-pair. Active tracking of someone walking has noticeable lag
+    when the chart updates every 2-3 s. During first-install setup, the
+    operator wants instant feedback when they move a device or rotate it.
+    But the default 3 s / 2 s rates are correct for steady-state operation
+    (low power, low channel contention).
+    PROPOSAL — short-lived rate boosts triggered by specific events,
+    auto-reverting after a timer or on event-end:
+       Mode             Beacon  Publish  Stale    Auto-revert after
+       ----             ------  -------  -----    -----------------
+       Steady (default) 3000    2000     15000    -
+       Active tracking  500     500      3000     30 s of no chart pan/
+                                                  motion-detection trigger
+       Calibrating      500     500      2500     'committed' / 'reset' /
+                                                  60 s of no measurement
+       Setup            300     500      1500     5 min, or operator-end
+       Battery save     10000   10000    60000    permanent until toggled
+
+    TRIGGERS:
+       - Calibrating mode: dashboard sets it on 'started' event for that
+         device. Reverts on 'committed' / 'reset' / 'error' or 60 s of no
+         measurement. Cuts calibration time from 90 s/step to 15 s/step.
+       - Active tracking: a chart-pan event in the dashboard (operator is
+         actively watching) sets it for the entire fleet. Reverts after
+         30 s of operator inactivity.
+       - Setup: operator clicks a "Setup" button on the dashboard before
+         physically moving a device. Reverts after 5 min or explicit end.
+       - Battery save: per-device toggle for deployments running off cells.
+
+    IMPLEMENTATION:
+       - Builds on entry #38 (runtime-tunable intervals) — that's the
+         underlying mechanism. This entry adds:
+           a) per-device-and-per-pair scoping (so calibrating one pair
+              doesn't speed up the whole fleet)
+           b) auto-revert timers on the firmware side
+           c) dashboard buttons that publish 'enter mode X' / 'exit mode X'
+              retained MQTT commands the firmware listens for
+       - cmd/espnow/mode {"mode":"calibrating","timeout_s":120}
+       - On timeout or 'exit' command: revert to steady defaults.
+    BENEFIT:
+       - Calibration UX: 90 s -> 15 s per step (6x faster), encourages
+         operators to actually run the wizard instead of skipping it.
+       - Active-tracking UX: smoother chart, sub-second motion latency.
+       - Battery deployments: keep low-power default, enter active mode
+         only when needed.
+    CAVEATS:
+       - Channel contention: at 500 ms beacon, three devices = ~6 broadcasts/
+         second total, still cheap. A 10-device fleet at 200 ms = 50/s,
+         which starts to interfere with shared WiFi airtime.
+       - Power consumption rises proportionally to beacon rate. Battery-
+         powered nodes need the auto-revert hard-deadline to be enforced.
+       - Outlier gate (15 dB default) needs to be re-tuned at higher
+         sample rates or it'll reject too aggressively. Active mode might
+         pair with outlier_db = 25, then revert.
+    PRIORITY: Medium. Big UX win for calibration alone. Pairs naturally
+              with #38 (runtime tunable intervals) — implement them
+              together as one feature.
