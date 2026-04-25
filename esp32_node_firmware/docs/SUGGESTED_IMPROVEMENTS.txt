@@ -540,6 +540,137 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
                  fleet OTA without this WILL hit the same rollback
                  cascade.
 
+    ──── Second post-mortem addendum 2026-04-25 (v0.4.07 OTA pass) ────
+    During the v0.4.07 release, fleet OTA was attempted with the triangle
+    on power banks (Charlie/Delta/Echo) and Bravo on USB-PC for serial
+    visibility. Two distinct failure modes were observed; v0.4.07
+    firmware itself proved healthy on the USB-PC unit.
+
+    Outcomes:
+       - Bravo (USB-PC, OTA from v0.4.06 claim → v0.4.07):
+            * Download progressed cleanly to ~70 %.
+            * PANIC during esp_partition_write → spi1_end →
+              cache_enable → spi_flash_enable_interrupts_caches…
+              → _xt_coproc_restorecs (EXCCAUSE 0 = IllegalInstruction).
+            * Bootloader rolled back to original v0.4.06 partition.
+            * Repeatable on Bravo specifically (same module had the
+              v0.4.06 hard-reset documented in the prior addendum).
+            * NOT v0.4.07 specific — same call stack would hit any
+              version. Bravo-specific module flake or USB-power-related.
+            * MITIGATION: reflashed Bravo via serial (`pio run -t
+              upload`) — clean boot at v0.4.07, sustained 5+ minutes.
+
+       - Charlie (triangle, power-bank, OTA from v0.4.06):
+            * Download + flash succeeded — boot announcement WAS
+              published at v0.4.07, so app0 took the new image.
+            * task_wdt fired during the 5-min Phase-2 validation
+              window before otaValidationConfirmHealth() could mark
+              the partition valid.
+            * Bootloader rolled back to v0.4.06 partition. Boot
+              announcement on v0.4.06 reports boot_reason=task_wdt
+              (the task watchdog that caused the rollback).
+            * Same failure mode triangle devices hit on v0.4.06 OTA:
+              cold boot → WiFi association in triangle position
+              consumes too much of the validation budget → MQTT
+              connect happens but a background task starves and
+              triggers task_wdt before Phase-2 validation runs.
+
+       - Bravo (USB-PC) running v0.4.07: 5 min uptime, no task_wdt,
+            heartbeats arrive every 60 s as expected. Confirms
+            v0.4.07 firmware itself is HEALTHY in steady state.
+
+    ROOT-CAUSE-DELTA: the OTA failure mode is environment-driven, not
+    firmware-driven. v0.4.07 source code is identical to what runs
+    cleanly on Bravo. The triangle position (~5 m from AP through a
+    wall) compounds:
+       a. Slower WiFi association → eats into the 5-min Phase-2 budget
+       b. Lower-quality MQTT keepalive → background task can starve
+       c. Power-bank power: borderline brownout margins under boot
+          peak current (radio + flash + ESP-NOW init simultaneously)
+
+    OPTIONS for the triangle fleet (deferred — calibration UX work
+    can proceed using Bravo as the v0.4.07 calibration node):
+
+       A) Serial-flash each triangle device one at a time. Disruptive
+          (triangle dismantles temporarily) but reliable.
+       B) Move each triangle device to PC USB for OTA, return after
+          validation. Same disruption as A, no benefit over A.
+       C) Extend OTA_VALIDATION_DEADLINE_MS from 5 min → 10 min for
+          triangle devices specifically. Risks masking real faults
+          (the original 5 min was tuned for the failure-detection
+          window) — use a per-device override only as last resort.
+       D) Add a Node-RED / firmware coordination: pause beacon
+          publishing during the first 60 s of post-OTA boot so
+          the new image has more headroom for WiFi+MQTT setup.
+          Smallest disruption; defer to v0.4.09+.
+
+       ACCEPT-CURRENT for v0.4.07: Bravo on v0.4.07, triangle on
+       v0.4.06. Calibration commands work on v0.4.07 (the device
+       receiving the commands). Triangle ranging works fine on
+       v0.4.06 (the EMA-reseed fix is already in v0.4.06).
+
+    ──── v0.4.08 FIX (shipped 2026-04-25) ────────────────────────────
+    Two surgical changes in v0.4.08 to address the failure modes:
+
+    Fix 1 — esp_now_unregister_recv_cb() + esp_now_deinit() in
+            otaCheckNow() AFTER the BLE deinit + heap pre-flight
+            but BEFORE the esp_https_ota download begins
+            (include/ota.h, just before the loopTask wdt_add).
+            REASON: ESP-NOW receive callbacks are not IRAM_ATTR.
+            esp_partition_write disables instruction caches while
+            programming flash; if a frame arrives during that window,
+            the callback dispatch path tries to execute flash-resident
+            code and the CPU faults with EXCCAUSE 0 (IllegalInstruction
+            in _xt_coproc_restorecs).
+            EVIDENCE: Bravo's v0.4.07 OTA stack trace at 70 % progress
+            shows exactly this fault, inside esp_partition_write →
+            spi_flash_enable_interrupts_caches_and_other_cpu →
+            _xt_coproc_restorecs.
+            EXPECTED OUTCOME: silent-hang (Alpha) and panic-mid-write
+            (Bravo) failure modes both eliminated. The triangle fleet's
+            beacons-every-3-s no longer race the flash write.
+
+    Fix 2 — espnowRangingLoop() early-returns if otaValidationIsPending()
+            AND millis() < ESPNOW_POST_OTA_QUIET_MS (30 s default).
+            REASON: Charlie's v0.4.07 OTA flashed cleanly and booted
+            v0.4.07, but task_wdt fired during the validation window
+            before otaValidationConfirmHealth() ran. Triangle position
+            costs ~5–8 s of WiFi association; while that's blocking,
+            ESP-NOW beacon TX + receive callback work eats loopTask
+            budget and starves the WiFi+MQTT setup path.
+            EXPECTED OUTCOME: triangle devices get a clean 30 s
+            head-start to associate, connect MQTT, publish heartbeat,
+            and call otaValidationConfirmHealth() before any beacon
+            traffic resumes. After that, ESP-NOW ranging continues
+            normally.
+
+    NOT changed (deliberately):
+       - OTA_VALIDATION_DEADLINE_MS stays at 5 min. Extending it
+         would mask real fault detection. The fix removes the
+         starvation, not the deadline.
+       - OTA_PROGRESS_TIMEOUT_MS stays as-is — the progress watchdog
+         is independent of the cache-disabled-fault class.
+
+    ──── Third failure mode — silent hang (Alpha, observed 2026-04-25):
+       Alpha was OTA-triggered earlier in the same v0.4.07 rollout
+       and went silent: built-in blue status LED stuck SOLID ON,
+       MQTT LWT fired (offline message published).
+       The LED-pattern table in led.h has only two states that
+       hold the LED solid HIGH:
+            BOOT         — early-boot, before WiFi up
+            OTA_UPDATE   — set on cmd/ota_check entry, cleared on
+                           OTA exit (success OR error)
+       Alpha is therefore stuck inside the OTA code path with no
+       clean panic to trigger watchdog reset. Likely a flash-write
+       cache-restore stall (similar to Bravo's panic but the panic
+       handler itself didn't fire — possibly because IRAM wasn't
+       reachable when the fault hit).
+
+       MITIGATION: manual power-cycle is the only recovery from
+       this state. Park Alpha for now (not blocking calibration
+       work). Document as a third v0.4.07-OTA failure mode beyond
+       Bravo (panic mid-write) and Charlie (task_wdt mid-validate).
+
     ──── Post-mortem addendum 2026-04-25 (Bravo USB-PC OTA retry) ────
     After the fleet rollback, an attempt was made to OTA Bravo while
     it was connected to PC USB on COM5 with the serial monitor running

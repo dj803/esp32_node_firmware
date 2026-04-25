@@ -10,6 +10,7 @@
 #include "ranging_math.h"     // rssiToDistance()
 #include "mac_utils.h"        // macToString()
 #include "peer_tracker.h"     // PeerTracker<N>
+#include "ota_validation.h"   // (v0.4.08) otaValidationIsPending() — gate beacons during validation window
 
 // =============================================================================
 // espnow_ranging.h  —  Passive RSSI-based distance estimation for ESP-NOW peers
@@ -504,6 +505,29 @@ void espnowRangingLoop() {
 
     uint32_t now = millis();
     _enrPeers.setNow(now);
+
+    // (v0.4.08) Post-OTA validation window suppression.
+    //
+    // For the first ESPNOW_POST_OTA_QUIET_MS milliseconds of a boot that's
+    // still in the OTA validation window, we DO NOT broadcast beacons or
+    // publish to MQTT. This frees radio time and CPU budget for WiFi
+    // association + MQTT setup + heartbeat — the steps that
+    // otaValidationConfirmHealth() depends on to mark the new image valid.
+    //
+    // Why: triangle-position devices on power-bank power take 5–8 s to
+    // associate with the AP after a cold OTA boot. While that's happening,
+    // ESP-NOW beacon TX (every 3 s) eats radio time + the receive callback
+    // path enqueues work onto the loopTask, contributing to task watchdog
+    // pressure. Charlie's v0.4.07 OTA died exactly here: task_wdt fired
+    // before MQTT validation completed, partition rolled back to v0.4.06.
+    //
+    // Skipping the beacon doesn't affect ranging quality on peers — they
+    // continue beaconing on their own; this device just doesn't HEAR the
+    // first ~30 s of distance estimates after an OTA. Tradeoff: 30 s of
+    // missing data vs. a forced rollback.
+    if (otaValidationIsPending() && now < ESPNOW_POST_OTA_QUIET_MS) {
+        return;
+    }
 
     // ── 1. Beacon broadcast ───────────────────────────────────────────────────
     if (now - _enrLastBeacon >= _enrNextBeaconInterval) {

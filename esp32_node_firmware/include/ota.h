@@ -8,6 +8,7 @@
 #include <esp_http_client.h>
 #include <esp_crt_bundle.h>    // built-in CA bundle for esp-tls
 #include "esp_task_wdt.h"  // esp_task_wdt_delete — unsubscribe async_tcp before download
+#include <esp_now.h>       // esp_now_deinit() before flash write — see v0.4.08 fix below
 #include "config.h"
 #include "logging.h"
 #include "fwevent.h"
@@ -422,6 +423,33 @@ void otaCheckNow(bool isSiblingRetry) {
           heap_caps_get_free_size(MALLOC_CAP_8BIT),
           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #endif
+
+    // (v0.4.08) Stop ESP-NOW BEFORE the blocking flash write.
+    //
+    // ESP-NOW receive callbacks are NOT marked IRAM_ATTR. esp_partition_write
+    // disables instruction caches while it programs flash. If a frame arrives
+    // during that cache-disabled window, the callback dispatch path tries to
+    // execute flash-resident code (the registered recv callback or anything it
+    // pulls in) and the CPU faults with EXCCAUSE 0 (IllegalInstruction in
+    // _xt_coproc_restorecs / spi_flash_enable_interrupts_caches_and_other_cpu).
+    //
+    // Empirical case: every v0.4.07 OTA attempt on Bravo/Alpha repeatably
+    // panicked at 60–70 % flash progress with this exact stack. The triangle
+    // ranging fleet broadcasts ESP-NOW beacons every ~3 s, so a frame is in
+    // flight on every chunk write — the panic is statistical, not random.
+    //
+    // The device reboots on every code path below (success → ESP.restart, all
+    // failure paths → ESP.restart), so we never need to bring ESP-NOW back up
+    // here. setup() re-inits it on the next boot.
+    esp_now_unregister_recv_cb();
+    esp_err_t enErr = esp_now_deinit();
+    if (enErr == ESP_OK) {
+        LOG_I("OTA", "ESP-NOW de-initialised before flash write");
+    } else {
+        // Non-fatal — proceed; the deinit failing usually means it wasn't
+        // initialised yet (e.g. AP-mode boot that never reached operational).
+        LOG_I("OTA", "ESP-NOW deinit returned %d (likely never initialised)", enErr);
+    }
 
     // ── Pre-flight heap gate (v0.3.33) ───────────────────────────────────────
     // After all teardown / deinit has completed but BEFORE we kick off the

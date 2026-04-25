@@ -36,9 +36,9 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.4.07"
+#define FIRMWARE_VERSION           "0.4.08"
 #endif
-#define FIRMWARE_BUILD_TIMESTAMP   1745625600ULL   // 2026-04-26 00:00:00 UTC
+#define FIRMWARE_BUILD_TIMESTAMP   1745626500ULL   // 2026-04-26 00:15:00 UTC
 
 
 // -----------------------------------------------------------------------------
@@ -586,6 +586,12 @@ inline const char* nvsNsName(NvsNs ns) {
 #define ESPNOW_CALIBRATION_TIMEOUT_MS 120000UL  // Abort step if peer silent for 2 min.
 #define ESPNOW_CALIB_MAX_POINTS     6       // Max (distance, rssi_median) pairs in the multi-point
                                             // buffer used by 'commit' linreg (v0.4.07 / #39).
+
+// Post-OTA validation window — beacon suppression to free CPU for the
+// otaValidationConfirmHealth() critical path during the first 30 s of a
+// freshly-OTA'd boot. See espnow_ranging.h::espnowRangingLoop comment block
+// and SUGGESTED_IMPROVEMENTS.txt #35 (Charlie v0.4.07 task_wdt analysis).
+#define ESPNOW_POST_OTA_QUIET_MS    30000UL
 
 
 // -----------------------------------------------------------------------------
