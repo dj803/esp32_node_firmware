@@ -2,10 +2,13 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
 #include "config.h"
 #include "led.h"         // LedPattern::LOCATE — used by ledFlashLocate()
 #include "nvs_utils.h"   // NvsPutIfChanged — compare-before-write wrappers
 #include "prefs_quiet.h" // (v0.4.03) prefsTryBegin — silent on missing namespace
+#include "mac_utils.h"   // (v0.4.09) macStringToBytes for per-peer cal lookup
+#include "peer_cal.h"    // (v0.4.09) PeerCalTable + lookup/upsert/forget
 
 // =============================================================================
 // app_config.h  —  Runtime-configurable application settings (NVS namespace
@@ -71,6 +74,20 @@ static void ledFlashLocate() {
 #define APP_CFG_NODE_NAME_LEN      16   // Friendly node name ("Alpha", "Bravo", …)
 
 
+// =============================================================================
+// Per-peer calibration table (v0.4.09 / SUGGESTED_IMPROVEMENTS #41.7)
+//
+// PURPOSE:
+//   Stores tx_power_dbm + path_loss_n per (this device, peer) pair, so the
+//   six pairwise paths in a 3-node fleet can each have their own constants.
+//
+// SCHEMA + ALGORITHM live in peer_cal.h (host-testable, no Arduino deps).
+// This file owns the single AppConfig instance and the NVS persistence;
+// see PeerCalTable<N> + peerCalLookupT/UpsertT/ForgetT in peer_cal.h.
+// =============================================================================
+#define APP_CFG_PEER_CAL_MAX_PEERS  8
+
+
 // ── AppConfig struct ──────────────────────────────────────────────────────────
 // In-memory representation of all runtime-configurable settings.
 // Loaded once at boot by AppConfigStore::load(), then treated as read-only
@@ -112,6 +129,10 @@ struct AppConfig {
     int32_t anchor_x_mm   = 0;
     int32_t anchor_y_mm   = 0;
     int32_t anchor_z_mm   = 0;
+
+    // (v0.4.09 / #41.7) Per-peer calibration table. Slot 0 = most-recently
+    // calibrated; LRU eviction drops the tail when full.
+    PeerCalTable<APP_CFG_PEER_CAL_MAX_PEERS> peer_cal_table;
 };
 
 
@@ -119,6 +140,27 @@ struct AppConfig {
 // Declared here, populated at boot. All other files read this directly.
 // Only AppConfigStore::save() may write to it after boot.
 AppConfig gAppConfig;
+
+
+// =============================================================================
+// Per-peer calibration wrappers (v0.4.09 / #41.7)
+//
+// Thin wrappers that operate on gAppConfig.peer_cal_table. The actual
+// algorithm lives in peer_cal.h (host-testable). Mutations require an
+// explicit AppConfigStore::save(gAppConfig) afterwards to persist to NVS.
+// =============================================================================
+
+inline bool peerCalLookup(const char* macStr, int8_t* out_tx_power, uint8_t* out_n_x10) {
+    return peerCalLookupT(gAppConfig.peer_cal_table, macStr, out_tx_power, out_n_x10);
+}
+
+inline bool peerCalUpsert(const char* macStr, int8_t tx_power_dbm, uint8_t n_x10) {
+    return peerCalUpsertT(gAppConfig.peer_cal_table, macStr, tx_power_dbm, n_x10);
+}
+
+inline bool peerCalForget(const char* macStr) {
+    return peerCalForgetT(gAppConfig.peer_cal_table, macStr);
+}
 
 
 // ── AppConfigStore ────────────────────────────────────────────────────────────
@@ -182,6 +224,21 @@ public:
             gAppConfig.anchor_x_mm            = prefs.getInt("anc_x_mm",   0);
             gAppConfig.anchor_y_mm            = prefs.getInt("anc_y_mm",   0);
             gAppConfig.anchor_z_mm            = prefs.getInt("anc_z_mm",   0);
+
+            // (v0.4.09) Per-peer calibration table.
+            // NVS schema: count (uint8) + entries blob (8 entries × 8 bytes).
+            gAppConfig.peer_cal_table.count = prefs.getUChar("pc_count", 0);
+            if (gAppConfig.peer_cal_table.count > APP_CFG_PEER_CAL_MAX_PEERS) {
+                gAppConfig.peer_cal_table.count = 0;   // corrupted — treat as empty
+            }
+            if (gAppConfig.peer_cal_table.count > 0) {
+                size_t blobLen = sizeof(gAppConfig.peer_cal_table.entries);
+                size_t got = prefs.getBytes("pc_blob", gAppConfig.peer_cal_table.entries, blobLen);
+                if (got != blobLen) {
+                    memset(gAppConfig.peer_cal_table.entries, 0, blobLen);
+                    gAppConfig.peer_cal_table.count = 0;
+                }
+            }
         }
 
         if (opened) prefs.end();
@@ -231,6 +288,13 @@ public:
         ok &= NvsPutIfChanged(prefs, "anc_x_mm",     cfg.anchor_x_mm)            >= 4;
         ok &= NvsPutIfChanged(prefs, "anc_y_mm",     cfg.anchor_y_mm)            >= 4;
         ok &= NvsPutIfChanged(prefs, "anc_z_mm",     cfg.anchor_z_mm)            >= 4;
+
+        // (v0.4.09) Per-peer calibration table — write count + blob.
+        ok &= NvsPutIfChanged(prefs, "pc_count",     cfg.peer_cal_table.count)    > 0;
+        size_t pcWritten = prefs.putBytes("pc_blob", cfg.peer_cal_table.entries,
+                                          sizeof(cfg.peer_cal_table.entries));
+        ok &= (pcWritten == sizeof(cfg.peer_cal_table.entries));
+
         prefs.end();
 
         if (ok) {

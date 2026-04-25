@@ -365,23 +365,57 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
             }
             return;
         }
+        // (v0.4.09 / #41.7) Per-peer commit when linreg used.
+        // The multi-point flow associates the points with a specific peer
+        // MAC (_calibPeerMac, set by the most recent measure_*). For that
+        // case, write the result into the per-peer table instead of
+        // overwriting the device-global tx_power/n. The legacy single-pair
+        // operator-supplied 'commit' path (no points buffered) still writes
+        // the global so existing workflows keep working.
         AppConfig copy = gAppConfig;
-        copy.espnow_tx_power_dbm    = (int8_t)txp;
-        copy.espnow_path_loss_n_x10 = (uint8_t)(pln * 10.0f + 0.5f);
+        bool perPeerCommit = false;
+        if (used_linreg && strlen(_calibPeerMac) == 17) {
+            // Mutate copy.peer_cal_table.entries[] via the helper (it operates on
+            // gAppConfig but we want to stage in a copy so save() is atomic).
+            // Quickest path: apply to gAppConfig directly, snapshot into copy.
+            peerCalUpsert(_calibPeerMac, (int8_t)txp, (uint8_t)(pln * 10.0f + 0.5f));
+            // Re-snapshot copy so AppConfigStore::save() persists the new entry.
+            memcpy(copy.peer_cal_table.entries,
+                   gAppConfig.peer_cal_table.entries,
+                   sizeof(copy.peer_cal_table.entries));
+            copy.peer_cal_table.count = gAppConfig.peer_cal_table.count;
+            perPeerCommit = true;
+        } else {
+            // Legacy: write the device-global tx_power / n.
+            copy.espnow_tx_power_dbm    = (int8_t)txp;
+            copy.espnow_path_loss_n_x10 = (uint8_t)(pln * 10.0f + 0.5f);
+        }
         if (AppConfigStore::save(copy)) {
-            LOG_I("ESP-NOW Calib", "committed: tx_power=%d n=%.2f", txp, pln);
+            LOG_I("ESP-NOW Calib", "committed: tx_power=%d n=%.2f scope=%s",
+                  txp, pln, perPeerCommit ? "per-peer" : "global");
             if (mqttIsConnected()) {
-                char pb[256];
-                if (used_linreg) {
+                char pb[320];
+                if (perPeerCommit) {
                     snprintf(pb, sizeof(pb),
                         "{\"calib\":\"committed\",\"tx_power_dbm\":%d,"
                         "\"path_loss_n\":%.2f,\"points\":%u,"
-                        "\"r_squared\":%.3f,\"rmse_db\":%.2f,\"method\":\"linreg\"}",
+                        "\"r_squared\":%.3f,\"rmse_db\":%.2f,"
+                        "\"method\":\"linreg\",\"scope\":\"per_peer\","
+                        "\"peer_mac\":\"%s\",\"cal_entries\":%u}",
+                        txp, pln, (unsigned)_calibPointCount, r2, rmse,
+                        _calibPeerMac, (unsigned)gAppConfig.peer_cal_table.count);
+                } else if (used_linreg) {
+                    snprintf(pb, sizeof(pb),
+                        "{\"calib\":\"committed\",\"tx_power_dbm\":%d,"
+                        "\"path_loss_n\":%.2f,\"points\":%u,"
+                        "\"r_squared\":%.3f,\"rmse_db\":%.2f,"
+                        "\"method\":\"linreg\",\"scope\":\"global\"}",
                         txp, pln, (unsigned)_calibPointCount, r2, rmse);
                 } else {
                     snprintf(pb, sizeof(pb),
                         "{\"calib\":\"committed\",\"tx_power_dbm\":%d,"
-                        "\"path_loss_n\":%.2f,\"method\":\"manual\"}",
+                        "\"path_loss_n\":%.2f,\"method\":\"manual\","
+                        "\"scope\":\"global\"}",
                         txp, pln);
                 }
                 mqttPublish("response", String(pb), 1, false);
@@ -396,15 +430,43 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
         copy.espnow_path_loss_n_x10 = (uint8_t)(ESPNOW_PATH_LOSS_N * 10);
         copy.espnow_ema_alpha_x100  = ESPNOW_EMA_ALPHA_X100;
         copy.espnow_outlier_db      = ESPNOW_OUTLIER_DB;
+        // (v0.4.09 / #41.7) Reset clears the per-peer cal table too.
+        memset(copy.peer_cal_table.entries, 0, sizeof(copy.peer_cal_table.entries));
+        copy.peer_cal_table.count = 0;
         if (AppConfigStore::save(copy)) {
-            LOG_I("ESP-NOW Calib", "reset to compile-time defaults");
+            LOG_I("ESP-NOW Calib", "reset to compile-time defaults (per-peer table cleared)");
             if (mqttIsConnected())
                 mqttPublish("response",
-                    String("{\"calib\":\"reset\"}"), 1, false);
+                    String("{\"calib\":\"reset\",\"cal_entries\":0}"), 1, false);
         }
         _calibState = EnrCalibState::IDLE;
         _enrCalibClearPoints();
         _calibTxPower = 0;
+
+    } else if (strcmp(cmd, "forget_peer") == 0) {
+        // (v0.4.09 / #41.7) Drop the calibration entry for one peer.
+        const char* peerMac = doc["peer_mac"] | "";
+        if (strlen(peerMac) != 17) {
+            LOG_W("ESP-NOW Calib", "forget_peer: missing/invalid peer_mac");
+            return;
+        }
+        bool removed = peerCalForget(peerMac);
+        if (removed) {
+            AppConfigStore::save(gAppConfig);   // persist the deletion
+            LOG_I("ESP-NOW Calib", "forgot peer %s — %u entries left",
+                  peerMac, (unsigned)gAppConfig.peer_cal_table.count);
+        } else {
+            LOG_I("ESP-NOW Calib", "forget_peer: %s not in table", peerMac);
+        }
+        if (mqttIsConnected()) {
+            char pb[160];
+            snprintf(pb, sizeof(pb),
+                "{\"calib\":\"forget_peer\",\"peer_mac\":\"%s\","
+                "\"removed\":%s,\"cal_entries\":%u}",
+                peerMac, removed ? "true" : "false",
+                (unsigned)gAppConfig.peer_cal_table.count);
+            mqttPublish("response", String(pb), 1, false);
+        }
 
     } else {
         LOG_W("ESP-NOW Calib", "unknown cmd '%s'", cmd);
@@ -543,33 +605,46 @@ void espnowRangingLoop() {
     if (now - _enrLastPublish < ESPNOW_MQTT_PUBLISH_MS) return;
     _enrLastPublish = now;
 
-    float txPow = (float)gAppConfig.espnow_tx_power_dbm;
-    float pathN = gAppConfig.espnow_path_loss_n_x10 / 10.0f;
+    float globalTxPow = (float)gAppConfig.espnow_tx_power_dbm;
+    float globalPathN = gAppConfig.espnow_path_loss_n_x10 / 10.0f;
 
     JsonDocument doc;
-    doc["node_name"]  = gAppConfig.node_name;
-    doc["peer_count"] = _enrPeers.count();
+    doc["node_name"]    = gAppConfig.node_name;
+    doc["peer_count"]   = _enrPeers.count();
+    doc["cal_entries"]  = gAppConfig.peer_cal_table.count;   // (v0.4.09 / #41.7) per-peer cal coverage
     JsonArray arr = doc["peers"].to<JsonArray>();
 
-    _enrPeers.forEach([&arr, txPow, pathN](const PeerEntry& p) {
+    _enrPeers.forEach([&arr, globalTxPow, globalPathN](const PeerEntry& p) {
         if (!_enrIsFiltered(p.mac)) return;   // F2: skip if not in track filter
         JsonObject o = arr.add<JsonObject>();
         o["mac"]  = p.mac;
         o["rssi"] = p.rssi;
 
+        // (v0.4.09 / #41.7) Per-peer calibration lookup. If this device has
+        // its own calibrated tx_power / path_loss_n for this peer, use those;
+        // otherwise fall back to the device-global constants.
+        int8_t  txp_int = (int8_t)globalTxPow;
+        uint8_t n_x10   = (uint8_t)(globalPathN * 10.0f + 0.5f);
+        bool perPeer = peerCalLookup(p.mac, &txp_int, &n_x10);
+        float pathN  = n_x10 / 10.0f;
+        o["calibrated"] = perPeer;
+
         // Prefer EMA-smoothed RSSI for distance; fall back to raw on first frame.
         if (p.rssi_ema_x10 != 0) {
             float emaRssi = p.rssi_ema_x10 / 10.0f;
             o["rssi_ema"] = (int)roundf(emaRssi);
-            o["dist_m"]   = String(rssiToDistance((int8_t)emaRssi, (int8_t)txPow, pathN), 1);
+            o["dist_m"]   = String(rssiToDistance((int8_t)emaRssi, txp_int, pathN), 1);
         } else {
+            // Cold start — recompute distance with the per-peer constants
+            // (the cached p.distM was computed with pre-lookup globals).
             o["rssi_ema"] = p.rssi;
-            o["dist_m"]   = String(p.distM, 1);
+            o["dist_m"]   = String(rssiToDistance(p.rssi, txp_int, pathN), 1);
         }
         o["rejects"] = p.rejects;
-        LOG_D("ESP-NOW Ranging", "%s  rssi=%d  ema=%d  dist=%s  rej=%u",
+        LOG_D("ESP-NOW Ranging", "%s  rssi=%d  ema=%d  dist=%s  rej=%u  cal=%s",
               p.mac, p.rssi, p.rssi_ema_x10 / 10,
-              o["dist_m"].as<const char*>(), (unsigned)p.rejects);
+              o["dist_m"].as<const char*>(), (unsigned)p.rejects,
+              perPeer ? "peer" : "global");
     });
 
     mqttPublishJson("espnow", doc);

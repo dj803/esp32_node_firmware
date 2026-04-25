@@ -69,6 +69,7 @@ void otaValidationArmRollback(const char* targetVersion);
 static uint32_t     _lastOtaCheck         = 0;     // millis() timestamp of last check
 static bool         _otaForced            = false; // True when MQTT has requested an immediate check
 static TimerHandle_t _otaProgressWatchdog = NULL;  // One-shot stall detector during download
+static TimerHandle_t _otaWdtFeederTimer   = NULL;  // (v0.4.09) periodic task_wdt feed during download
 
 // One-shot FreeRTOS timer fired if no progress callback arrives within
 // OTA_PROGRESS_TIMEOUT_MS. Recovers from CDN stalls / TCP black-holes that
@@ -77,6 +78,20 @@ static void _otaProgressTimeout(TimerHandle_t /*xTimer*/) {
     LOG_E("OTA", "Progress watchdog fired (no callback for %d ms) - restarting",
           OTA_PROGRESS_TIMEOUT_MS);
     ESP.restart();
+}
+
+// (v0.4.09) Periodic task_wdt feeder.
+//
+// The pre-existing per-chunk progress callback resets the loopTask WDT on
+// every HTTP chunk. On marginal AP signal (triangle position observed during
+// v0.4.07 → v0.4.08 OTA on Charlie), a chunk can take >5 s to arrive,
+// during which no reset fires and the default 5 s task_wdt triggers a
+// reboot mid-download. This timer fires every 1 s from the FreeRTOS timer
+// task and resets the loopTask token — the WDT can never starve regardless
+// of chunk pacing. Started just before esp_https_ota_perform's loop,
+// stopped after the loop exits (success or failure).
+static void _otaWdtFeederCb(TimerHandle_t /*xTimer*/) {
+    esp_task_wdt_reset();
 }
 
 
@@ -515,6 +530,17 @@ void otaCheckNow(bool isSiblingRetry) {
     }
     if (_otaProgressWatchdog) xTimerStart(_otaProgressWatchdog, 0);
 
+    // (v0.4.09) Independent task_wdt feeder. 1 s period, auto-reload, runs
+    // throughout the download. Stopped on exit below.
+    if (!_otaWdtFeederTimer) {
+        _otaWdtFeederTimer = xTimerCreate("ota_wdtf",
+                                          pdMS_TO_TICKS(1000),
+                                          pdTRUE,   // auto-reload
+                                          NULL,
+                                          _otaWdtFeederCb);
+    }
+    if (_otaWdtFeederTimer) xTimerStart(_otaWdtFeederTimer, 0);
+
     // (v0.3.35 / Phase 3) Pass 2 now uses esp_https_ota with HTTP resume
     // support, replacing ESP32-OTA-Pull's blocking writer. Steps:
     //   1. Re-fetch the manifest to extract the .bin URL (ESP32-OTA-Pull
@@ -539,8 +565,10 @@ void otaCheckNow(bool isSiblingRetry) {
 
     int otaResult = otaPerformWithEspIdf(binaryUrl.c_str());
 
-    // Download returned (success or failure) — disarm the stall watchdog.
+    // Download returned (success or failure) — disarm the stall watchdog
+    // and the periodic WDT feeder.
     if (_otaProgressWatchdog) xTimerStop(_otaProgressWatchdog, 0);
+    if (_otaWdtFeederTimer)   xTimerStop(_otaWdtFeederTimer,   0);
 
     if (otaResult == 0) {
         LOG_I("OTA", "Flash succeeded - restarting");

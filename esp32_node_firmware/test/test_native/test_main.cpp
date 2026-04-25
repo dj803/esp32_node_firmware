@@ -25,6 +25,7 @@
 #include "ranging_math.h"
 #include "mac_utils.h"
 #include "peer_tracker.h"
+#include "peer_cal.h"      // (v0.4.09) PeerCalTable + lookup/upsert/forget
 #include "fwevent.h"       // FwEvent enum + fwEventName() — dependency-free, compiles on host
 #include "semver.h"        // semverIsNewer() + semverParse() — extracted from ota.h
 #include "rate_limit.h"    // rateClampRefill() — extracted from espnow_responder.h
@@ -191,6 +192,119 @@ void test_calib_linreg_handles_unsorted_input() {
     TEST_ASSERT_TRUE(fit.valid);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, -59.0f, fit.tx_power_dbm);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.5f,   fit.path_loss_n);
+}
+
+
+// =============================================================================
+// peer_cal.h tests (v0.4.09 / SUGGESTED_IMPROVEMENTS #41.7)
+// =============================================================================
+
+void test_peer_cal_starts_empty() {
+    PeerCalTable<8> t;
+    TEST_ASSERT_EQUAL_UINT8(0, t.count);
+    int8_t txp; uint8_t n;
+    TEST_ASSERT_FALSE(peerCalLookupT(t, "AA:BB:CC:DD:EE:FF", &txp, &n));
+}
+
+void test_peer_cal_upsert_and_lookup() {
+    PeerCalTable<8> t;
+    TEST_ASSERT_TRUE(peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -55, 25));
+    TEST_ASSERT_EQUAL_UINT8(1, t.count);
+
+    int8_t txp = 0; uint8_t n = 0;
+    TEST_ASSERT_TRUE(peerCalLookupT(t, "AA:BB:CC:DD:EE:01", &txp, &n));
+    TEST_ASSERT_EQUAL_INT8(-55, txp);
+    TEST_ASSERT_EQUAL_UINT8(25,  n);
+
+    // Lookup non-existent peer
+    TEST_ASSERT_FALSE(peerCalLookupT(t, "FF:EE:DD:CC:BB:AA", &txp, &n));
+}
+
+void test_peer_cal_update_existing_moves_to_front() {
+    PeerCalTable<8> t;
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -55, 25);
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:02", -57, 27);
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:03", -59, 29);
+    TEST_ASSERT_EQUAL_UINT8(3, t.count);
+    // Re-upsert :01 — should move to slot 0 with new value
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -50, 20);
+    TEST_ASSERT_EQUAL_UINT8(3, t.count);   // still 3 entries
+    int8_t txp; uint8_t n;
+    peerCalLookupT(t, "AA:BB:CC:DD:EE:01", &txp, &n);
+    TEST_ASSERT_EQUAL_INT8(-50, txp);
+    // Slot 0 should be :01
+    TEST_ASSERT_EQUAL_HEX8(0x01, t.entries[0].mac[5]);
+    TEST_ASSERT_EQUAL_INT8(-50, t.entries[0].tx_power_dbm);
+}
+
+void test_peer_cal_lru_evicts_tail_when_full() {
+    PeerCalTable<3> t;   // small N to force eviction quickly
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -50, 25);
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:02", -51, 25);
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:03", -52, 25);
+    TEST_ASSERT_EQUAL_UINT8(3, t.count);
+    // Add :04 — :01 should be evicted (it's the tail)
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:04", -53, 25);
+    TEST_ASSERT_EQUAL_UINT8(3, t.count);   // still capped at 3
+    int8_t txp; uint8_t n;
+    TEST_ASSERT_FALSE(peerCalLookupT(t, "AA:BB:CC:DD:EE:01", &txp, &n));   // evicted
+    TEST_ASSERT_TRUE (peerCalLookupT(t, "AA:BB:CC:DD:EE:02", &txp, &n));
+    TEST_ASSERT_TRUE (peerCalLookupT(t, "AA:BB:CC:DD:EE:03", &txp, &n));
+    TEST_ASSERT_TRUE (peerCalLookupT(t, "AA:BB:CC:DD:EE:04", &txp, &n));
+    TEST_ASSERT_EQUAL_INT8(-53, txp);   // last lookup is :04
+}
+
+void test_peer_cal_forget_existing() {
+    PeerCalTable<8> t;
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -55, 25);
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:02", -57, 27);
+    TEST_ASSERT_TRUE(peerCalForgetT(t, "AA:BB:CC:DD:EE:01"));
+    TEST_ASSERT_EQUAL_UINT8(1, t.count);
+    int8_t txp; uint8_t n;
+    TEST_ASSERT_FALSE(peerCalLookupT(t, "AA:BB:CC:DD:EE:01", &txp, &n));
+    TEST_ASSERT_TRUE (peerCalLookupT(t, "AA:BB:CC:DD:EE:02", &txp, &n));
+}
+
+void test_peer_cal_forget_missing_returns_false() {
+    PeerCalTable<8> t;
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -55, 25);
+    TEST_ASSERT_FALSE(peerCalForgetT(t, "FF:FF:FF:FF:FF:FF"));
+    TEST_ASSERT_EQUAL_UINT8(1, t.count);   // unchanged
+}
+
+void test_peer_cal_invalid_mac_string() {
+    PeerCalTable<8> t;
+    TEST_ASSERT_FALSE(peerCalUpsertT(t, "not a mac", -55, 25));
+    TEST_ASSERT_FALSE(peerCalUpsertT(t, "AA:BB:CC:DD:EE",       -55, 25));   // too short
+    TEST_ASSERT_FALSE(peerCalLookupT(t, "ZZ:ZZ:ZZ:ZZ:ZZ:ZZ", nullptr, nullptr));
+    TEST_ASSERT_EQUAL_UINT8(0, t.count);
+}
+
+// Lowercase hex must work (the firmware uppercases internally but external
+// callers may provide lowercase from a UI form).
+void test_peer_cal_lowercase_mac_works() {
+    PeerCalTable<8> t;
+    peerCalUpsertT(t, "AA:BB:CC:DD:EE:01", -55, 25);
+    int8_t txp; uint8_t n;
+    TEST_ASSERT_TRUE(peerCalLookupT(t, "aa:bb:cc:dd:ee:01", &txp, &n));
+    TEST_ASSERT_EQUAL_INT8(-55, txp);
+}
+
+void test_mac_utils_string_to_bytes_roundtrip() {
+    uint8_t in[6]  = {0x84, 0x1F, 0xE8, 0x1A, 0xCC, 0x98};
+    char str[18];
+    macToString(in, str);
+    uint8_t out[6] = {};
+    TEST_ASSERT_TRUE(macStringToBytes(str, out));
+    TEST_ASSERT_EQUAL_MEMORY(in, out, 6);
+}
+
+void test_mac_utils_string_to_bytes_rejects_invalid() {
+    uint8_t out[6];
+    TEST_ASSERT_FALSE(macStringToBytes("",                      out));
+    TEST_ASSERT_FALSE(macStringToBytes("AA:BB:CC:DD:EE",        out));
+    TEST_ASSERT_FALSE(macStringToBytes("not-a-mac-not-a-mac",   out));
+    TEST_ASSERT_FALSE(macStringToBytes(nullptr,                 out));
 }
 
 
@@ -1100,6 +1214,18 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_calib_linreg_rejects_zero_distance);
     RUN_TEST(test_calib_linreg_handles_unsorted_input);
     RUN_TEST(test_ranging_math_espnow_indoor_three_metres);
+
+    // peer_cal (v0.4.09 / #41.7)
+    RUN_TEST(test_peer_cal_starts_empty);
+    RUN_TEST(test_peer_cal_upsert_and_lookup);
+    RUN_TEST(test_peer_cal_update_existing_moves_to_front);
+    RUN_TEST(test_peer_cal_lru_evicts_tail_when_full);
+    RUN_TEST(test_peer_cal_forget_existing);
+    RUN_TEST(test_peer_cal_forget_missing_returns_false);
+    RUN_TEST(test_peer_cal_invalid_mac_string);
+    RUN_TEST(test_peer_cal_lowercase_mac_works);
+    RUN_TEST(test_mac_utils_string_to_bytes_roundtrip);
+    RUN_TEST(test_mac_utils_string_to_bytes_rejects_invalid);
 
     // mac_utils
     RUN_TEST(test_mac_utils_all_zero);
