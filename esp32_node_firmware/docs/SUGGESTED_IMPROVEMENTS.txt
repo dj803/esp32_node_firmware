@@ -651,6 +651,67 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
        - OTA_PROGRESS_TIMEOUT_MS stays as-is — the progress watchdog
          is independent of the cache-disabled-fault class.
 
+    ──── v0.4.08 IN-FIELD VALIDATION ────────────────────────────
+    Bravo (USB-PC) OTA from v0.4.07 → v0.4.08 (2026-04-25 16:27):
+       - Download progressed cleanly through 10–100 % (no panic
+         at the 60–70 % cache-disabled boundary that killed v0.4.07).
+       - "Flash succeeded — restarting" → "Armed rollback for
+         incoming version '0.4.08'" → SW_CPU_RESET (clean).
+       - Re-boot on app1 partition state 2 (VALID since
+         ROLLBACK_ENABLE is off; NVS-flag path validates).
+       - WiFi associated, MQTT connected, boot announcement at
+         firmware_version "0.4.08", uptime=2 s.
+       - Sustained heartbeat at uptime=240 s — Phase-2 deadline
+         was 300 s; well within budget on USB-PC environment.
+       - Conclusion: Fix 1 (ESP-NOW deinit) eliminates the panic-
+         mid-flash-write failure mode. Bravo previously panicked
+         at 70 % every attempt; clean now.
+
+    Charlie (triangle, on v0.4.06, OTA → v0.4.08 attempted twice):
+       - Attempt 1 (16:32, Delta+Echo still ranging): Charlie
+         offline LWT → boot announcement at v0.4.06 with
+         boot_reason=int_wdt. No v0.4.08 boot announcement.
+       - Attempt 2 (16:34, Delta+Echo silenced via cmd/espnow/
+         ranging "0"): same — Charlie offline → boot at v0.4.06
+         with boot_reason=task_wdt. No v0.4.08 boot announcement.
+       - Conclusion: Fix 1 is in v0.4.08, but Charlie ran v0.4.06's
+         OTA code during the download, which has neither Fix 1
+         nor the more robust task-watchdog handling. The watchdog
+         fires DURING the download (chunks too slow over the
+         marginal AP link) before flash even completes. Charlie
+         reboots back on the still-valid v0.4.06 partition.
+
+    ──── Chicken-and-egg insight ────────────────────────────────
+    The OTA reliability fixes shipped in v0.4.08 only protect
+    devices that are ALREADY running v0.4.08. The version doing
+    the download executes its own OTA code path; if that code
+    path has a bug that triggers a reset (panic / int_wdt /
+    task_wdt / silent hang), the OTA can never complete and the
+    device is stuck on the old version.
+
+    BREAKING THE EGG (only path that works for v0.4.06 → v0.4.08):
+       Serial-flash one triangle device at a time via USB-PC.
+       Move device to COM5 → `pio run -t upload` → return to
+       triangle. Once on v0.4.08, future OTAs use Fix 1 + Fix 2
+       and complete reliably.
+
+    NEXT-RELEASE WORK (v0.4.09+, planned):
+       a. Increase task watchdog timeout to 30 s during the OTA
+          download window only (revert after the download completes
+          OR after reboot). Prevents the slow-link task_wdt class
+          on triangle/marginal-signal devices.
+       b. Periodic timer-based esp_task_wdt_reset() during OTA so
+          the WDT doesn't depend on per-chunk progress callbacks.
+       c. (Speculative) Pre-flight ESP-NOW deinit could also be
+          shipped as a v0.4.09 hotfix — devices on v0.4.06 still
+          can't benefit, but it's a belt-and-braces measure for
+          any future regression.
+
+       NOTE: none of the above help v0.4.06-flashed devices. Those
+       MUST be serial-flashed once. After that, the v0.4.09+
+       OTA improvements protect against regressions for the rest
+       of the device's lifetime.
+
     ──── Third failure mode — silent hang (Alpha, observed 2026-04-25):
        Alpha was OTA-triggered earlier in the same v0.4.07 rollout
        and went silent: built-in blue status LED stuck SOLID ON,
@@ -1418,3 +1479,60 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     PRIORITY: Medium-High — task_wdt and int_wdt are NEVER acceptable
               in steady state. Investigate after #45 stagger lands so
               the cleanup-restart can be done safely.
+
+47. Hardware verification of #39 multi-point + #41.7 per-peer calibration
+    STATUS: Firmware shipped in v0.4.07 (#39 linreg) and v0.4.09 (#41.7
+    per-peer constants). Dashboard UI shipped on 2026-04-25 with
+    "Add measurement @ distance" button, "Clear points buffer" button,
+    linreg R² + RMSE in commit response, and the "cal" ✓ badge column
+    in the peer table. NOT YET VERIFIED ON HARDWARE — deferred so
+    other-priority work could land first.
+
+    PRECONDITIONS for the test:
+       - Calibrating device on v0.4.09 (currently only Bravo).
+       - Target peer on any v0.4.06+ firmware (the calibration
+         only writes to the calibrating device's NVS; the peer just
+         needs to be broadcasting beacons).
+       - Operator has a tape measure or known-distance markers.
+
+    PROCEDURE (per pair, ~5 minutes):
+       1. In the v2 dashboard, set "Calibrating device" = Bravo,
+          "Target peer" = (the peer you want).
+       2. Place Bravo at exactly 1.0 m from the target peer.
+          Click "Measure @ 1 m". Wait for the green tick + buffered
+          points = 1.
+       3. Move Bravo to 2.0 m. Set the "distance (m)" form to 2.0.
+          Click "Add measurement @ distance". Wait for tick +
+          buffered points = 2.
+       4. Move Bravo to 3.0 m (or 4 m). Repeat. Stop when 3-5 points
+          are buffered, or sooner if the room runs out.
+       5. Click "Commit". Wizard status shows the linreg result:
+            tx_power_dbm, path_loss_n, R², RMSE, scope=per_peer
+       6. Verify the peer table's "cal" column for that peer flips
+          to ✓ within 2 s.
+       7. Verify Bravo /espnow publish shows cal_entries++ and the
+          target peer's "calibrated":true.
+
+    ACCEPTANCE CRITERIA:
+       - R² ≥ 0.95 in a clean indoor room
+       - tx_power_dbm in [-65, -45] (per quality-check thresholds)
+       - path_loss_n in [2.0, 4.0]
+       - RMSE < 2.0 dB
+       - Peer-specific distances on the chart converge near the
+         physical placement after commit (sanity check).
+
+    FULL FLEET COVERAGE (deferred):
+       To get per-peer calibration on every pair (6 pairs × 2
+       directions = 12 entries for a 4-device fleet):
+          - Repeat the procedure with each device taking the role of
+            "Calibrating device". Currently blocked on triangle
+            devices being on v0.4.08; serial-flash to v0.4.09 would
+            unblock this. See #35 chicken-and-egg notes.
+
+    PRIORITY: Medium. The asymmetry findings in
+              docs/RF_CONFIG_TEST_2026_04_25.md show this is the
+              biggest remaining accuracy lever. Until the
+              verification runs, the firmware/UI work is "shipped
+              but unproven". Capture the resulting tx_power/n
+              values per pair as Part C of RF_CONFIG_TEST_2026_04_25
+              when the test is run.
