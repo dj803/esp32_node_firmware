@@ -1347,6 +1347,16 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
 
     PRIORITY: Medium. Block by Phase 2 firmware work — fix in v0.4.07.
 
+    ADDRESSED v0.4.10 (2026-04-25):  Option (a) chosen — config.h fallback
+    literal updated to "0.4.10-dev" so locally-flashed dev binaries are
+    distinguishable from CI-built releases. modify_link_path.py already
+    performs the conditional override correctly (only injects when env
+    var is set + non-empty); the bug was that the fallback literal had
+    no "-dev" suffix despite the comment claiming it did. Future
+    version bumps should keep this literal in sync with the next
+    release tag (e.g. when bumping to v0.4.11, set fallback to
+    "0.4.11-dev"). Documented inline in config.h.
+
 44. Addressable LED status colors (green/yellow/red) not lighting
     OBSERVATION (2026-04-25):  Devices in the triangle (Charlie/Delta/
     Echo) and Bravo on USB-PC do not exhibit the documented status-LED
@@ -1378,6 +1388,18 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     PRIORITY: Low — diagnostic visibility only. Triangle-position
               calibration work (#39, #41.7) does not depend on LED
               status. Park as a separate maintenance task.
+
+    ADDRESSED v0.4.10 (2026-04-25):  Cause (a) confirmed — the WS2812
+    state machine in include/ws2812.h had no MQTT_CONNECTED transition.
+    onMqttConnect() in mqtt_client.h only called ledSetPattern() which
+    drives the on-board GPIO2 status LED, never the WS2812 strip. Fix:
+    added LedState::MQTT_HEALTHY (slow 4-s green breathing, distinct
+    from RFID_OK's solid green), a matching LedEventType::MQTT_HEALTHY
+    event, and posts from onMqttConnect() (→ green) and onMqttDisconnect()
+    (→ revert to BOOT_INDICATOR "wifi" fast blue pulse). Status table
+    publishes "mqtt_healthy" string. RFID/OTA overlays now restore to
+    MQTT_HEALTHY instead of IDLE because _ledPreviousState is set when
+    the event fires.
 
 45. Fleet-control buttons (OTA/Restart/Firmware) need stagger
     OBSERVATION (2026-04-25):  All three fleet-wide control buttons in
@@ -1427,6 +1449,24 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
                      the same rollback cascade documented in #35.
                      This is the bare-minimum interim before the full
                      #35 staggered-OTA RFC is implemented.
+
+    ADDRESSED v0.4.10 (2026-04-25):  Patched hb_cmd_fn and hb_restart_fn
+    via Node-RED admin API. Behavior:
+      - "Send OTA Update" (payload "ota") — 5 min stagger, sorted by
+        friendly name (Alpha → Bravo → ...), with canary cancel-on-
+        failure: at each step the function inspects flow.boot_history
+        and aborts if any previously-triggered device has logged a
+        task_wdt / int_wdt / panic / brownout boot since chainStartMs.
+        This delivers the bare-minimum interim AND much of the full
+        #35 canary RFC in one change (visual indicator: node.status()
+        shows "OTA: 2/5 (ESP32-Bravo)" and flips to red on abort).
+      - "Check Firmware Version" (payload "check") — 2 s stagger
+        (cheap, no AP contention).
+      - "Restart All ESP32s" — 5 min stagger (changed from the originally
+        requested 1 min after observing real-world MQTT-reconnect time
+        of ~30-90 s; 1 min was too tight on Bravo).
+    flow.hb_ota_chain_started_ms / _total / _done are exposed for any
+    future status-banner UI (#45 final paragraph).
 
 46. Recent Abnormal Reboots — fleet-wide WDT / panic investigation
     OBSERVATION (2026-04-25, post-OTA-chaos):  All 5 devices in the

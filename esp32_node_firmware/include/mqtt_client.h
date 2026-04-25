@@ -1046,6 +1046,15 @@ static void onMqttConnect(bool sessionPresent) {
     responderSetHealthFlag(1, true);
     ledSetPattern(LedPattern::MQTT_CONNECTED);   // 50ms pulse / 2s off — normal operational
 
+    // (#44) WS2812 strip: switch to slow green breathing so a glance at the
+    // device tells the operator MQTT is up. Without this the strip stays in
+    // IDLE (blue breathing) indistinguishable from the WiFi-only-no-broker state.
+    {
+        LedEvent e{};
+        e.type = LedEventType::MQTT_HEALTHY;
+        ws2812PostEvent(e);
+    }
+
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
     // QoS 2 = "exactly once" delivery (used for credential rotation to prevent double-apply)
@@ -1130,6 +1139,16 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     // Update sibling health advertisement — MQTT is no longer connected.
     responderSetHealthFlag(1, false);
     ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow 2s/2s blink — Wi-Fi up, MQTT reconnecting
+
+    // (#44) WS2812 strip: revert to BOOT_INDICATOR "wifi" (fast blue pulse) so
+    // the operator can see at a glance that the broker is unreachable. The
+    // mqtt-reconnect timer will restore MQTT_HEALTHY on the next onMqttConnect().
+    {
+        LedEvent e{};
+        e.type = LedEventType::BOOT_STATE;
+        strlcpy(e.animName, "wifi", sizeof(e.animName));
+        ws2812PostEvent(e);
+    }
     if (_mqttReconnectCount == MQTT_REDISCOVERY_THRESHOLD) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }

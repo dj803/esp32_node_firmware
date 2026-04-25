@@ -60,6 +60,7 @@ enum class LedEventType : uint8_t {
     BOOT_STATE,      // Boot phase indicator; animName = "bootstrap"|"wifi"|"ap_mode"
     OTA_START,       // OTA download beginning → orange chasing
     OTA_DONE,        // OTA failed or no update → restore _previousState
+    MQTT_HEALTHY,    // WiFi + MQTT connected → slow green breathing (operational heartbeat)
 };
 
 struct LedEvent {
@@ -76,6 +77,7 @@ struct LedEvent {
 enum class LedState : uint8_t {
     BOOT_INDICATOR,
     IDLE,
+    MQTT_HEALTHY,    // Slow green breathing — WiFi + MQTT both connected
     RFID_OK,
     RFID_FAIL,
     MQTT_OVERRIDE,
@@ -227,8 +229,13 @@ static void _ws2812RenderFrame() {
         }
 
         case LedState::IDLE:
-            // Slow 4-second blue breathing
+            // Slow 4-second blue breathing — WiFi up, MQTT not yet connected
             fill_solid(_leds, _ledActiveCount, _breathe(4000, CRGB(0, 0, 255)));
+            break;
+
+        case LedState::MQTT_HEALTHY:
+            // Slow 4-second green breathing — WiFi + MQTT both connected (operational)
+            fill_solid(_leds, _ledActiveCount, _breathe(4000, CRGB(0, 255, 0)));
             break;
 
         case LedState::RFID_OK:
@@ -337,6 +344,13 @@ static void _ws2812HandleEvent(const LedEvent& evt) {
         case LedEventType::OTA_DONE:
             _ledState = _ledPreviousState;
             break;
+
+        case LedEventType::MQTT_HEALTHY:
+            // Set as both current and previous so RFID/OTA overlays revert here.
+            _ledState         = LedState::MQTT_HEALTHY;
+            _ledPreviousState = LedState::MQTT_HEALTHY;
+            _ledStateR = 0; _ledStateG = 255; _ledStateB = 0;
+            break;
     }
 }
 
@@ -402,6 +416,7 @@ inline void ws2812PublishState() {
     switch (_ledState) {
         case LedState::BOOT_INDICATOR: stateStr = "boot";          break;
         case LedState::IDLE:           stateStr = "idle";          break;
+        case LedState::MQTT_HEALTHY:   stateStr = "mqtt_healthy";  break;
         case LedState::RFID_OK:        stateStr = "rfid_ok";       break;
         case LedState::RFID_FAIL:      stateStr = "rfid_fail";     break;
         case LedState::MQTT_OVERRIDE:  stateStr = "mqtt_override"; break;

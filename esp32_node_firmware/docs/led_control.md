@@ -70,8 +70,14 @@ Payload:
 }
 ```
 
-`state` ∈ `idle` | `mqtt_color` | `mqtt_off` | `boot_state` |
-`ota` | `rfid_ok` | `rfid_fail`.
+`state` ∈ `idle` | `mqtt_healthy` | `mqtt_color` | `mqtt_off` |
+`boot_state` | `ota` | `rfid_ok` | `rfid_fail`.
+
+`mqtt_healthy` (slow green breathing) is the operational steady-state —
+posted automatically from `onMqttConnect()` once both Wi-Fi **and** MQTT
+are up. `idle` (slow blue breathing) is only the brief window after
+Wi-Fi associates but before MQTT finishes connecting. If a device sits
+in `idle` for more than ~10 s the broker is unreachable. (#44)
 
 Retained so Node-RED populates the state table instantly on
 subscribe — no need to wait for the next change.
