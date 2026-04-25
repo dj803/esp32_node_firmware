@@ -438,6 +438,184 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     discipline. Not a code change — operational practice.
     STATUS:   Adopted as habit going forward.
 
+    ──── Empirical case for canary, captured 2026-04-25 (v0.4.06 release) ────
+    The v0.4.06 release (peer_tracker EMA-reseed-on-step-change) was
+    initially deployed by triggering cmd/ota_check on all 3 devices at
+    roughly the same moment. Within 10 minutes, all 3 devices were
+    showing the broker their LWT (offline) and stayed silent.
+
+    Investigation chain:
+       1. Connected Charlie to PC USB / serial monitor at COM5 — Charlie
+          eventually self-recovered, booting on v0.4.05 (rollback target).
+          So the Phase-2 NVS-flag rollback safety net WORKED on Charlie:
+          v0.4.06 firmware booted, ran far enough to start associating
+          with the AP, but didn't reach MQTT within the 5-minute
+          OTA_VALIDATION_DEADLINE_MS window. Rollback fired automatically.
+       2. Followed by a single-device OTA test on Charlie (no other
+          devices competing): v0.4.06 booted, WiFi associated on the
+          FIRST attempt, MQTT connected, and otaValidationConfirmHealth()
+          marked the app valid — total time from reset to validated under
+          ~10 seconds.
+       3. Conclusion: v0.4.06 firmware itself was fine. The fleet-wide
+          rollback was caused by THREE devices simultaneously trying to
+          associate with the same AP after their OTA reboots. The AP
+          can typically only handle 1-2 simultaneous association
+          requests cleanly — the third gets queued or rejected and burns
+          its 15s WIFI_CONNECT_TIMEOUT, then retries (exhausting the
+          3-attempt budget = 45s), then falls through to sibling
+          re-verify (which also fails because siblings are in the same
+          state), then enters AP-mode portal. Once in AP-mode, MQTT is
+          unreachable until either the 5-min admin-idle timeout fires or
+          the operator visits the portal. Either way, the
+          OTA_VALIDATION_DEADLINE_MS=300000 (5 min) elapses and rollback
+          fires.
+
+    Implication for current architecture (DO NOT extend OTA validation
+    timeout):
+       The 5-min validation timeout is correct and should NOT be
+       lengthened just to mask this. Lengthening it would mean a real
+       firmware fault that prevents MQTT-reach takes longer to detect
+       and roll back. The fix is to ensure only ONE device is in the
+       post-OTA-reboot WiFi-association critical window at a time.
+
+    Recommended OTA discipline (this is now the canonical procedure):
+       a. Confirm fleet healthy and all devices on the previous version.
+       b. Trigger cmd/ota_check on ONE device (the canary).
+       c. Wait for the canary's boot announcement at the new version
+          AND its OTA_VALIDATED status event. Typically <2 min total.
+       d. Soak the canary for at least 5 min (stability sanity-check).
+       e. Trigger the next device. Repeat (c) and (d).
+       f. After the last device, soak the whole fleet for 1 h before
+          considering the deployment "stable" and moving to the next
+          release.
+
+    Future operator-tooling improvements (not blocking, but useful):
+       - Node-RED button "OTA fleet (canary)" that runs the procedure
+         above automatically: pub cmd/ota_check, wait for boot+validated
+         events, repeat for next device.
+       - Status tile that shows current firmware version per device so
+         the operator can see canary vs. fleet at a glance.
+       - Auto-revert: if any device times out during canary OTA, halt
+         the rollout and notify the operator instead of proceeding.
+
+    Operator-tooling RFC (added 2026-04-25 after fleet-OTA failure mode):
+       The current "Update all" / per-device "Update" buttons on the
+       Device Status tab fire cmd/ota_check immediately, with no
+       awareness of the canary discipline above. This is unsafe for
+       any deployment >2 devices and silently invites the same
+       AP-contention rollback we just hit. Required dashboard upgrades:
+
+       1. STAGGER STATE MACHINE (Node-RED side, no firmware change):
+          - "Update fleet" button kicks off a state machine that:
+            a. Lists devices needing OTA (filter by current
+               firmware_version != target).
+            b. Picks the first as canary; publishes cmd/ota_check.
+            c. Waits for that device's boot announcement at the new
+               firmware version AND its OTA_VALIDATED status event.
+            d. Waits an additional 5 min stability soak.
+            e. Moves to the next device, repeats c+d+e.
+            f. If any step times out (e.g. canary doesn't return on the
+               new version within 8 min), halts the rollout, surfaces a
+               red alert, and asks operator confirmation before continuing.
+       2. VISUAL PROGRESS INDICATOR:
+          - Per-device row showing: current_version, target_version,
+            and current state in { pending / waiting-canary /
+            uploading / validating / soaking / done / FAILED }.
+          - Per-device coloured progress bar:
+              grey  = pending
+              blue  = OTA_CHECKING / OTA_DOWNLOADING / OTA_PREFLIGHT
+              amber = OTA_VALIDATING (post-reboot, awaiting MQTT)
+              green = OTA_VALIDATED + soaked
+              red   = OTA_FAILED or rollback fired
+          - Overall fleet progress: "Updating 1 of 3 — ESP32-Charlie".
+          - "Cancel rollout" button that stops the state machine
+            without rolling back already-validated devices.
+       3. PER-DEVICE OTA OUTCOME LOG:
+          - Append to a flow-context array on each OTA event seen so
+            the operator can review what happened recently
+            (which device, when, what version, result).
+
+       Effort: ~4 hours of Node-RED state-machine + UI work.
+       Priority: HIGH if more than one release is planned; the next
+                 fleet OTA without this WILL hit the same rollback
+                 cascade.
+
+    ──── Post-mortem addendum 2026-04-25 (Bravo USB-PC OTA retry) ────
+    After the fleet rollback, an attempt was made to OTA Bravo while
+    it was connected to PC USB on COM5 with the serial monitor running
+    (cleanest possible environment — strong WiFi, single-device
+    association, full power, full visibility). Result: ALSO failed,
+    but in a different mode than the triangle devices.
+
+    Serial trace (Bravo, 2026-04-25 14:55):
+        rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+        [AppConfig] Node name: ESP32-Bravo
+        [I][OTAValid] Boot partition 'app1' state: 2     ← v0.4.05
+        [I][WiFi] Connected - IP: 192.168.10.112
+        [I][MQTT] Connected to broker
+        [I][MQTT] Boot announcement published (v0.4.05)
+        [I][MQTT] OTA check triggered via MQTT
+        [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 1000 ms
+        rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT) ← HARD RESET
+        [AppConfig] Node name: ESP32-Bravo
+        [I][OTAValid] Boot partition 'app1' state: 2     ← STILL v0.4.05
+
+    Observations:
+       - No "OTAValid: armed rollback for incoming version 0.4.06"
+         log line — the new image was never even staged for boot.
+       - The reboot is POWERON_RESET (0x1), not SW_CPU_RESET. That is
+         a HARD reset (brownout / external watchdog), not a normal
+         esp_restart() path. The OTA download itself crashed the
+         module before any image was committed.
+       - Came back on the same partition (app1) with the same
+         version (v0.4.05) — no rollback fired because no new image
+         was ever booted.
+
+    This is a SECOND, DIFFERENT failure mode from the triangle case:
+       - Triangle case (3 devices simultaneous):  flash succeeded
+         → boot v0.4.06 → AP contention → MQTT timeout → Phase-2
+         rollback fires correctly.
+       - Bravo USB-PC case (1 device, perfect environment):
+         flash never completes → hard-reset during download →
+         original partition retained.
+
+    Hypothesised causes (in order of likelihood):
+       1. Brownout during simultaneous WiFi-RX + flash-write +
+          serial-TX. The PC USB hub may not be sourcing enough
+          current to satisfy peak demand. Bravo specifically has
+          addressable LEDs wired to D27 (per session notes), which
+          could add to peak current.
+       2. HTTPS/TLS handshake failure on the OTA download — but
+          this would normally produce a clean ESP_FAIL log line,
+          not a hard reset.
+       3. Bravo-specific module hardware flake (this module has
+          historically had issues — was the device that exhibited
+          the v0.3.33→v0.3.35 OTA panic that prompted item #35
+          in the first place).
+
+    Charlie, Delta, Echo, Alpha are all working on v0.4.06 (Charlie
+    via OTA, Delta and Echo via fresh serial flash, Alpha is parked
+    on v0.4.05 with similar symptoms). Bravo and Alpha are the only
+    units reproducing OTA failure modes; both happen to be from the
+    same procurement batch. SUGGESTED FOLLOW-UP:
+
+       a. Try OTA on Bravo from VIN power (no USB cable attached) —
+          rules in/out the brownout-via-USB-power hypothesis.
+       b. If still fails, try OTA after disabling the addressable
+          LED strip on Bravo — rules in/out peak-current-from-LEDs.
+       c. If still fails, capture full ESP-IDF debug log
+          (CORE_DEBUG_LEVEL=5) during OTA — should expose whether
+          it's HTTPS, partition-write, or signature-verify failing.
+       d. If still fails on Bravo specifically, classify the module
+          as "OTA-untrustworthy, serial-flash only" and replace it.
+          The fleet has 5 working units (Charlie/Delta/Echo + Alpha
+          if/when re-flashed via serial); Bravo's RFID role can be
+          covered by any other unit.
+
+    PRIORITY: Low — the working-fleet count is sufficient for the
+              calibration work. Park as a Bravo-specific
+              investigation, not a release-blocker.
+
 36. Operational practice: heartbeat / boot-reason monitoring
     Confirm 60s heartbeat is sufficient for Node-RED's 90s offline
     detector. If devices ever report boot_reason=task_wdt or panic in
@@ -932,3 +1110,180 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     PRIORITY: Medium. Big UX win for calibration alone. Pairs naturally
               with #38 (runtime tunable intervals) — implement them
               together as one feature.
+
+43. Local build leaves firmware_version field EMPTY in MQTT messages
+    OBSERVATION (2026-04-25):  After bootstrapping Delta and Echo via
+    `pio run -t upload` from a developer workstation (not via CI), both
+    devices report:
+        firmware_ts: 1745539200    ← matches v0.4.06 build timestamp
+        firmware_version: ""       ← empty (BUG)
+    Whereas Charlie (OTA-updated from CI-built artifact) reports:
+        firmware_version: "0.4.06" ← correct
+
+    ROOT CAUSE:
+        platformio.ini line 74 unconditionally injects:
+            -DFIRMWARE_VERSION_OVERRIDE=\"${sysenv.FIRMWARE_VERSION}\"
+        When the FIRMWARE_VERSION env var is unset (local dev), the
+        macro becomes:
+            -DFIRMWARE_VERSION_OVERRIDE="\"\""
+        config.h then sees OVERRIDE *defined* (it can't tell defined-as-
+        empty apart from defined-with-value at preprocessor time):
+            #ifdef FIRMWARE_VERSION_OVERRIDE
+            #define FIRMWARE_VERSION FIRMWARE_VERSION_OVERRIDE   ← ""
+            #else
+            #define FIRMWARE_VERSION "0.4.06"   ← never reached
+            #endif
+        Result: FIRMWARE_VERSION = "".
+
+    FIX OPTIONS (in increasing complexity):
+        a) Easiest — modify modify_link_path.py (the existing pre-build
+           hook) to read FIRMWARE_VERSION env var and only inject the
+           OVERRIDE flag when it's set and non-empty. ~5 lines.
+        b) Alternative — make platformio.ini build_flags conditional via
+           `[env:esp32dev_local]` that omits the override flag entirely
+           and rely on config.h fallback. Requires CI to use the other
+           env-name explicitly.
+        c) C-level — change config.h to use a runtime-selected pointer
+           that picks FALLBACK when OVERRIDE is empty. Requires every
+           consumer to use a function call instead of a string literal.
+           Disqualified — too invasive.
+
+    IMPACT: Heartbeats/boot announcements with empty firmware_version
+    are useless for fleet inventory and OTA decision-making. The
+    Recent Abnormal Reboots tile rendering shows fw="" rows for
+    locally-flashed devices, which obscures triage.
+
+    PRIORITY: Medium. Block by Phase 2 firmware work — fix in v0.4.07.
+
+44. Addressable LED status colors (green/yellow/red) not lighting
+    OBSERVATION (2026-04-25):  Devices in the triangle (Charlie/Delta/
+    Echo) and Bravo on USB-PC do not exhibit the documented status-LED
+    behaviour: green when WiFi+MQTT are healthy, yellow during OTA, red
+    on rollback or fault. Bravo specifically has WS2812 addressable LEDs
+    on D27 (per session bring-up) but only shows the slow blue
+    "WIFI_CONNECTING" pulse — no transition to green when MQTT connects.
+
+    POSSIBLE CAUSES (need bench-side investigation):
+        a) ws2812.h / status-LED logic ties color to a state enum that
+           may not be updated on MQTT_CONNECTED transition (only on
+           WIFI_CONNECTED).
+        b) The LED pin (D27) may not match what ws2812.h is initialised
+           with — historically the firmware has used D2 or another pin
+           on the ESP32-DEVKIT V1 boards. Bravo specifically has an
+           external WS2812 strip wired to D27.
+        c) APP_CFG_LED_PIN / status-LED feature flag may be disabled in
+           AppConfig defaults; only the built-in blue LED (GPIO2) blinks.
+
+    INVESTIGATION STEPS:
+        1. Read include/ws2812.h to confirm what state-machine maps to
+           which colors and whether MQTT_CONNECTED triggers green.
+        2. Confirm AppConfig.led_pin (or compile-time LED_PIN) for each
+           device: factory-flashed devices may default to a different
+           pin than Bravo's D27 strip.
+        3. Trigger OTA on a device with serial monitor running; watch
+           for the LED-state log lines and confirm color transitions.
+
+    PRIORITY: Low — diagnostic visibility only. Triangle-position
+              calibration work (#39, #41.7) does not depend on LED
+              status. Park as a separate maintenance task.
+
+45. Fleet-control buttons (OTA/Restart/Firmware) need stagger
+    OBSERVATION (2026-04-25):  All three fleet-wide control buttons in
+    the Device Status tab fire MQTT commands SIMULTANEOUSLY (zero delay
+    between devices). Audit of flows.json:
+
+       - "Send OTA Update"  (hb_ota_btn → hb_cmd_fn): forEach UUID,
+                            node.send(cmd/ota_check) — no setTimeout.
+       - "Restart All ESP32s" (hb_restart_btn → hb_restart_fn):
+                            forEach UUID, node.send(cmd/restart) —
+                            no setTimeout.
+       - "Send Firmware" — DOES NOT EXIST as a fleet-level button.
+                           Only the OTA-check exists; firmware push is
+                           inferred (the ESP32-OTA-Pull library reads
+                           ota.json and self-fetches).
+
+    IMPACT (proven on 2026-04-25 v0.4.06 release):
+       Three devices simultaneously rebooting after OTA cause AP
+       association contention; all three fail Phase-2 validation and
+       roll back. See entry #35 case study for full chain.
+
+    REQUESTED CADENCE (operator):
+       - cmd/ota_check fanout    — 5 min stagger between devices.
+                                   (Allows v_new boot, MQTT-validate,
+                                    soak before next device starts.)
+       - cmd/restart fanout      — 1 min stagger between devices.
+                                   (Allows boot + MQTT reconnect
+                                    before next device drops off.)
+       - Firmware push (if added) — 1 min stagger.
+
+    IMPLEMENTATION:
+       - Replace the synchronous forEach in hb_cmd_fn / hb_restart_fn
+         with a setTimeout chain:
+            uuids.forEach(function(uuid, i) {
+                setTimeout(function() {
+                    node.send({ topic: ..., payload: '' });
+                }, i * STAGGER_MS);
+            });
+       - Where STAGGER_MS = 300000 for OTA, 60000 for restart.
+       - Add a flow-context flag to suppress double-clicks during
+         an in-flight rollout.
+       - Visual indicator: the canary-OTA RFC in #35 covers this in
+         depth. The minimum acceptable interim is a textual "Rollout
+         in progress: 1 of 5 — ESP32-Charlie" banner.
+
+    PRIORITY: HIGH — every future fleet OTA without stagger WILL hit
+                     the same rollback cascade documented in #35.
+                     This is the bare-minimum interim before the full
+                     #35 staggered-OTA RFC is implemented.
+
+46. Recent Abnormal Reboots — fleet-wide WDT / panic investigation
+    OBSERVATION (2026-04-25, post-OTA-chaos):  All 5 devices in the
+    fleet currently have abnormal boot reasons in their LATEST retained
+    boot announcement (captured via mosquitto_sub):
+
+       Charlie (v0.4.06):  task_wdt
+       Alpha   (v0.4.06):  software   ← clean esp_restart()
+       Bravo   (v0.4.05):  int_wdt
+       Delta   (v0.4.06):  task_wdt
+       Echo    (v0.4.06):  other_wdt
+
+    The "Recent Abnormal Reboots" dashboard tile (boot_history_grp +
+    boot_history_fn at flows.json:2673) correctly captures and dedups
+    these. The tile WORKS — the question is why the underlying
+    boot reasons are happening on healthy-looking devices.
+
+    POSSIBLE CAUSES:
+       a) RESIDUAL FROM TODAY'S CHAOS — the retained boot announcement
+          reflects the LAST boot, which for most devices was during
+          the OTA-rollback session today. If the next clean reboot
+          happens via clean esp_restart() these will all flip to
+          'software' or 'poweron'. Easy to verify: trigger a clean
+          reboot on each device and re-capture.
+       b) v0.4.06 SUBSYSTEM RACE — peer_tracker.h F4 outlier-streak
+          field was added in v0.4.06; if the new code path takes
+          longer than the task watchdog grace period under high RSSI
+          throughput it could trigger task_wdt. Unlikely (the new
+          code is ~10 instructions per frame), but worth ruling out
+          with a soak test on Charlie.
+       c) AP-CONTENTION LINGERING — devices that fell into AP-mode
+          portal during OTA rollback may have been hard-rebooted by
+          watchdog while waiting for the operator. The other_wdt on
+          Echo is consistent with this.
+       d) PER-MODULE FLAKE — Bravo specifically has historical OTA
+          panic issues (see #35 addendum). Its int_wdt today may be
+          unrelated to v0.4.06.
+
+    INVESTIGATION PLAN:
+       1. Trigger cmd/restart on each device (one at a time, 60 s apart
+          per #45) and re-capture retained boot announcement. If
+          subsequent boots show 'software', the WDT entries were
+          residual.
+       2. Soak Charlie/Delta/Echo for 1 h with ranging enabled and
+          ESPNOW_BEACON_INTERVAL_MS at default. Check for new
+          task_wdt entries.
+       3. If new task_wdt entries appear, capture serial trace of the
+          panic to identify the stuck task.
+
+    PRIORITY: Medium-High — task_wdt and int_wdt are NEVER acceptable
+              in steady state. Investigate after #45 stagger lands so
+              the cleanup-restart can be done safely.

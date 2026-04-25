@@ -77,6 +77,124 @@ void test_ranging_math_espnow_indoor_three_metres() {
 
 
 // =============================================================================
+// calibration linreg tests (v0.4.07 / SUGGESTED_IMPROVEMENTS #39)
+// =============================================================================
+
+void test_calib_predicted_rssi_at_one_metre() {
+    // log10(1) = 0 → predicted = tx_power exactly.
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -59.0f, calibPredictedRssi(1.0f, -59.0f, 2.5f));
+}
+
+void test_calib_predicted_rssi_at_ten_metres() {
+    // RSSI(10 m) = tx_power - 10·n·log10(10) = -59 - 25 = -84  (n=2.5)
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -84.0f, calibPredictedRssi(10.0f, -59.0f, 2.5f));
+}
+
+void test_calib_residual_sign_and_magnitude() {
+    // Predicted at 2 m (n=2.5) = -59 - 25*log10(2) ≈ -66.526
+    // Actual = -65 → residual = -65 - (-66.526) = +1.526 (more signal than predicted)
+    float r = calibResidual(2.0f, -65.0f, -59.0f, 2.5f);
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 1.526f, r);
+}
+
+// Exact recovery — synthesise points from known (tx_power, n), then fit.
+// The fit must return the same constants (within rounding noise).
+void test_calib_linreg_exact_recovery() {
+    const float tx = -55.0f;
+    const float n  = 2.7f;
+    const float dists[4] = { 0.5f, 1.0f, 2.0f, 5.0f };
+    float rssis[4];
+    for (int i = 0; i < 4; i++) rssis[i] = calibPredictedRssi(dists[i], tx, n);
+
+    CalibFitResult fit = calibLinreg(dists, rssis, 4);
+    TEST_ASSERT_TRUE(fit.valid);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, tx, fit.tx_power_dbm);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, n,  fit.path_loss_n);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, fit.r_squared);  // perfect fit
+    TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f, fit.rmse_db);
+    TEST_ASSERT_EQUAL_UINT8(4, fit.point_count);
+}
+
+// 4 points with small additive noise — fit must still be very close.
+void test_calib_linreg_with_small_noise() {
+    const float tx = -59.0f;
+    const float n  = 2.5f;
+    const float dists[4] = { 0.5f, 1.0f, 2.0f, 4.0f };
+    // ±1 dB perturbations from the model
+    const float noise[4] = { +0.8f, -0.6f, +0.4f, -0.7f };
+    float rssis[4];
+    for (int i = 0; i < 4; i++)
+        rssis[i] = calibPredictedRssi(dists[i], tx, n) + noise[i];
+
+    CalibFitResult fit = calibLinreg(dists, rssis, 4);
+    TEST_ASSERT_TRUE(fit.valid);
+    TEST_ASSERT_FLOAT_WITHIN(2.0f, tx, fit.tx_power_dbm);
+    TEST_ASSERT_FLOAT_WITHIN(0.4f, n,  fit.path_loss_n);
+    TEST_ASSERT_TRUE(fit.r_squared > 0.95f);   // noise small → R² high
+    TEST_ASSERT_TRUE(fit.rmse_db < 1.5f);
+}
+
+// 4 clean points + 1 outlier — fit should still recover roughly correct
+// constants but R² drops noticeably (so the operator can spot the outlier).
+void test_calib_linreg_outlier_resilience() {
+    const float tx = -59.0f;
+    const float n  = 2.5f;
+    const float dists[5] = { 0.5f, 1.0f, 2.0f, 4.0f, 3.0f };
+    float rssis[5];
+    for (int i = 0; i < 4; i++) rssis[i] = calibPredictedRssi(dists[i], tx, n);
+    rssis[4] = calibPredictedRssi(3.0f, tx, n) + 12.0f;   // +12 dB outlier
+
+    CalibFitResult fit = calibLinreg(dists, rssis, 5);
+    TEST_ASSERT_TRUE(fit.valid);
+    // Constants will drift modestly, but stay in the right ballpark
+    TEST_ASSERT_FLOAT_WITHIN(8.0f, tx, fit.tx_power_dbm);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, n,  fit.path_loss_n);
+    // R² drops below the noiseless ceiling — that's the diagnostic signal
+    TEST_ASSERT_TRUE(fit.r_squared < 0.99f);
+    // RMSE of an outlier-contaminated fit > clean fit
+    TEST_ASSERT_TRUE(fit.rmse_db > 1.5f);
+}
+
+void test_calib_linreg_rejects_single_point() {
+    const float dists[1] = { 1.0f };
+    const float rssis[1] = { -59.0f };
+    CalibFitResult fit = calibLinreg(dists, rssis, 1);
+    TEST_ASSERT_FALSE(fit.valid);
+}
+
+void test_calib_linreg_rejects_all_same_distance() {
+    // All measurements at 1 m → slope undefined.
+    const float dists[3] = { 1.0f, 1.0f, 1.0f };
+    const float rssis[3] = { -59.0f, -57.0f, -61.0f };
+    CalibFitResult fit = calibLinreg(dists, rssis, 3);
+    TEST_ASSERT_FALSE(fit.valid);
+}
+
+void test_calib_linreg_rejects_zero_distance() {
+    // distance=0 → log10(0) = -inf → fit must reject.
+    const float dists[3] = { 1.0f, 2.0f, 0.0f };
+    const float rssis[3] = { -59.0f, -65.0f, -50.0f };
+    CalibFitResult fit = calibLinreg(dists, rssis, 3);
+    TEST_ASSERT_FALSE(fit.valid);
+}
+
+// Distances in non-monotonic order — fit shouldn't care about ordering.
+void test_calib_linreg_handles_unsorted_input() {
+    const float dists[4] = { 4.0f, 0.5f, 2.0f, 1.0f };
+    const float rssis[4] = {
+        calibPredictedRssi(4.0f, -59.0f, 2.5f),
+        calibPredictedRssi(0.5f, -59.0f, 2.5f),
+        calibPredictedRssi(2.0f, -59.0f, 2.5f),
+        calibPredictedRssi(1.0f, -59.0f, 2.5f)
+    };
+    CalibFitResult fit = calibLinreg(dists, rssis, 4);
+    TEST_ASSERT_TRUE(fit.valid);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, -59.0f, fit.tx_power_dbm);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.5f,   fit.path_loss_n);
+}
+
+
+// =============================================================================
 // mac_utils.h tests
 // =============================================================================
 void test_mac_utils_all_zero() {
@@ -969,6 +1087,18 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_ranging_math_ten_metres_freespace);
     RUN_TEST(test_ranging_math_two_metres_freespace);
     RUN_TEST(test_ranging_math_clamp_below_one_metre);
+
+    // calibration linreg (v0.4.07)
+    RUN_TEST(test_calib_predicted_rssi_at_one_metre);
+    RUN_TEST(test_calib_predicted_rssi_at_ten_metres);
+    RUN_TEST(test_calib_residual_sign_and_magnitude);
+    RUN_TEST(test_calib_linreg_exact_recovery);
+    RUN_TEST(test_calib_linreg_with_small_noise);
+    RUN_TEST(test_calib_linreg_outlier_resilience);
+    RUN_TEST(test_calib_linreg_rejects_single_point);
+    RUN_TEST(test_calib_linreg_rejects_all_same_distance);
+    RUN_TEST(test_calib_linreg_rejects_zero_distance);
+    RUN_TEST(test_calib_linreg_handles_unsorted_input);
     RUN_TEST(test_ranging_math_espnow_indoor_three_metres);
 
     // mac_utils

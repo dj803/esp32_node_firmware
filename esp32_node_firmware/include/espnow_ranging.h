@@ -87,17 +87,52 @@ void espnowSetTrackedMacs(const char** macs, uint8_t n) {
 
 
 // ── Calibration state machine (F3) ───────────────────────────────────────────
+//
+// v0.4.07 (#39): adds MEASURING_AT for arbitrary-distance points and a
+// shared multi-point buffer that all three measure_* commands populate.
+// 'commit' performs least-squares linreg over the buffer when ≥2 points
+// are present; falls back to operator-supplied tx_power/n otherwise
+// (backwards-compatible with the single-point wizard flow).
 
-enum class EnrCalibState : uint8_t { IDLE, MEASURING_1M, MEASURING_D };
+enum class EnrCalibState : uint8_t { IDLE, MEASURING_1M, MEASURING_D, MEASURING_AT };
 
 static EnrCalibState _calibState      = EnrCalibState::IDLE;
 static char          _calibPeerMac[18] = {};
 static int8_t        _calibBuf[ESPNOW_CALIBRATION_SAMPLES];
 static uint8_t       _calibCount      = 0;
 static uint8_t       _calibTarget     = ESPNOW_CALIBRATION_SAMPLES;
-static float         _calibDistanceM  = 0.0f;  // set by measure_d command
-static int8_t        _calibTxPower    = 0;     // median from measure_1m step
+static float         _calibDistanceM  = 0.0f;  // set by measure_d / measure_at command
+static int8_t        _calibTxPower    = 0;     // median from measure_1m step (legacy single-point flow)
 static uint32_t      _calibStartMs    = 0;
+
+// Multi-point calibration buffer. Every completed measure_1m / measure_d /
+// measure_at step appends one entry; commit performs linreg over them all.
+struct EnrCalibPoint {
+    float   distance_m;
+    int8_t  rssi_median;
+    uint8_t samples;
+};
+static EnrCalibPoint _calibPoints[ESPNOW_CALIB_MAX_POINTS];
+static uint8_t       _calibPointCount = 0;
+
+// Append a point to the multi-point buffer. If full, evict the OLDEST
+// entry (FIFO — newer measurements are typically more trustworthy).
+static void _enrCalibPushPoint(float dist_m, int8_t rssi_median, uint8_t samples) {
+    if (_calibPointCount < ESPNOW_CALIB_MAX_POINTS) {
+        _calibPoints[_calibPointCount++] = { dist_m, rssi_median, samples };
+        return;
+    }
+    // Buffer full — shift left, append at end.
+    for (uint8_t i = 1; i < ESPNOW_CALIB_MAX_POINTS; i++) {
+        _calibPoints[i - 1] = _calibPoints[i];
+    }
+    _calibPoints[ESPNOW_CALIB_MAX_POINTS - 1] = { dist_m, rssi_median, samples };
+}
+
+static void _enrCalibClearPoints() {
+    _calibPointCount = 0;
+    memset(_calibPoints, 0, sizeof(_calibPoints));
+}
 
 // Simple insertion-sort median on a copy of buf[0..n-1].
 static int8_t _enrMedian(const int8_t* src, uint8_t n) {
@@ -150,41 +185,59 @@ static void _enrCalibrateCollect(const char* macStr, int8_t rssi) {
     if (_calibState == EnrCalibState::MEASURING_1M) {
         _calibTxPower = median;
         _calibState   = EnrCalibState::IDLE;
+        // v0.4.07: also append to multi-point buffer at d=1.0 m so that
+        // commit's linreg can use this measurement.
+        _enrCalibPushPoint(1.0f, median, _calibTarget);
         if (mqttIsConnected()) {
-            char buf[128];
+            char buf[160];
             snprintf(buf, sizeof(buf),
                 "{\"calib\":\"measure_1m_done\",\"rssi_median\":%d,"
-                "\"tx_power_dbm\":%d,\"samples\":%u}",
-                (int)median, (int)median, (unsigned)_calibTarget);
+                "\"tx_power_dbm\":%d,\"samples\":%u,\"points\":%u}",
+                (int)median, (int)median, (unsigned)_calibTarget,
+                (unsigned)_calibPointCount);
             mqttPublish("response", String(buf), 1, false);
         }
-        LOG_I("ESP-NOW Calib", "1 m step done: rssi_median=%d", (int)median);
+        LOG_I("ESP-NOW Calib", "1 m step done: rssi_median=%d points=%u",
+              (int)median, (unsigned)_calibPointCount);
 
-    } else {  // MEASURING_D
-        if (_calibDistanceM <= 0.0f || _calibTxPower == 0) {
-            _calibState = EnrCalibState::IDLE;
-            if (mqttIsConnected())
-                mqttPublish("response",
-                    String("{\"calib\":\"error\",\"msg\":\"run measure_1m first\"}"),
-                    1, false);
-            return;
-        }
+    } else if (_calibState == EnrCalibState::MEASURING_D) {
+        // Legacy two-step flow: measure_1m -> measure_d -> commit
+        // Reports n derived from the (1m, d) pair; also appends the d-point
+        // to the multi-point buffer so commit's linreg can use it.
+        _enrCalibPushPoint(_calibDistanceM, median, _calibTarget);
         float logDist = log10f(_calibDistanceM);
-        float n = (logDist > 0.0f)
+        float n = (logDist != 0.0f && _calibTxPower != 0)
                   ? (float)(_calibTxPower - median) / (10.0f * logDist)
                   : 0.0f;
         _calibState = EnrCalibState::IDLE;
         if (mqttIsConnected()) {
-            char buf[192];
+            char buf[224];
             snprintf(buf, sizeof(buf),
                 "{\"calib\":\"measure_d_done\",\"rssi_median\":%d,"
                 "\"distance_m\":%.2f,\"path_loss_n\":%.2f,"
-                "\"tx_power_dbm\":%d,\"samples\":%u}",
+                "\"tx_power_dbm\":%d,\"samples\":%u,\"points\":%u}",
                 (int)median, _calibDistanceM, n,
-                (int)_calibTxPower, (unsigned)_calibTarget);
+                (int)_calibTxPower, (unsigned)_calibTarget,
+                (unsigned)_calibPointCount);
             mqttPublish("response", String(buf), 1, false);
         }
-        LOG_I("ESP-NOW Calib", "distance step done: rssi_median=%d n=%.2f", (int)median, n);
+        LOG_I("ESP-NOW Calib", "distance step done: rssi_median=%d n=%.2f points=%u",
+              (int)median, n, (unsigned)_calibPointCount);
+
+    } else {  // MEASURING_AT (v0.4.07 — multi-point flow)
+        _enrCalibPushPoint(_calibDistanceM, median, _calibTarget);
+        _calibState = EnrCalibState::IDLE;
+        if (mqttIsConnected()) {
+            char buf[192];
+            snprintf(buf, sizeof(buf),
+                "{\"calib\":\"measure_at_done\",\"rssi_median\":%d,"
+                "\"distance_m\":%.2f,\"samples\":%u,\"points\":%u}",
+                (int)median, _calibDistanceM,
+                (unsigned)_calibTarget, (unsigned)_calibPointCount);
+            mqttPublish("response", String(buf), 1, false);
+        }
+        LOG_I("ESP-NOW Calib", "measure_at done: %.2f m  rssi_median=%d  points=%u",
+              _calibDistanceM, (int)median, (unsigned)_calibPointCount);
     }
 }
 
@@ -204,7 +257,9 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
 
     const char* cmd = doc["cmd"] | "";
 
-    if (strcmp(cmd, "measure_1m") == 0 || strcmp(cmd, "measure_d") == 0) {
+    if (strcmp(cmd, "measure_1m") == 0 ||
+        strcmp(cmd, "measure_d")  == 0 ||
+        strcmp(cmd, "measure_at") == 0) {
         const char* peerMac = doc["peer_mac"] | "";
         if (strlen(peerMac) != 17) {
             LOG_W("ESP-NOW Calib", "missing/invalid peer_mac");
@@ -220,34 +275,93 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
         _calibTarget = samples;
         _calibStartMs = millis();
 
-        if (strcmp(cmd, "measure_d") == 0) {
+        if (strcmp(cmd, "measure_d") == 0 || strcmp(cmd, "measure_at") == 0) {
             float d = doc["distance_m"] | 0.0f;
             if (d <= 0.0f) {
-                LOG_W("ESP-NOW Calib", "measure_d: distance_m must be > 0");
+                LOG_W("ESP-NOW Calib", "%s: distance_m must be > 0", cmd);
                 return;
             }
             _calibDistanceM = d;
-            _calibState = EnrCalibState::MEASURING_D;
-            LOG_I("ESP-NOW Calib", "measuring at %.2f m from %s (%u samples)",
-                  d, peerMac, (unsigned)samples);
+            _calibState = (strcmp(cmd, "measure_d") == 0)
+                          ? EnrCalibState::MEASURING_D
+                          : EnrCalibState::MEASURING_AT;
+            LOG_I("ESP-NOW Calib", "%s at %.2f m from %s (%u samples)",
+                  cmd, d, peerMac, (unsigned)samples);
         } else {
+            _calibDistanceM = 1.0f;
             _calibState = EnrCalibState::MEASURING_1M;
             LOG_I("ESP-NOW Calib", "measuring at 1 m from %s (%u samples)",
                   peerMac, (unsigned)samples);
         }
         if (mqttIsConnected()) {
-            char pb[128];
+            char pb[160];
             snprintf(pb, sizeof(pb),
                 "{\"calib\":\"started\",\"cmd\":\"%s\",\"peer_mac\":\"%s\","
-                "\"samples\":%u}", cmd, peerMac, (unsigned)samples);
+                "\"samples\":%u,\"points\":%u}",
+                cmd, peerMac, (unsigned)samples, (unsigned)_calibPointCount);
             mqttPublish("response", String(pb), 1, false);
         }
 
+    } else if (strcmp(cmd, "clear") == 0) {
+        // v0.4.07: explicit buffer wipe. Useful when the operator wants to
+        // start a fresh multi-point calibration without rebooting.
+        _enrCalibClearPoints();
+        _calibState   = EnrCalibState::IDLE;
+        _calibCount   = 0;
+        _calibTxPower = 0;
+        LOG_I("ESP-NOW Calib", "multi-point buffer cleared");
+        if (mqttIsConnected())
+            mqttPublish("response",
+                String("{\"calib\":\"cleared\",\"points\":0}"), 1, false);
+
     } else if (strcmp(cmd, "commit") == 0) {
-        int   txp = doc["tx_power_dbm"] | (int)ESPNOW_TX_POWER_DBM;
-        float pln = doc["path_loss_n"]  | ESPNOW_PATH_LOSS_N;
+        // v0.4.07 (#39): if the multi-point buffer has ≥2 entries, compute
+        // tx_power and path_loss_n via least-squares linreg over them.
+        // Otherwise fall back to operator-supplied JSON values (legacy flow).
+        int   txp = 0;
+        float pln = 0.0f;
+        float r2  = NAN;
+        float rmse = NAN;
+        bool  used_linreg = false;
+
+        if (_calibPointCount >= 2) {
+            float dists[ESPNOW_CALIB_MAX_POINTS];
+            float rssis[ESPNOW_CALIB_MAX_POINTS];
+            for (uint8_t i = 0; i < _calibPointCount; i++) {
+                dists[i] = _calibPoints[i].distance_m;
+                rssis[i] = (float)_calibPoints[i].rssi_median;
+            }
+            CalibFitResult fit = calibLinreg(dists, rssis, _calibPointCount);
+            if (!fit.valid) {
+                LOG_W("ESP-NOW Calib", "commit: linreg degenerate (n=%u)",
+                      (unsigned)_calibPointCount);
+                if (mqttIsConnected())
+                    mqttPublish("response",
+                        String("{\"calib\":\"error\",\"msg\":\"linreg degenerate — distances all equal?\"}"),
+                        1, false);
+                return;
+            }
+            txp = (int)lroundf(fit.tx_power_dbm);
+            pln = fit.path_loss_n;
+            r2  = fit.r_squared;
+            rmse = fit.rmse_db;
+            used_linreg = true;
+            LOG_I("ESP-NOW Calib", "linreg over %u points: txp=%d n=%.2f R²=%.3f RMSE=%.2f dB",
+                  (unsigned)_calibPointCount, txp, pln, r2, rmse);
+        } else {
+            txp = doc["tx_power_dbm"] | (int)ESPNOW_TX_POWER_DBM;
+            pln = doc["path_loss_n"]  | ESPNOW_PATH_LOSS_N;
+        }
+
         if (txp > 0 || txp < -120 || pln < 1.0f || pln > 6.0f) {
             LOG_W("ESP-NOW Calib", "commit: values out of range (txp=%d n=%.2f)", txp, pln);
+            if (mqttIsConnected()) {
+                char pb[160];
+                snprintf(pb, sizeof(pb),
+                    "{\"calib\":\"error\",\"msg\":\"out of range\","
+                    "\"tx_power_dbm\":%d,\"path_loss_n\":%.2f}", txp, pln);
+                mqttPublish("response", String(pb), 1, false);
+            }
             return;
         }
         AppConfig copy = gAppConfig;
@@ -256,10 +370,19 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
         if (AppConfigStore::save(copy)) {
             LOG_I("ESP-NOW Calib", "committed: tx_power=%d n=%.2f", txp, pln);
             if (mqttIsConnected()) {
-                char pb[128];
-                snprintf(pb, sizeof(pb),
-                    "{\"calib\":\"committed\",\"tx_power_dbm\":%d,\"path_loss_n\":%.2f}",
-                    txp, pln);
+                char pb[256];
+                if (used_linreg) {
+                    snprintf(pb, sizeof(pb),
+                        "{\"calib\":\"committed\",\"tx_power_dbm\":%d,"
+                        "\"path_loss_n\":%.2f,\"points\":%u,"
+                        "\"r_squared\":%.3f,\"rmse_db\":%.2f,\"method\":\"linreg\"}",
+                        txp, pln, (unsigned)_calibPointCount, r2, rmse);
+                } else {
+                    snprintf(pb, sizeof(pb),
+                        "{\"calib\":\"committed\",\"tx_power_dbm\":%d,"
+                        "\"path_loss_n\":%.2f,\"method\":\"manual\"}",
+                        txp, pln);
+                }
                 mqttPublish("response", String(pb), 1, false);
             }
         } else {
@@ -279,6 +402,8 @@ void espnowCalibrateCmd(const char* payload, size_t len) {
                     String("{\"calib\":\"reset\"}"), 1, false);
         }
         _calibState = EnrCalibState::IDLE;
+        _enrCalibClearPoints();
+        _calibTxPower = 0;
 
     } else {
         LOG_W("ESP-NOW Calib", "unknown cmd '%s'", cmd);
