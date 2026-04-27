@@ -10,15 +10,27 @@
 
 ## Build & Test (from `C:\Users\drowa\Documents\git\Arduino\NodeFirmware\esp32_node_firmware\`)
 - Compile for ESP32:        `pio run -e esp32dev`
-- Flash the device on COM5: `pio run -e esp32dev -t upload`
-- Serial monitor:           `pio device monitor -p COM5 -b 115200`
+- Flash a specific port:    `pio run -e esp32dev -t upload --upload-port COMx`  ← see COM port verification below
+- Serial monitor:           `pio device monitor -p COMx -b 115200`
 - Host-side unit tests:     `pio test -e native -v`   ← run before every commit
-- Default baud for COM5 serial monitor is 115200.
+- Default baud for serial monitor is 115200.
+- **Always verify which device is on COMx BEFORE flashing** — see "COM port assignments are NOT fixed" in Device Fleet below.
 
 ## Device Fleet (firmware v0.4.10)
 - ESP32-Alpha   — UUID `32925666-155a-4a67-bf50-27c1ffa22b11`, MAC `84:1F:E8:1A:CC:98`
-- ESP32-Bravo   — UUID `6cfe177f-92eb-4699-a9a6-8a3603aae175`, MAC `F4:2D:C9:73:D3:CC` (COM5, 8 WS2812 LEDs)
+- ESP32-Bravo   — UUID `6cfe177f-92eb-4699-a9a6-8a3603aae175`, MAC `F4:2D:C9:73:D3:CC` (8 WS2812 LEDs)
 - ESP32-Charlie — UUID `2ff9ddcf-bf7e-4b51-ba6c-fa4bfcd80cdd`, MAC `D4:E9:F4:60:1C:C4`
+- **COM port assignments are NOT fixed.** Multiple ESPs are on the bench at any time and Windows assigns COM ports in plug-in order. Before flashing or monitoring, ALWAYS verify which device is on which port:
+  ```powershell
+  Get-PnpDevice -Class Ports -PresentOnly | Select-Object Name,Status
+  ```
+  Then resolve to MAC by either reading the device's USB serial descriptor, or by running `esptool chip-id` and matching MAC against the table above:
+  ```bash
+  PYTHONIOENCODING=utf-8 "C:/Users/drowa/.platformio/penv/Scripts/python.exe" \
+    "C:/Users/drowa/.platformio/packages/tool-esptoolpy/esptool.py" \
+    --chip esp32 --port COM5 chip-id
+  ```
+  Cross-check the printed MAC against the fleet table before pulling the trigger on `pio run -t upload --upload-port COMx`.
 - ESP32-Delta   — UUID `2b89f43c-2fd8-4ed6-ac9d-fb0d8f97c282`
 - ESP32-Echo    — UUID `2fdd4112-9255-42a8-a099-ada0075a677b`
 - ESP32-Foxtrot — UUID `3b3b7342-80e7-43dd-afc7-78d0470861e2`, MAC `28:05:A5:32:50:44` (RFID reader; bootstrap-bypass anomaly noted in #50)
