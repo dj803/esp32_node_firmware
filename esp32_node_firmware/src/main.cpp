@@ -696,11 +696,15 @@ void loop() {
         ledSetPattern(LedPattern::ERROR);
         mqttForceDisconnect();   // releases stuck async-client state, clears _mqttConnectStartMs
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
-        LOG_W("Loop", "MQTT unrecoverable — flagging credentials stale and restarting");
+        // (#65 Phase 2, v0.4.19) Was unconditional ESP.restart() — now defer
+        // 300 ms via mqttScheduleRestart() so the diagnostic JSON publish
+        // drains and the dashboard sees WHY this device just decided to
+        // self-restart (fail count, last disconnect reason, RSSI).
+        LOG_W("Loop", "MQTT unrecoverable — flagging credentials stale and scheduling restart");
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();
-        ESP.restart();
+        mqttScheduleRestart("mqtt_unrecoverable", 300);
     } else if (mqttNeedsRediscovery()) {
         mqttClearRediscoveryFlag();
         ledSetPattern(LedPattern::WIFI_CONNECTING);

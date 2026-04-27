@@ -101,6 +101,14 @@ static volatile bool    _mqttOtaActive     = false;          // OTA in progress 
 // deferred-flag pattern moves the post to loop() where it is safe.
 static volatile uint32_t _mqttLedHealthyAtMs = 0;
 
+// (#65 Phase 2, v0.4.19) Cache the last AsyncMqttClient disconnect reason so
+// the pre-restart diagnostic publish can surface WHY the restart happened.
+// Sentinel 0xFF = no disconnect ever observed this boot. Updated in
+// onMqttDisconnect() before the reconnect timer fires; consumed by
+// mqttRestartDiagJson() to populate "last_disconnect_reason" in the
+// restarting-event JSON.
+static volatile uint8_t _mqttLastDisconnectReason = 0xFF;
+
 // (#67 v0.4.16) Pre-connect broker probe gate.
 // Set by mqttReconnectTimerCb when it WANTS to reconnect; consumed by
 // mqttHeartbeat() (loop task) which probes the broker via a quick TCP SYN
@@ -369,6 +377,12 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
 static void mqttPublishStatus(FwEvent ev, const char* extraJson = nullptr) {
     mqttPublishStatus(fwEventName(ev), extraJson);
 }
+
+// Forward declaration — definition is below near the reconnect/hang machinery.
+// (#65 Phase 2, v0.4.19) Lets handleCredRotation() and onMqttMessage()
+// call the deferred-restart helper without requiring the file to be
+// re-ordered.
+static void mqttScheduleRestart(const char* reason, uint32_t deferMs = 300);
 
 
 // Serialise a JsonDocument and publish it to <prefix>.
@@ -762,7 +776,7 @@ static void handleCredRotation(const char* payload, size_t len) {
     // it to drop the connection before the PUBACK is received.
     LOG_I("MQTT", "Credentials rotated successfully - restarting in 600 ms");
     mqttPublishStatus(FwEvent::CRED_ROTATED);
-    _mqttRestartAtMs = millis() + 600;   // mqttHeartbeat() drives the deferred restart
+    mqttScheduleRestart("cred_rotated", 600);   // #65: also publishes RESTARTING with diag
 }
 
 
@@ -1078,8 +1092,7 @@ static void onMqttMessage(char* topic, char* payload,
         // ESP.restart() after 300 ms so the MQTT publish drains without
         // blocking inside this callback.
         LOG_I("MQTT", "Restart command received - restarting in 300 ms");
-        mqttPublishStatus(FwEvent::RESTARTING);
-        _mqttRestartAtMs = millis() + 300;
+        mqttScheduleRestart("cmd_restart", 300);   // #65: pre-restart diag publish
     } else if (t == mqttTopic("cmd/sleep") || t == mqttTopic("cmd/deep_sleep")) {
         // Deferred light / deep sleep. Payload: {"seconds":N} with
         // N in [MIN_SLEEP_SECONDS, MAX_SLEEP_SECONDS].
@@ -1253,6 +1266,7 @@ static const char* mqttDisconnectReasonStr(AsyncMqttClientDisconnectReason reaso
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
+    _mqttLastDisconnectReason = (uint8_t)reason;   // (#65) cache for restart diag
 
     // Update sibling health advertisement — MQTT is no longer connected.
     responderSetHealthFlag(1, false);
@@ -1431,6 +1445,47 @@ bool mqttIsHung() {
 }
 
 bool mqttIsConnected() { return _mqttClient.connected(); }
+
+
+// ── mqttScheduleRestart ───────────────────────────────────────────────────────
+// (#65 Phase 2, v0.4.19) Single entry point for ALL deferred ESP.restart()
+// flows. Builds a diagnostic JSON describing why we're restarting and what
+// state the device was in, publishes a `restarting` event, then sets the
+// deferral deadline. mqttHeartbeat() (loop) consumes the deadline and calls
+// ESP.restart() once enough time has passed for the publish to drain.
+//
+// `reason` is a short identifier — "cmd_restart", "cred_rotated",
+// "mqtt_unrecoverable", "mqtt_hung_giveup", etc. Surfaces in the JSON as the
+// `restart_cause` field so the dashboard can distinguish a deliberate operator
+// restart from an emergency self-heal.
+//
+// Caller pattern:
+//   mqttScheduleRestart("mqtt_unrecoverable", 300);
+//   // ESP.restart() will fire 300 ms later via mqttHeartbeat()'s deferred
+//   // restart check. The publish drains during the gap.
+//
+// IMPORTANT: do NOT call from a TWDT-subscribed task (OTA, mbedTLS keygen).
+// Only from the main loop / async_tcp callbacks.
+static void mqttScheduleRestart(const char* reason, uint32_t deferMs) {
+    char extra[256];
+    int n = snprintf(extra, sizeof(extra),
+        "\"restart_cause\":\"%s\","
+        "\"fail_count\":%d,"
+        "\"last_disconnect_reason\":%u,"
+        "\"reconnect_delay_ms\":%u,"
+        "\"wifi_rssi\":%d",
+        reason,
+        (int)_mqttReconnectCount,
+        (unsigned)_mqttLastDisconnectReason,
+        (unsigned)_mqttReconnectDelay,
+        (int)WiFi.RSSI());
+    if (n < 0 || n >= (int)sizeof(extra)) {
+        LOG_W("MQTT", "restart diag JSON truncated (n=%d)", n);
+    }
+    LOG_W("MQTT", "Scheduling restart (%s) in %u ms", reason, (unsigned)deferMs);
+    mqttPublishStatus(FwEvent::RESTARTING, extra);
+    _mqttRestartAtMs = millis() + deferMs;
+}
 
 
 // ── _mqttBrokerProbe ──────────────────────────────────────────────────────────

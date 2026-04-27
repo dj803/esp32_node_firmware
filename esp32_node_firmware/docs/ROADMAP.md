@@ -14,6 +14,41 @@ Heap-guard fix in `mqttPublish()` (#51 root cause). Plus bundled: BLE off, NDEF 
 ### v0.4.12 — DONE
 Cosmetic re-tag of v0.4.11 for OTA-path validation.
 
+### v0.4.20 — Plan C: per-device firmware variants (#58)
+
+Today every device runs the same binary even though Foxtrot uses RFID, Bravo uses LEDs+BLE, others use only ESP-NOW. Each carries dead code (~30-40% binary bloat). Per-variant builds let us:
+- Smaller binaries (faster OTA download, less flash wear).
+- Smaller attack surface per role (RFID-less devices don't expose RFID command handlers).
+- Easier diagnosis (today's BLE-off A/B test would be CI-built, not hand-flagged via `BLE_ENABLED`).
+
+**Steps:**
+1. New PIO envs: `[env:esp32dev_full]` (= current), `[env:esp32dev_rfid]`, `[env:esp32dev_ranging_only]`, `[env:esp32dev_minimal]`. Each toggles `RFID_ENABLED` / `BLE_ENABLED` / `WS2812_ENABLED` via build flags.
+2. CI builds N binaries; uploads them to the GitHub release with names `firmware-<variant>.bin`.
+3. Pages OTA manifest schema gains a `Variant` keyed entry:
+   ```json
+   {"Configurations":[
+     {"Variant":"rfid","Version":"0.4.20","URL":"https://.../firmware-rfid.bin"},
+     {"Variant":"ranging_only","Version":"0.4.20","URL":"https://.../firmware-ranging_only.bin"},
+     {"Variant":"minimal","Version":"0.4.20","URL":"https://.../firmware-minimal.bin"}]}
+   ```
+4. Firmware bakes a `BUILD_VARIANT` define from the env's build flag and selects the matching manifest entry in `otaCheckNow()`.
+5. Per-device variant assignment via NVS field (`gAppConfig.build_variant`); default = `full` for backwards compat.
+6. `cmd/config_mode` web portal lets operator pick variant via dropdown.
+
+**Risks/scope:** new variants must compile cleanly with subsystems disabled — likely flushes out latent `#ifdef` issues. CI matrix grows N×. OTA manifest schema bump needs Node-RED dashboard adjustment. Expect 1-2 days end-to-end.
+
+**Defer:** until v0.4.20+ — none of the current friction blocks normal operation; it's pure efficiency. Best done after v0.5.0 hardware (#11/#13/#14) settles.
+
+### v0.4.19 — DONE (shipped 2026-04-27 evening)
+- **#65 Phase 2 — pre-restart diagnostic publish.** Single helper `mqttScheduleRestart(reason, deferMs)` builds a JSON with `restart_cause`, `fail_count`, `last_disconnect_reason`, `reconnect_delay_ms`, `wifi_rssi`. Hooked into 3 deferred-restart sites (`cmd/restart`, `cred_rotated`, `mqtt_unrecoverable`). Dashboard now sees WHY a device just decided to self-restart.
+- **#54 — `[env:esp32dev_canary]` build env.** Adds `CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY` for soak runs. Not enabled by default (per-context-switch cost).
+
+### v0.4.18 — DONE (shipped 2026-04-27 evening)
+- **#70 fix** — semverIsNewer treats `-dev` as older than the same numeric release. USB-flashed dev devices auto-upgrade to release via the existing periodic OTA check. 4 new test cases.
+
+### v0.4.17 — DONE (shipped 2026-04-27 evening)
+- **#65 Phase 1 — coredump publish.** On boot, `coredumpPublishIfAny()` reads any stored ESP-IDF core dump, extracts the summary (exc_task, exc_pc, exc_cause, backtrace), publishes to `.../diag/coredump` retained QoS 1, then erases. Validated end-to-end: drained two stored panics from earlier session (Charlie InstructionFetchError, Bravo StoreProhibited) without serial access.
+
 ### v0.4.16 — DONE (shipped 2026-04-27 evening — CASCADE FULLY CLOSED)
 - **Pre-connect broker probe** (#67 option C). Before `_mqttClient.connect()`, do a quick 1500 ms TCP SYN probe via `WiFiClient`. Only invoke AsyncMqttClient if the probe succeeds. Eliminates the AsyncTCP `tcp_arg` use-after-free that fires when lwIP's natural ~75 s SYN timeout finally errors out a connect against a dead broker.
 - **Validated 17:59:29 SAST:** fleet-wide M3 (180 s broker outage). All 6/6 devices reconnected via `event=online` preserving uptime — zero panics, zero abnormal boots, zero ESP.restart() invocations. The same M3 on v0.4.15 produced 4/4 release devices abnormally booting (1 panic + 3 int_wdt).
