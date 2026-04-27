@@ -81,6 +81,16 @@ DONE WHEN
   •  e.g. "All 6 fleet devices on v0.4.16 release AND fleet-wide M3 passes"
   •  or   "v0.4.17 #65 core-dump partition shipped + tested on Charlie"
   •  or   "Tier-2 chaos suite (M3, M4, EN1, O2) all green on v0.4.16 fleet"
+
+  Three implicit requirements that always apply (regardless of explicit criterion):
+  1. Goal results VALIDATED — not just "code compiled and tagged" but
+     "behavior verified end-to-end on real hardware via the appropriate
+     chaos test or visual confirmation".
+  2. ALL DEVICES on the correct version — if a release was tagged, the
+     fleet (or the devices in scope) must actually be running it. -dev
+     binaries on test devices must be upgraded to release before stopping.
+  3. Watchers + monitors back to a stable steady state — no devices
+     in panic loops or mid-OTA at the time of stop.
 ```
 
 ---
