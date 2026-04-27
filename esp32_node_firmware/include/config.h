@@ -36,9 +36,9 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.4.13-dev"
+#define FIRMWARE_VERSION           "0.4.14-dev"
 #endif
-#define FIRMWARE_BUILD_TIMESTAMP   1777272625ULL   // 2026-04-27
+#define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 
 
 // -----------------------------------------------------------------------------

@@ -2682,3 +2682,49 @@ Next steps (operator decision):
    - Plan v0.4.12 to address (b) BLE silent deadlock — out of
      scope for this fix.
 
+
+
+────────────────────────────────────────────────────────────
+63. IPv6Address.h support — unblock newer AsyncTCP forks
+    OBSERVATION (2026-04-27): When swapping to esphome/AsyncTCP
+    for the v0.4.14 fix, the latest release (v2.1.4) failed to
+    compile with:
+       fatal error: IPv6Address.h: No such file or directory
+    arduino-esp32 framework 3.3.8 (used here) does not ship
+    a separate IPv6Address.h — IPv6 is folded into IPAddress.
+    Pinned to v2.0.1 (pre-IPv6 commit) as a workaround.
+
+    PROPOSAL:
+       Either upgrade the arduino-esp32 framework to a version
+       that ships IPv6Address.h, OR shim a stub header that
+       re-exports IPAddress as IPv6Address. Unblocks adoption of
+       newer hardened AsyncTCP releases as they ship.
+
+    SEVERITY: LOW. v2.0.1 is sufficient for the v0.4.14 fix and
+    the LAN is IPv4-only today.
+
+────────────────────────────────────────────────────────────
+64. Chaos-testing framework — promote tools/chaos/ + site_acceptance.sh
+    OBSERVATION (2026-04-27): The v0.4.13 panic cascade was only
+    diagnosable because we manually arranged a synthetic broker
+    blip with a no-DTR serial monitor armed on Charlie (COM5).
+    Without that scaffolding the bug would have remained silent
+    (no boot_reason captured, no backtrace).
+
+    docs/CHAOS_TESTING.md captures the test plan. To make it a
+    real framework:
+       - tools/chaos/blip_short.ps1, blip_long.ps1, blip_burst.ps1
+       - tools/chaos/wifi_cycle.ps1
+       - tools/chaos/espnow_toggle.sh
+       - tools/chaos/ble_toggle.sh
+       - tools/chaos/runner.sh — orchestrates: arm watchers, run
+         scenario, collect events for N seconds, decide pass/fail,
+         write JSON report.
+       - tools/site_acceptance.sh — runs the deployment-time
+         subset before flipping a site to live.
+       - CI hook: pre-release runs M1-M4 + EN1 against a smoke
+         fleet (one device).
+
+    SEVERITY: MEDIUM. Manual today; risks regression of v0.4.13
+    class bugs unless promoted to automated framework.
+
