@@ -304,6 +304,30 @@ the heap state lost).
 - Reverted Charlie to me-no-dev/AsyncTCP (functional but race remains).
 - v0.4.14 release **PARKED** until a compatible fork is identified.
 
+### M3 (180 s blip) — KNOWN LIMITATION
+
+Even after v0.4.15's `MQTT_HUNG_TIMEOUT_MS=300000` + `mqttForceDisconnect()` (no
+ESP.restart()), M3 still cascades. Charlie + Bravo on v0.4.15-dev panicked
+during the 180 s outage window at ~113 s — same `tcp_arg` PC as M2 panic on
+v0.4.13, but multiple distinct exception shapes across reboots
+(LoadStoreAlignment, StoreProhibited, InstructionFetchError) indicating
+unrecoverable memory corruption in AsyncTCP.
+
+The bug fires inside `AsyncClient::_error` when lwIP's natural TCP-timeout
+error callback runs (~75-90 s into a connect attempt against a dead broker).
+**No firmware-level change can prevent this** — the race is between AsyncTCP's
+async-task and lwIP's TCP timer, both inside the libraries.
+
+**Workarounds available to firmware:**
+- Skip MQTT reconnect attempts when broker is known down (probe before connect).
+- Replace AsyncMqttClient + AsyncTCP with a synchronous stack (PubSubClient).
+- Patch AsyncTCP locally to lock around `tcp_arg`/error-callback paths.
+
+For typical production (mosquitto log rotation = 5-10 s outage), v0.4.15 is
+clean. The M3 class hits in long AP outages, broker host crashes, network
+maintenance windows. Mitigation: avoid maintenance windows > 75 s, or accept
+device reboot recovery.
+
 ### Next mitigation candidates
 
 1. **mathieucarbou/AsyncTCP** — heavily maintained, used by ESP-Async-WebServer. Test next.

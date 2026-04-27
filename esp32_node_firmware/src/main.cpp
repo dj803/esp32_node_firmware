@@ -671,11 +671,20 @@ void loop() {
     mqttHeartbeat();
 
     // ── MQTT self-heal ────────────────────────────────────────────────────────
+    // (v0.4.15, 2026-04-27) Hung-watchdog NO LONGER calls ESP.restart().
+    // ESP.restart() from this branch raced with AsyncTCP's pending error
+    // handler and produced the LoadStoreAlignment / StoreProhibited panic in
+    // tcp_arg() — the actual cascade signature seen on every long-outage M3
+    // run. The reconnect timer in mqtt_client.h retries forever (capped at
+    // 60 s backoff); we don't need a hard restart to recover. We force a
+    // clean disconnect so the next reconnect starts from a fresh PCB and
+    // clear the watchdog so this log doesn't spam every loop tick.
+    // See SUGGESTED_IMPROVEMENTS #65.
     if (mqttIsHung()) {
-        LOG_W("Loop", "MQTT hung (no callback) — restarting device");
+        LOG_W("Loop", "MQTT hung (no callback in %u ms) — force-disconnect, timer retries",
+              (unsigned)MQTT_HUNG_TIMEOUT_MS);
         ledSetPattern(LedPattern::ERROR);
-        CredentialStore::incrementRestartCount();
-        ESP.restart();
+        mqttForceDisconnect();   // releases stuck async-client state, clears _mqttConnectStartMs
     } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
         LOG_W("Loop", "MQTT unrecoverable — flagging credentials stale and restarting");
         ledSetPattern(LedPattern::ERROR);

@@ -1420,6 +1420,23 @@ bool mqttIsHung() {
 bool mqttIsConnected() { return _mqttClient.connected(); }
 
 
+// ── mqttForceDisconnect ───────────────────────────────────────────────────────
+// (v0.4.15) Releases a stuck async-client state without rebooting. Called from
+// loop() when mqttIsHung() returns true: the connect() call has been pending
+// without success/failure callback for MQTT_HUNG_TIMEOUT_MS. Force-disconnect
+// the underlying TCP socket so async_tcp + lwIP free their PCB cleanly, clear
+// our watchdog state, and let the existing reconnect timer schedule the next
+// attempt. Avoids the ESP.restart() race with AsyncTCP's pending error handler
+// (the v0.4.13 / v0.4.14 cascade signature).
+void mqttForceDisconnect() {
+    _mqttClient.disconnect(true);   // force-close TCP; onDisconnect callback will fire normally
+    _mqttConnectStartMs = 0;        // clear hung watchdog
+    // Don't change _mqttReconnectDelay — we want the existing back-off to keep
+    // climbing if the broker is genuinely down for an extended period.
+}
+
+
+
 // ── mqttReinit ────────────────────────────────────────────────────────────────
 // Re-points the MQTT client at a new broker address and kicks off a fresh
 // connection attempt. Called by loop() after Tier 1 broker rediscovery.

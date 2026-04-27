@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.4.14-dev"
+#define FIRMWARE_VERSION           "0.4.15-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 
@@ -187,9 +187,14 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 // Better long-term: mqttIsHung() should distinguish "TCP up, CONNACK pending"
 // from "TCP not yet up". See SUGGESTED_IMPROVEMENTS #65 (restart-policy
 // hardening).
-#define MQTT_HUNG_TIMEOUT_MS       90000   // If connect() produces no callback (success or
+// (v0.4.15 patch 2, 2026-04-27) 90 s wasn't enough — M3 180 s blip still hit
+// it at 113 s and the force-disconnect itself triggered the AsyncTCP tcp_arg
+// race. Bump to 300 s (5 min) so this watchdog ONLY fires for genuinely stuck
+// states, not normal broker outages. lwIP TCP errors out the connection on
+// its own timeline; we shouldn't second-guess it during typical retries.
+#define MQTT_HUNG_TIMEOUT_MS      300000   // If connect() produces no callback (success or
                                            // failure) within this window, the async client
-                                           // has hung — restart the device.
+                                           // has hung — force-disconnect (via mqttForceDisconnect()).
 
 #define OTA_CHECK_INTERVAL_MS      3600000 // How often (ms) the device polls GitHub
                                            // Releases for a newer firmware version.
