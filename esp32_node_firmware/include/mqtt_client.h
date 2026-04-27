@@ -95,6 +95,11 @@ static uint32_t         _mqttConnectStartMs = 0;             // millis() when co
 // twice). Same rationale as _mqttNeedsRediscovery above.
 static volatile uint32_t _mqttRestartAtMs   = 0;             // Non-zero: restart device when millis() >= this value
 static volatile bool    _mqttOtaActive     = false;          // OTA in progress — block reconnect attempts
+// (#44) Set in onMqttConnect() (async_tcp task); consumed by mqttHeartbeat() (loop task).
+// Posting the WS2812 MQTT_HEALTHY event directly from the async callback hit the TWDT
+// (the ws2812 task handshake stalls Core 0 long enough to trip the watchdog). The
+// deferred-flag pattern moves the post to loop() where it is safe.
+static volatile uint32_t _mqttLedHealthyAtMs = 0;
 
 // ── Sleep dispatch state (v0.3.20) ───────────────────────────────────────────
 // `cmd/sleep` and `cmd/deep_sleep` take the radio offline, so dispatch is
@@ -212,7 +217,8 @@ static void mqttPublish(const char* prefix, const String& payload,
 // Captured ONCE at startup (before the watchdog or any other reset overwrites
 // it during this boot's lifetime) and emitted in the retained boot announcement
 // so the fleet manager can correlate field reboots with their cause.
-static esp_reset_reason_t _firstBootReason = ESP_RST_UNKNOWN;
+static esp_reset_reason_t _firstBootReason  = ESP_RST_UNKNOWN;
+static bool               _firstMqttConnect = true;   // distinguishes true boot from reconnect (#61)
 static const char* bootReasonStr(esp_reset_reason_t r) {
     switch (r) {
         case ESP_RST_POWERON:   return "poweron";
@@ -1143,13 +1149,12 @@ static void onMqttConnect(bool sessionPresent) {
     responderSetHealthFlag(1, true);
     ledSetPattern(LedPattern::MQTT_CONNECTED);   // 50ms pulse / 2s off — normal operational
 
-    // (#44 / #51 v0.4.10.1) MQTT_HEALTHY ws2812 post DISABLED — suspected
-    // regression behind the v0.4.10 fleet-wide crash pattern documented in
-    // SUGGESTED_IMPROVEMENTS #51. The LedState::MQTT_HEALTHY enum value and
-    // render case remain in ws2812.h so the dashboard's status/led contract
-    // is unchanged, but no event is posted from this callback. Once the
-    // root cause is understood the post can be re-enabled (likely via a
-    // deferred-flag pattern set here and consumed by loop()).
+    // (#44) Arm the MQTT_HEALTHY WS2812 event via the deferred-flag pattern.
+    // Direct post from this callback (async_tcp task, Core 0) stalls the
+    // ws2812 queue handshake long enough to trip the TWDT — the root cause
+    // of the v0.4.10 fleet crash (#51). mqttHeartbeat() (loop task) consumes
+    // _mqttLedHealthyAtMs and posts safely from a non-TWDT-subscribed context.
+    _mqttLedHealthyAtMs = millis();
 
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
@@ -1192,10 +1197,17 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/deep_sleep").c_str(),     0);  // Deep sleep — QoS 0; cold boot discards any session state
     _mqttClient.subscribe(mqttTopic("cmd/modem_sleep").c_str(),    1);  // Modem sleep — QoS 1 safe, session stays connected
 
-    // Publish boot announcement. This is retained (QoS 1) so Node-RED flows
-    // that subscribe after boot still see this device's last known state.
-    mqttPublishStatus(FwEvent::BOOT);
-    LOG_I("MQTT", "Boot announcement published (v" FIRMWARE_VERSION ")");
+    // Publish boot/online announcement (retained QoS 1).
+    // First connect after power-on → BOOT (includes boot_reason field).
+    // Subsequent reconnects → ONLINE (no boot_reason; avoids misleading #61).
+    if (_firstMqttConnect) {
+        _firstMqttConnect = false;
+        mqttPublishStatus(FwEvent::BOOT);
+        LOG_I("MQTT", "Boot announcement published (v" FIRMWARE_VERSION ")");
+    } else {
+        mqttPublishStatus(FwEvent::ONLINE);
+        LOG_I("MQTT", "Online announcement published (reconnect)");
+    }
 
     // (v0.3.34) If this is a post-OTA boot, announce OTA_VALIDATING and call
     // mark_app_valid_cancel_rollback() now — MQTT is healthy enough to publish
@@ -1472,6 +1484,16 @@ void mqttHeartbeat() {
     // needed; we only need to revert CPU freq + Wi-Fi PS when the timer fires.
     if (_mqttModemSleepUntilMs > 0 && millis() >= _mqttModemSleepUntilMs) {
         mqttExitModemSleep();
+    }
+
+    // ── Deferred MQTT_HEALTHY LED (#44) ──────────────────────────────────────────
+    // Consume the flag set by onMqttConnect() and post the WS2812 event here,
+    // in loop() context, where it is safe to call ws2812PostEvent().
+    if (_mqttLedHealthyAtMs > 0) {
+        _mqttLedHealthyAtMs = 0;
+        LedEvent e{};
+        e.type = LedEventType::MQTT_HEALTHY;
+        ws2812PostEvent(e);
     }
 
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {

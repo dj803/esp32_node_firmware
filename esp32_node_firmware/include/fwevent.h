@@ -41,6 +41,7 @@ enum class FwEvent : uint8_t {
     OTA_VALIDATING       = 15,   // post-OTA boot — running self-test before mark_app_valid
     OTA_VALIDATED        = 16,   // self-test passed — esp_ota_mark_app_valid_cancel_rollback called
     OTA_ROLLED_BACK      = 17,   // boot detected via esp_ota_get_state_partition as PENDING_VERIFY/INVALID/ABORTED
+    ONLINE               = 18,   // MQTT reconnect after first boot — distinguishes reconnect from true boot (#61)
 };
 
 
@@ -68,6 +69,7 @@ inline const char* fwEventName(FwEvent ev) {
         case FwEvent::OTA_VALIDATING:        return "ota_validating";
         case FwEvent::OTA_VALIDATED:         return "ota_validated";
         case FwEvent::OTA_ROLLED_BACK:       return "ota_rolled_back";
+        case FwEvent::ONLINE:                return "online";
         default:                             return "unknown";
     }
 }

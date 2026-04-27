@@ -18,17 +18,19 @@ Cosmetic re-tag of v0.4.11 for OTA-path validation. Same code, version string bu
 
 ## Next (week of 2026-04-28)
 
-### v0.4.13 — BLE coexistence + #61 reconnect-boot cleanup
-Plan at [`~/.claude/plans/v0.4.13-plan.md`](C:\Users\drowa\.claude\plans\v0.4.13-plan.md). Two scopes:
+### v0.4.13 — BLE coexistence + #61 reconnect-boot cleanup + #44 MQTT_HEALTHY LED
+Plan at [`~/.claude/plans/v0.4.13-plan.md`](C:\Users\drowa\.claude\plans\v0.4.13-plan.md). Three scopes:
 
 **A) BLE silent deadlock real fix.** With-BLE devices hang ~70 min after a network reconnect. RTC WDT doesn't bite; chip stays powered, FreeRTOS scheduler hangs. Today's workaround = BLE off in config.h. Real fix needs NimBLE 2.x + WiFi + ESP-NOW coexistence audit. Investigation steps:
 - Synthetic broker-blip every 30 min on a single bench device with BLE on + LOG_LEVEL_DEBUG.
 - Audit IDF coexist scheduler config, NimBLE deinit completeness, scan duty cycle.
 - Possible mitigations: pin nimble_host to Core 1, lower BLE scan duty, BLE-watchdog loop in main.
 
-**B) #61 misleading `event=boot` on every MQTT reconnect.** Add `FwEvent::ONLINE`, track first-boot vs reconnect via static bool. Update boot_history flow context filter.
+**B) #61 misleading `event=boot` on every MQTT reconnect.** Add `FwEvent::ONLINE`, track first-boot vs reconnect via static bool. — **DONE (2026-04-27).**
 
-If (A) inconclusive after a day, ship (B) standalone, defer (A) to v0.4.15.
+**C) #44 MQTT_HEALTHY green LED (pulled forward from v0.4.14).** Deferred-flag pattern: `onMqttConnect()` sets `_mqttLedHealthyAtMs = millis()`; `mqttHeartbeat()` (loop task) consumes and posts `LedEventType::MQTT_HEALTHY` to the WS2812 queue safely. Root cause of v0.4.10 TWDT crash was posting from async_tcp callback directly. — **DONE (2026-04-27). Bravo is primary validation target.**
+
+If (A) inconclusive after a day, ship (B)+(C) standalone as v0.4.13, defer (A) to v0.4.15.
 
 ### Tier 1 tooling (cross-tool integration plan) — executing 2026-04-27
 - **T1.1** Node-RED file logging in `settings.js` — eliminates the "log frozen at 20:30" failure mode we hit 2026-04-26.
@@ -98,7 +100,7 @@ v0.4.11's heap-guard is a workaround. The deeper fix is to replace AsyncMqttClie
 | Follow-up | Where | When |
 |---|---|---|
 | BLE silent-deadlock real fix | v0.4.13 (A) | Next |
-| Re-introduce MQTT_HEALTHY safely | v0.4.14 | Next-next |
+| Re-introduce MQTT_HEALTHY safely | v0.4.13 (C) | DONE — deferred-flag pattern |
 | AsyncMqttClient replacement | v0.5.0 (deeper fix) | Bigger lift |
 | Mass-flash Charlie/Echo/Foxtrot to v0.4.12 | OTA complete | DONE |
 | Bench-isolate Charlie | Operational | Anytime |
