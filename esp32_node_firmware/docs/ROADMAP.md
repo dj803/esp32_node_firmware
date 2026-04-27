@@ -14,6 +14,14 @@ Heap-guard fix in `mqttPublish()` (#51 root cause). Plus bundled: BLE off, NDEF 
 ### v0.4.12 — DONE
 Cosmetic re-tag of v0.4.11 for OTA-path validation.
 
+### v0.4.16 — DONE (shipped 2026-04-27 evening — CASCADE FULLY CLOSED)
+- **Pre-connect broker probe** (#67 option C). Before `_mqttClient.connect()`, do a quick 1500 ms TCP SYN probe via `WiFiClient`. Only invoke AsyncMqttClient if the probe succeeds. Eliminates the AsyncTCP `tcp_arg` use-after-free that fires when lwIP's natural ~75 s SYN timeout finally errors out a connect against a dead broker.
+- **Validated 17:59:29 SAST:** fleet-wide M3 (180 s broker outage). All 6/6 devices reconnected via `event=online` preserving uptime — zero panics, zero abnormal boots, zero ESP.restart() invocations. The same M3 on v0.4.15 produced 4/4 release devices abnormally booting (1 panic + 3 int_wdt).
+- **Cascade story closed.** Spans v0.4.10 #51 (initial fleet crash) → 10:42 cascade → 14:04 backtrace capture → v0.4.14 90 s timeout → v0.4.15 force-disconnect → v0.4.16 broker probe.
+
+### v0.4.15 — DONE (shipped 2026-04-27 afternoon — partial fix)
+- Removed `ESP.restart()` from `mqttIsHung` path; bumped `MQTT_HUNG_TIMEOUT_MS` 90 s → 300 s. Sufficient for outages ≤ 75 s (= mosquitto log rotation, AP blip). M3 (>75 s) still cascaded — completed in v0.4.16.
+
 ### v0.4.14 — DONE (shipped 2026-04-27 afternoon — CASCADE ROOT-CAUSE FIX)
 - **`MQTT_HUNG_TIMEOUT_MS = 12000` was the cascade trigger.** Shorter than lwIP's TCP SYN timeout (~75 s), so any broker outage > 12 s caused every device to ESP.restart() simultaneously, producing the v0.4.10 #51, 10:42, and 14:04 cascades. The AsyncTCP `tcp_arg` panic captured at 14:04 was a SECONDARY effect of the restart-storm, not the trigger.
 - **Bumped `MQTT_HUNG_TIMEOUT_MS` to 90000** (90 s). Gives lwIP SYN room to fail naturally before the firmware aborts.

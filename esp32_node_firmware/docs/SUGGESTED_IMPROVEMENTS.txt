@@ -2967,3 +2967,56 @@ Next steps (operator decision):
     drift earlier. Provides audit trail. With #67 broker-probe
     in firmware, OTA storms become a non-issue and ack-driven
     stagger can be aggressive (15-30s gaps).
+
+────────────────────────────────────────────────────────────
+69. Wakeup vs persistent-monitor preemption
+    OBSERVATION (2026-04-27): During the v0.4.13 → v0.4.16 cascade
+    debugging session the agent ran 4 persistent Monitor tasks
+    (silent_watcher, Bravo heap, Charlie serial, version-watch).
+    With a 6-device fleet publishing heartbeats + espnow + status
+    events, the gap between Monitor emissions averaged < 30 s.
+    Each emission preempts the `/loop dynamic` wakeup idle timer,
+    so any wakeup scheduled >60 s out almost never fires. The
+    agent had to fall back to manual "next" prompts from the
+    operator for OTA staggers.
+
+    PROPOSAL — multiple complementary fixes:
+
+    A. Tighter event filtering in monitors.
+       Most events from silent_watcher / version-watcher are
+       informational. Suppress heartbeat events; emit only state
+       transitions (online → offline, version_old → version_new,
+       boot reasons in {panic, *_wdt, brownout}). Cuts emission
+       rate ~10×.
+
+    B. Aggregator flow in Node-RED.
+       One subscription that watches `+/status` and publishes a
+       SINGLE summary event to `health/summary` once per N min
+       OR on state change. Agent monitors that aggregate, not
+       per-device events.
+
+    C. Composite progress events for OTA rollouts.
+       New Node-RED flow: subscribe to status, count devices on
+       target version, publish `health/ota_progress` like
+       `{"target":"0.4.16","done":4,"pending":["bravo","charlie"]}`
+       only when the count changes. Agent monitors that one topic
+       during a rollout.
+
+    D. CronCreate (scheduled-task) instead of /loop dynamic.
+       Wakeups via /loop dynamic compete with conversation
+       events. CronCreate fires on a schedule regardless. For
+       fixed-cadence work (OTA stagger, daily-health) this is
+       the right primitive — but it doesn't accept dynamic
+       prompts mid-loop. Use for predictable schedules; keep
+       /loop for adaptive work.
+
+    E. Single orchestrator script.
+       tools/dev/ota-rollout.sh from #68 runs the entire stagger
+       in one shell process. Agent uses ONE Monitor task on its
+       output, not many. Operator watches one stream, agent
+       responds to one signal stream.
+
+    SEVERITY: MEDIUM. Affects autonomous-session productivity
+    when monitors are dense; doesn't affect production reliability.
+    Combo of A + C + E gives the best balance — fewer events,
+    semantic events (summary not raw), single orchestrator.

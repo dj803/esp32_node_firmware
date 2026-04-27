@@ -324,7 +324,30 @@ EN1 (ESP-NOW ranging toggle on Alpha) — PASS, espnow stream resumed after `cmd
 O2 (OTA-to-bad-URL) — skipped (would require corrupting live Pages manifest).
 I1 (Node-RED restart) — skipped (would interrupt watchers + dashboard).
 
-### M3 (180 s blip) — KNOWN LIMITATION
+### v0.4.16 — M3 cascade ELIMINATED (2026-04-27 17:59 SAST)
+
+After implementing #67 option C (pre-connect broker probe), fleet-wide M3
+180 s blip:
+
+| Device | Build | Result | Uptime preserved? |
+|---|---|---|---|
+| Alpha | v0.4.16 release | online via probe + #61 | yes (328 s) |
+| Delta | v0.4.16 release | online via probe + #61 | yes (285 s) |
+| Echo | v0.4.16 release | online via probe + #61 | yes (238 s) |
+| Foxtrot | v0.4.16 release | online via probe + #61 | yes (198 s) |
+| Bravo | v0.4.16-dev | online via probe + #61 | yes (1379 s) |
+| Charlie | v0.4.16-dev | online via probe + #61 | yes (1350 s) |
+
+**6/6 reconnected without panic, restart, or abnormal boot.** Charlie's
+serial confirmed `[I][MQTT] Broker probe OK — calling connect()` immediately
+followed by `Connected to broker` and `Online announcement published`. The
+probe gated every reconnect attempt during the 3-minute outage so
+`AsyncMqttClient.connect()` was never called against an unreachable broker
+— eliminating the lwIP/AsyncTCP race window entirely.
+
+The cascade story is closed.
+
+### M3 (180 s blip) — KNOWN LIMITATION (resolved in v0.4.16, see above)
 
 Even after v0.4.15's `MQTT_HUNG_TIMEOUT_MS=300000` + `mqttForceDisconnect()` (no
 ESP.restart()), M3 still cascades. Charlie + Bravo on v0.4.15-dev panicked
