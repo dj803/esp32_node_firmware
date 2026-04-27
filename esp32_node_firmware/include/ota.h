@@ -237,6 +237,16 @@ static int otaPerformWithEspIdf(const char* binaryUrl) {
 // provided URL also fails — we give up rather than asking the same siblings
 // again. Default false keeps the public API unchanged for existing callers.
 void otaCheckNow(bool isSiblingRetry) {
+#ifdef OTA_DISABLE
+    // Variant builds (e.g. esp32dev_canary, #54 stack-overflow soak) can set
+    // -DOTA_DISABLE in build_flags so the device cannot self-OTA away from
+    // the variant binary. Without this gate, a -dev/.0 version like 0.4.20.0
+    // is treated as older than the matching release per #80's 4-component
+    // semver and gets pulled back to release on first OTA check, killing
+    // any in-progress soak.
+    LOG_I("OTA", "OTA disabled at compile time (OTA_DISABLE) — skipping check");
+    return;
+#endif
     // ── OTA URL validation ────────────────────────────────────────────────────
     // Reject obviously broken URLs before handing them to ESP32-OTA-Pull.
     // A blank URL or one that doesn't start with http(s):// will produce a

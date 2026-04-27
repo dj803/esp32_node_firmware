@@ -1867,6 +1867,25 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
        ota_json_url to the bundle.
 
     UPDATED PRIORITY:  esptool tooling = NOT a bug. Drop priority.
+
+    RECONFIRMED 2026-04-27 ~22:00 SAST. Ran the test again on Bravo
+    (COM4, MAC F4:2D:C9:73:D3:CC):
+       1. Pre-erase UUID: 6cfe177f-92eb-4699-a9a6-8a3603aae175
+       2. esptool erase-flash via PIO toolchain (3.7 s — slower than
+          Foxtrot's 2.0 s, suggests full chip-erase on this part)
+       3. pio run -e esp32dev -t upload (rebuilds + flashes release)
+       4. First boot via firmware reset captured by my MQTT subscribe
+          (no DTR-second-boot interference because I sub'd from a
+          different host)
+       5. New UUID: ece1ed31-4096-488b-a083-d5880002c223 (DIFFERENT)
+       6. node_name empty (also wiped from NVS, expected)
+       7. Bootstrap via ESP-NOW recovered Wi-Fi creds + broker URL
+          from a sibling within seconds; first heartbeat at uptime_s=60.
+
+    erase-flash works as expected on this chip variant too.
+    CLAUDE.md + daily_health_config.json updated to the new UUID.
+    The old UUID's retained payloads were cleared via mosquitto_pub
+    -n -r to avoid confusing future fleet snapshots.
        Workflow change still warranted: when capturing serial of
        a fresh provisioning, USE `--after no-reset` on esptool
        AND open serial with controlled RTS reset (do NOT let

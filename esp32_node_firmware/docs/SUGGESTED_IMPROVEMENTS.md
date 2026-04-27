@@ -59,7 +59,6 @@ To resolve an entry:
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
   #48   Device UUID drift — Delta and Echo had unexpected UUIDs on 2026-04-25
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
-  #50   esptool v5.2 erase-flash does NOT wipe NVS on first-power-on chips
   #51   v0.4.10 stability regression — suspected LED MQTT_HEALTHY hooks
   #52   Node-RED file logging not configured (observability gap)
   #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance
@@ -76,7 +75,7 @@ To resolve an entry:
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
 
-  Total open: 54
+  Total open: 53
 
 ────────────────────────────────────────────────────────────
 
@@ -99,6 +98,7 @@ To resolve an entry:
   #5    Local PlatformIO validation                 (addressed 2026-04-22)
   #43   Local build leaves firmware_version field EMPTY in MQTT messages   (addressed v0.4.10)
   #44   Addressable LED status colors (green/yellow/red) not lighting
+  #50   esptool v5.2 erase-flash does NOT wipe NVS on first-power-on chips   (resolved 2026-04-25 — was DTR-induced second-boot, reconfirmed 2026-04-27)
   #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern   (resolved 2026-04-27 in v0.4.13)
   #57   Install host gcc/g++ to enable native unit tests             (resolved 2026-04-27)
   #58   Fix daily_health_config.json local_clone path                (resolved 2026-04-27)
@@ -115,4 +115,4 @@ To resolve an entry:
   #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
 
-  Total resolved: 23
+  Total resolved: 24
