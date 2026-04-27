@@ -3020,3 +3020,51 @@ Next steps (operator decision):
     when monitors are dense; doesn't affect production reliability.
     Combo of A + C + E gives the best balance — fewer events,
     semantic events (summary not raw), single orchestrator.
+
+────────────────────────────────────────────────────────────
+70. -dev suffix breaks OTA upgrade path (recurring friction)
+    OBSERVATION (2026-04-27 multiple times):  Devices USB-flashed
+    with a `0.4.X-dev` binary do not OTA-upgrade to the matching
+    `0.4.X` release. Triggering `cmd/ota_check` on a -dev device
+    produces no upgrade. Friction observed across:
+       v0.4.13-dev vs v0.4.13 release (Charlie all afternoon)
+       v0.4.14-dev vs v0.4.14 release (Charlie + Bravo)
+       v0.4.15-dev vs v0.4.15 release (same)
+       v0.4.16-dev vs v0.4.16 release (current)
+
+    The ESP32-OTA-Pull library compares version strings; for the
+    `0.4.X-dev` vs `0.4.X` pair it appears to treat them as equal
+    (or treats -dev as newer due to longer string). Either way
+    no upgrade pulls. Operator must USB-reflash to escape -dev.
+
+    PROPOSAL — pick one:
+
+    A. Bump the dev suffix to a CLEARLY-OLDER pattern.
+       Use `0.4.X-dev.0` (or similar pre-release identifier that
+       semver knows is older). Or include a build counter:
+       `0.4.X-dev.123`. Fits semver pre-release ordering rules
+       (pre-release < release).
+
+    B. Use an extra decimal on dev builds.
+       Local build:    `0.4.16.0`  (treated as older than 0.4.17)
+       CI release:     `0.4.16`
+       Pre-release:    `0.4.16.99` (just below next release)
+       Cleanest for string-compare-based comparators.
+
+    C. Custom version comparator in firmware.
+       Override the OTA-pull library's compare function to:
+         - strip `-dev` suffix before compare
+         - if equal after strip → consider release strictly greater
+       Adds a small patch to the OTA hot path; library-version-coupled.
+
+    D. Clear NVS on USB reflash so the pending version isn't sticky.
+       Less likely to be the cause given the symptom is "OTA does
+       not pull", but worth verifying.
+
+    SEVERITY: MEDIUM. Causes ~5-10 min of extra work per dev cycle
+    when devs need to USB-reflash to bypass. Option B is the
+    smallest change with the cleanest semantics.
+
+    RELATED to #66 (adaptive OTA stagger) and #68 (ack-driven
+    rollout) — both rely on the OTA path actually firing for -dev
+    devices.
