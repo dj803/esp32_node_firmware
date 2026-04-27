@@ -2492,19 +2492,43 @@ mid-day update" section.
 
     PARTIAL PROGRESS 2026-04-27:  Added [env:esp32dev_minimal] to
     platformio.ini extending esp32dev with -URFID_ENABLED. Built
-    clean, USB-flashed to Bravo, boot announce clean (uptime grows,
-    heap stable, reconnects fine). HOWEVER `rfid_enabled` still
-    reports `true` in the heartbeat — config.h has an unconditional
-    `#define RFID_ENABLED` at line 314, so the command-line `-U`
-    is shadowed once the header is included. Variant infrastructure
-    proven (env + build + flash + boot all work) but the actual
-    feature disable requires gating config.h:
-        #ifndef RFID_DISABLED
-        #define RFID_ENABLED
-        #endif
-    plus the env switching from `-URFID_ENABLED` to `-DRFID_DISABLED`.
-    Same fix applies to BLE_ENABLED and any future ESPNOW_RANGING_ENABLED
-    flag. Bundle as part of the variant-infrastructure follow-up.
+    clean, USB-flashed to Bravo, boot announce clean. HOWEVER
+    `rfid_enabled` still reported `true` in the heartbeat —
+    config.h's unconditional `#define RFID_ENABLED` shadowed the
+    `-U` from the env. Fixed by:
+       1. config.h: gated the define with `#ifndef RFID_DISABLED`.
+       2. env: switched from `-URFID_ENABLED` to `-DRFID_DISABLED`.
+       3. mqtt_client.h: wrapped handleRfidWhitelist + its call
+          site in `#ifdef RFID_ENABLED` so the link doesn't fail
+          when the function bodies (in rfid.h) are compiled out.
+
+    Re-flashed to Bravo. Heartbeat now reports `rfid_enabled: false`.
+    Validated via M1 (5 s blip) + M2 (30 s blip) chaos tests
+    2026-04-27 ~21:53-21:55: all 6 fleet devices (including Bravo
+    on the minimal variant + Charlie on the canary build)
+    reconnected via `event=online` / heartbeat, uptime preserved,
+    no panics, no reboots, no abnormal boots. The v0.4.16 broker-
+    probe path (#78 mitigation) handled both blips cleanly across
+    full + minimal + canary variants of the same source tree.
+
+    SCOPE: only the minimal variant is shipped. The full per-device
+    variant story from this entry's PROPOSAL section (rfid-only
+    variant, ranging-only variant, esp32dev_full) requires:
+       - ESPNOW_RANGING_ENABLED guard wrapping main.cpp's responder
+         + ranging publish + bootstrap-ranging hooks.
+       - BLE_ENABLED gating same pattern as RFID_ENABLED above
+         (config.h `#ifndef BLE_DISABLED` then env `-DBLE_DISABLED`).
+       - OTA manifest extension to per-variant {Variant, Version, URL}
+         entries + firmware-side variant-aware fetch.
+       - CI build pipeline build all variants on tag, upload to
+         gh-pages as firmware-<variant>-<version>.bin.
+    Defer until v0.5.0 hardware-divergent fleet introduction.
+
+    Real flash savings on the current minimal variant: ~negligible
+    in this build because RFID code is small and the optimizer
+    inlined most of it. The savings hypothesis from the original
+    proposal applies more strongly to BLE (~30 KB) and ranging
+    (~unknown). Worth re-measuring once those guards land.
 
 72. Bench-supply voltage stress testing rig
     OBSERVATION (2026-04-26 operator suggestion):  Failure modes #51

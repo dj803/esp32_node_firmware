@@ -19,13 +19,17 @@ GOAL
   • <single primary objective>
 
 YOU MAY (without asking)
+  • Edit any file in the repo — source code, headers, platformio.ini,
+    sdkconfig.defaults, partitions.csv, docs, tools, tests. Memory files
+    under ~/.claude/projects/.../memory/ and user-level helpers in
+    ~/.claude/commands/ are also in scope. Off-limits items are listed
+    explicitly under DO NOT below.
   • Build, flash (COM4/COM5), USB-flash, OTA stagger
   • Bump version + tag + push (release pipeline end-to-end)
   • Trigger broker blips via tools/blip-watcher.ps1
   • Push Node-RED flows via /flows API
   • Disable/enable ESP-NOW + BLE per device
   • Run /daily-health on demand
-  • Edit docs/* and commit
   • Re-run chaos tests (M1-M4, EN1, O2, I1) per docs/CHAOS_TESTING.md
 
 DO NOT (without asking)
