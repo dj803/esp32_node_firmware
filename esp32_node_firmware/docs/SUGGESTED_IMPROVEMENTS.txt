@@ -54,7 +54,6 @@ To resolve an entry:
   #40   Operator install guide — ESP32-WROOM antenna orientation
   #41   Hardware finding — breakout board + RFID-RC522 distort the WROOM antenna
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
-  #43   Local build leaves firmware_version field EMPTY in MQTT messages
   #45   Fleet-control buttons (OTA/Restart/Firmware) need stagger
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
@@ -79,7 +78,7 @@ To resolve an entry:
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #82   Audit other tracking docs (FAILURE_MODES, memory_budget) for split pattern
 
-  Total open: 57
+  Total open: 56
 
 ────────────────────────────────────────────────────────────
 
@@ -99,6 +98,7 @@ To resolve an entry:
   #3    Reproducible builds                                 (was audit item 21)
   #4    Dependency SBOM + supply-chain scan                 (was audit item 22)
   #5    Local PlatformIO validation                 (addressed 2026-04-22)
+  #43   Local build leaves firmware_version field EMPTY in MQTT messages   (addressed v0.4.10)
   #44   Addressable LED status colors (green/yellow/red) not lighting
   #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern   (resolved 2026-04-27 in v0.4.13)
   #57   Install host gcc/g++ to enable native unit tests             (resolved 2026-04-27)
@@ -115,4 +115,4 @@ To resolve an entry:
   #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
 
-  Total resolved: 21
+  Total resolved: 22
