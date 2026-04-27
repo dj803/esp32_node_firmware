@@ -2951,6 +2951,83 @@ Next steps (operator decision):
     network maintenance windows and AP / broker host crashes —
     less frequent but real. Devices DO recover via boot loop.
 
+    UPDATE 2026-04-27 evening — REPRODUCED ON v0.4.20 (broker-probe
+    in place):
+
+    Two retained `/diag/coredump` payloads captured tonight via
+    the v0.4.17 ESP-IDF coredump-to-flash path (sub-E of #76):
+
+      Charlie  exc_pc=0x4012210e exc_cause=InstructionFetchError
+                backtrace 0x4012210e 0x400e1d04 0x400e1fcb 0x4008ff31
+      Bravo    exc_pc=0x40122127 exc_cause=StoreProhibited
+                backtrace 0x40122127 0x400e1d08 0x400e1fcf 0x4008ff31
+
+    Both decoded against the v0.4.20 ELF (esp32dev) via
+    xtensa-esp32-elf-addr2line:
+
+      panic site (frame 0):
+        raw_netif_ip_addr_changed
+        at lwip/src/core/raw.c:664-667 (discriminator 1/20)
+
+      caller (frame 1, addr2line gave _accepted at AsyncTCP.cpp:1633-1634
+      but symbol overlap is ambiguous — confirmed code path is
+      _async_service_task → _handle_async_event → _s_fin)
+
+      caller (frame 2):
+        AsyncClient::_s_fin at AsyncTCP.cpp:1491
+          (inlined into _handle_async_event @ 275, _async_service_task @ 307)
+
+      task root (frame 3):
+        vPortTaskWrapper at FreeRTOS port.c:139
+
+    HYPOTHESIS REVISED:
+    The panic site is NOT inside AsyncTCP itself — it's inside lwIP's
+    `raw_netif_ip_addr_changed`, which fires when a NIC's IP address
+    changes (DHCP renewal, link flap, AP reassoc). That callback walks
+    the global `raw_pcbs` list. AsyncTCP allocates / frees raw_pcbs
+    asynchronously from `_async_service_task`. The race:
+
+      1. Wi-Fi link flaps; lwIP queues a netif IP-change callback.
+      2. AsyncTCP's _async_service_task is mid-FIN-ACK handling, frees
+         a raw_pcb via tcp_close → tcp_pcb_purge → memp_free.
+      3. lwIP's IP-change callback walks raw_pcbs while one entry's
+         memory has just been recycled.
+      4. Random fault depending on what the freed memory now contains:
+         StoreProhibited (write-into-readonly), LoadStoreAlignment
+         (misaligned because previous memp's value isn't aligned),
+         InstructionFetchError (function ptr field now contains
+         non-code bytes).
+
+    The v0.4.16 broker-probe (option C above) prevents the FIN-ACK
+    for *broker connections that are dead* — it does not prevent the
+    same race for *broker connections that succeed but later see Wi-Fi
+    flap mid-publish*. Both Bravo and Charlie were on a healthy broker
+    today; the trigger was Wi-Fi reassoc / DHCP traffic, not broker
+    outage. So the broker-probe is necessary but not sufficient.
+
+    NEW PROPOSAL — option D (most surgical for the actually-observed
+    bug):
+
+    D. Wrap the raw_pcb walk under TCPIP core lock.
+       The lwIP `raw_netif_ip_addr_changed` callback walks raw_pcbs
+       *outside* the TCPIP core lock by default — the callback is
+       invoked from `netif_set_ipaddr` which IS under the lock, but
+       the iteration over `raw_pcbs` doesn't synchronise against
+       AsyncTCP's free path on a different task. Patch AsyncTCP's
+       free-pcb path to take `LOCK_TCPIP_CORE() / UNLOCK_TCPIP_CORE()`
+       around `tcp_close()`/`tcp_abort()`.
+       This is a 5-10 line vendored patch.
+
+    E. Also valid: avoid the bug entirely by switching MQTT publish
+       to a synchronous stack (option B above). Larger change, less
+       targeted, but eliminates whole bug class.
+
+    NEXT STEPS:
+       - Implement option D as a vendored AsyncTCP patch on Bravo's
+         bench build. Validate via M2 + M3 + a Wi-Fi flap test
+         (`netsh wlan disconnect; sleep 5; netsh wlan connect`).
+       - If D fails, attempt B (PubSubClient + WiFiClient.publish).
+
 ────────────────────────────────────────────────────────────
 79. Version-update watcher as a standing dev tool + ack-driven OTA
     OBSERVATION (2026-04-27): During the v0.4.13 → v0.4.15 OTA
