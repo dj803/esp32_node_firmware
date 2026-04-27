@@ -640,6 +640,35 @@ void test_semver_double_digit_minor() {
     TEST_ASSERT_FALSE(semverIsNewer("0.10.0", "0.9.5"));
 }
 
+// (#70 v0.4.18) Pre-release suffix handling: "-dev" is older than the same
+// numeric release. Lets a USB-flashed -dev binary auto-upgrade via OTA.
+void test_semver_dev_suffix_older_than_release() {
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17-dev", "0.4.17"));    // OTA should pull
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.17",     "0.4.17-dev")); // do not downgrade
+}
+
+void test_semver_pre_release_arbitrary_suffix() {
+    // Any non-empty suffix qualifies (rc, beta, alpha, etc.)
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17-rc1",  "0.4.17"));
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17-beta", "0.4.17"));
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17-test", "0.4.17"));
+}
+
+void test_semver_both_suffixes_treated_as_equal() {
+    // Two -dev versions are not directly orderable by suffix string in our
+    // implementation. Tradeoff: a -dev → -dev OTA would be unusual; keep
+    // simple "no upgrade" semantics.
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.17-dev", "0.4.17-dev"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.17-dev", "0.4.17-rc1"));
+}
+
+void test_semver_numeric_diff_overrides_suffix() {
+    // A numerically-newer version always wins, regardless of suffix presence.
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17",     "0.4.18-dev")); // dev>release? still newer
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.17-dev", "0.4.18"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.18",     "0.4.17-dev")); // do not downgrade
+}
+
 
 // =============================================================================
 // topic_sanitizer — additional pathological segment tests (v0.3.08)
@@ -1270,6 +1299,10 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_semver_equal_versions_not_newer);
     RUN_TEST(test_semver_leading_zeros_in_patch);
     RUN_TEST(test_semver_double_digit_minor);
+    RUN_TEST(test_semver_dev_suffix_older_than_release);
+    RUN_TEST(test_semver_pre_release_arbitrary_suffix);
+    RUN_TEST(test_semver_both_suffixes_treated_as_equal);
+    RUN_TEST(test_semver_numeric_diff_overrides_suffix);
 
     // topic_sanitizer — pathological segment values
     RUN_TEST(test_topic_sanitizer_multiple_slashes);
