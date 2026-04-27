@@ -41,15 +41,17 @@ Charlie's chronic flake. 12 h bench soak (separate desk, separate USB, no ESP-NO
 ### v0.4.13 stability soak
 24h `silent_watcher.sh` + `boot_history` poller. Watch for any post-OTA crash in #51-style failure modes. Charlie on `-dev` is the primary watch target — re-flash to release via OTA after soak.
 
-### v0.4.15 — BLE coexistence real fix (Path C — queued for after v0.4.14)
-The deeper fix for the BLE silent-deadlock workaround currently shipped as `BLE_ENABLED 0` in `config.h`. Plan at [`~/.claude/plans/v0.4.15-plan.md`](C:\Users\drowa\.claude\plans\v0.4.15-plan.md) (to be created when v0.4.14 closes).
+### v0.4.15 — BLE coexistence real fix (Path C)
+The deeper fix for the BLE silent-deadlock workaround currently shipped as `BLE_ENABLED 0` in `config.h`. Plan at [`~/.claude/plans/v0.4.15-plan.md`](C:\Users\drowa\.claude\plans\v0.4.15-plan.md) (to be created when Phase 1 begins).
 
 **Failure shape recap.** With BLE enabled, devices hang ~70 min after a Wi-Fi/broker reconnect cycle. RTC WDT does not bite; chip stays powered; FreeRTOS scheduler hangs. Symptom: LWT-only on broker, no heartbeats, no panic.
 
-**Investigation plan (week of 2026-05-04 if v0.4.14 holds):**
-1. **Bench rig.** Single bench device (Bravo or a spare) with `BLE_ENABLED 1`, `LOG_LEVEL_DEBUG`, no ESP-NOW peers. Eliminates fleet noise.
-2. **Synthetic broker-blip.** PowerShell loop on the host stops + restarts mosquitto every 30 min for 24 h. Forces the reconnect-then-deadlock window.
-3. **Coexistence audit (parallel).**
+#### Phase 1 — bench investigation (can start immediately, no soak gate)
+Touches a single off-fleet device on a separate desk. Fleet keeps running v0.4.13 unaffected.
+
+1. **Bench rig.** Single bench device with `BLE_ENABLED 1`, `LOG_LEVEL_DEBUG`, no ESP-NOW peers. Candidate: **Bravo** (no LEDs currently — fine for headless bench; also the natural soak target since it was the former #51 cascade-trigger suspect) **or a spare ESP32**. **Not Alpha** — Alpha currently carries the WS2812 strip and is providing the visual MQTT_HEALTHY validation for v0.4.13.
+2. **Synthetic broker-blip.** PowerShell loop on the host stops + restarts the `mosquitto` service every 30 min for 24 h. Forces the reconnect-then-deadlock window.
+3. **Coexistence audit (parallel work).**
    - IDF `CONFIG_ESP_COEX_*` settings vs current sdkconfig — check `BTDM_CTRL_COEX_*` knobs.
    - NimBLE `nimble_port_deinit()` completeness on shutdown paths.
    - BLE scan duty cycle vs Wi-Fi DTIM beacon overlap.
@@ -57,8 +59,17 @@ The deeper fix for the BLE silent-deadlock workaround currently shipped as `BLE_
    - Pin `nimble_host` task to Core 1 (currently floating).
    - Lower BLE scan duty (`BLE_SCAN_INTERVAL_MS` ↑, `BLE_SCAN_WINDOW_MS` ↓).
    - Add a BLE-watchdog loop in main: if `nimble_host` task hasn't ticked in N minutes, deinit + reinit.
-   - Drop NimBLE entirely → switch to esp32-arduino's built-in BLE stack (heavier RAM, but simpler coexistence model).
-5. **Acceptance criterion.** 24h soak with BLE on + 30-min broker blips + zero silent deadlocks.
+   - Drop NimBLE entirely → switch to esp32-arduino's built-in BLE stack (heavier RAM, simpler coexistence model).
+5. **Phase 1 acceptance criterion.** 24 h bench soak with BLE on + 30-min broker blips + zero silent deadlocks.
+
+#### Phase 2 — fleet rollout (gated on v0.4.13 24h soak + Phase 1 acceptance)
+Soak gate matters here, not in Phase 1: if v0.4.13 has a latent post-OTA issue and we ship v0.4.15 with BLE on top, a fleet-wide failure is hard to attribute — was it BLE coexistence or a v0.4.13 regression? Soak isolates the baseline.
+
+**Prereqs:**
+- v0.4.13 24 h soak across the fleet — zero `boot_reason=panic|task_wdt|int_wdt|brownout`, no LWT-only stalls.
+- Phase 1 acceptance criterion met (24 h bench soak with BLE on, zero silent deadlocks).
+
+**Rollout:** Fleet OTA stagger same shape as v0.4.13 (2-min intervals). Watch heap_free trajectory closely — re-enabled BLE adds ~50 KB heap pressure.
 
 **Risks.**
 - Coexistence bugs are notoriously timing-dependent — fix on bench may not reproduce in fleet.
