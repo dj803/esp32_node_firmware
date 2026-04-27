@@ -65,7 +65,8 @@ This is the leading hypothesis for the deadlock. After a Wi-Fi reconnect, lwIP n
 | Time | Event | heap_free | heap_largest | Notes |
 |---|---|---|---|---|
 | 10:08:22 | Flash + reboot | 74608 | 69620 | poweron; BLE overhead ~42 KB vs stock |
-| 10:15 (T+7) | Heartbeat | 59392 | 51188 | −15 KB / −18 KB in 7 min — fragmentation or leak |
+| 10:15 (T+7) | Heartbeat | 59392 | 51188 | −15 KB / −18 KB in 7 min |
+| 10:16-10:18 (T+8..10) | Heartbeats | 59392 | 51188 | **STABLE — early drop was init, not a leak** |
 | _T+30 (10:38)_ | _scheduled checkpoint_ | _?_ | _?_ | _watch trajectory_ |
 | _T+70 (11:18)_ | _peak hang likelihood_ | _?_ | _?_ | _stock hang reproduces here_ |
 | _T+120 (11:48)_ | _verdict_ | _?_ | _?_ | _if alive: mitigations 1+2 sufficient_ |
