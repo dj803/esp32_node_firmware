@@ -51,6 +51,12 @@ frequently enough that all subscribed tasks stay fed:
   these on the lwIP / async_tcp task. Handlers are short (parse + flag
   set + queue post). Long-running effects are deferred to `loop()` via
   `_mqtt*AtMs` deadlines (the v0.3.20 sleep pattern).
+- **`mqtt_client.h::onMqttConnect / onMqttDisconnect`.** Same async_tcp
+  task. Subscribe + publish-status calls finish in ~ms; the WS2812
+  MQTT_HEALTHY post is deferred to `mqttHeartbeat()` via
+  `_mqttLedHealthyAtMs` (the v0.4.13 deferred-flag pattern — see
+  dedicated section below). #44 root cause was an inline post from
+  this callback.
 - **All FreeRTOS software-timer callbacks** (e.g. `_otaProgressTimeout`,
   `_mqttReconnectTimer`). Run on the timer service task with a default
   small stack; we keep them under a few ms.
@@ -66,6 +72,77 @@ frequently enough that all subscribed tasks stay fed:
   Keygen blocks ~10–15 s. loopTask is subscribed at function entry
   (idempotent — `ESP_ERR_INVALID_ARG` if already subscribed). Reset
   is called between every long mbedTLS step.
+
+## Deferred-flag pattern — callback wants long work
+
+The canonical answer to rule #2 below ("callbacks must stay short; defer
+long work via flags / queues"). Worked example added in v0.4.13 for #44
+re-enabling the green MQTT_HEALTHY LED.
+
+**Problem.** `onMqttConnect()` runs on the `async_tcp` task (Core 0,
+TWDT-subscribed by AsyncTCP). Posting a `LedEvent` to the WS2812 task
+queue from inside the callback works MOST of the time, but under
+contention (FastLED render in flight, queue full, mutex blocked) the
+post stalls long enough that `async_tcp` skips its TWDT feed. That was
+the v0.4.10 fleet-wide crash shape (#51 → diagnostic root-cause
+analysis 2026-04-27).
+
+**Anti-pattern (v0.4.10):**
+```cpp
+static void onMqttConnect(bool sessionPresent) {
+    // … subscribe topics, publish boot announcement …
+    LedEvent e{};
+    e.type = LedEventType::MQTT_HEALTHY;
+    ws2812PostEvent(e);          // ❌ post from async_tcp callback
+}
+```
+
+**Pattern (v0.4.13):**
+```cpp
+// Module state — volatile because writer (callback) and reader (loop) are
+// on different tasks; without volatile the compiler may cache reads in
+// loop() across the task-switch boundary and the deferred work never fires.
+static volatile uint32_t _mqttLedHealthyAtMs = 0;
+
+static void onMqttConnect(bool sessionPresent) {
+    // … subscribe topics, publish boot announcement …
+    _mqttLedHealthyAtMs = millis();     // ✅ flag only — returns immediately
+}
+
+// Consumed in mqttHeartbeat(), called every loop() iteration on loopTask
+// (NOT TWDT-subscribed during normal operation; safe for blocking posts).
+void mqttHeartbeat() {
+    if (_mqttLedHealthyAtMs > 0) {
+        _mqttLedHealthyAtMs = 0;
+        LedEvent e{};
+        e.type = LedEventType::MQTT_HEALTHY;
+        ws2812PostEvent(e);
+    }
+    // … rest of heartbeat …
+}
+```
+
+**Checklist when applying:**
+1. Storage: module-static `volatile` integer/bool. The writer is the
+   callback, the reader is `loop()` — different tasks, possibly different
+   cores; `volatile` blocks register-caching across the task switch.
+2. Writer: callback assigns once and returns. Use a non-zero sentinel
+   (e.g. `millis()` or `1`) so the reader can distinguish "armed" from
+   "idle". Don't gate on equality with a stale `millis()` value.
+3. Reader: must be called from a TWDT-safe context. `loop()` and any
+   function it calls during normal operation qualifies; a software-timer
+   callback usually does NOT.
+4. Idempotency: clear the flag BEFORE the deferred work runs, so a
+   second arming during the work doesn't get coalesced away.
+5. Bounded latency: the flag is consumed at most one `loop()` iteration
+   late — typically < 1 ms. If the work is time-critical (e.g. you need
+   < 100 µs response), this pattern is wrong; use a queue + dedicated
+   task instead.
+
+**When NOT to use this:** for work that itself blocks > 5 s on
+TWDT-subscribed `loopTask` paths (OTA download, mbedTLS keygen). Those
+need explicit `esp_task_wdt_add(NULL)` + per-step `esp_task_wdt_reset()`
+as documented in "Sites that DO feed" above.
 
 ## Future-proofing rules
 
@@ -105,6 +182,10 @@ hardening) bit five different versions:
   stack overflow at ~60 % progress. Fixed by pre-subscribing loopTask.
 - **v0.3.32**: Stalls that didn't trip TWDT (CDN black-hole). Added
   separate progress watchdog (FreeRTOS one-shot timer).
+- **v0.4.10**: Fleet-wide crash from `ws2812PostEvent()` called inside
+  `onMqttConnect/onMqttDisconnect` (async_tcp task). Workaround: disabled
+  the post in v0.4.10.1. Real fix in v0.4.13 — the deferred-flag pattern
+  documented above. #44 / #51.
 
 The shape: every fix added a new symptom. Documenting the policy here
 is the structural alternative — future contributors know which task is
