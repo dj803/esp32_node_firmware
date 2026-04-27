@@ -175,7 +175,19 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
                                            // consecutive MQTT failures (Tier 1 self-heal).
 #define MQTT_RESTART_THRESHOLD        10   // Hard-restart the device after this many
                                            // consecutive failures (Tier 2 self-heal).
-#define MQTT_HUNG_TIMEOUT_MS       12000   // If connect() produces no callback (success or
+// (v0.4.14, 2026-04-27) Bumped 12000 → 90000.
+// 12 s was tuned for the "TCP connected, MQTT CONNACK never arrived" hang —
+// but the same path ALSO fires on the much more common "broker down, lwIP
+// SYN retrying" case (lwIP TCP connect timeout is ~75 s by default). So any
+// broker outage longer than 12 s caused EVERY device to ESP.restart()
+// simultaneously, producing the v0.4.10 #51 + 2026-04-27 10:42 + 14:04
+// cascade patterns (see CHAOS_TESTING.md M2). 90 s gives lwIP SYN room to
+// fire its onError naturally before we declare hung.
+//
+// Better long-term: mqttIsHung() should distinguish "TCP up, CONNACK pending"
+// from "TCP not yet up". See SUGGESTED_IMPROVEMENTS #65 (restart-policy
+// hardening).
+#define MQTT_HUNG_TIMEOUT_MS       90000   // If connect() produces no callback (success or
                                            // failure) within this window, the async client
                                            // has hung — restart the device.
 
