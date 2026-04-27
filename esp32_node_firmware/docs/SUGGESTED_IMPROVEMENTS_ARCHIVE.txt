@@ -2485,6 +2485,22 @@ mid-day update" section.
     needs BLE back, USB-flash that one device with an alternate
     build. Manual but cheap.
 
+    PARTIAL PROGRESS 2026-04-27:  Added [env:esp32dev_minimal] to
+    platformio.ini extending esp32dev with -URFID_ENABLED. Built
+    clean, USB-flashed to Bravo, boot announce clean (uptime grows,
+    heap stable, reconnects fine). HOWEVER `rfid_enabled` still
+    reports `true` in the heartbeat — config.h has an unconditional
+    `#define RFID_ENABLED` at line 314, so the command-line `-U`
+    is shadowed once the header is included. Variant infrastructure
+    proven (env + build + flash + boot all work) but the actual
+    feature disable requires gating config.h:
+        #ifndef RFID_DISABLED
+        #define RFID_ENABLED
+        #endif
+    plus the env switching from `-URFID_ENABLED` to `-DRFID_DISABLED`.
+    Same fix applies to BLE_ENABLED and any future ESPNOW_RANGING_ENABLED
+    flag. Bundle as part of the variant-infrastructure follow-up.
+
 72. Bench-supply voltage stress testing rig
     OBSERVATION (2026-04-26 operator suggestion):  Failure modes #51
     include `brownout` and `other_wdt` as candidates. Today we
@@ -3262,3 +3278,15 @@ Next steps (operator decision):
 
     SEVERITY: LOW. Improves agent + human navigation when these
     docs grow further; no functional impact today.
+    STATUS: WONT_DO 2026-04-27 — re-examined the candidates and
+    neither fits the convention's prerequisites:
+       ESP32_FAILURE_MODES.md is a structured reference catalogue
+       (failure-mode taxonomy + triage flowchart + historical
+       evidence). Its "open vs resolved" distinction doesn't apply
+       — the catalogue is meant to be read top-to-bottom, and
+       per TRACKING_DOC_CONVENTION.md "When NOT to apply this
+       pattern" this kind of doc is explicitly excluded.
+       memory_budget.md is also a reference doc — flash/IRAM/DRAM
+       breakdowns at known build versions. No item-lifecycle.
+    Conclusion: the convention applies to backlog docs, not
+    catalogues. Removing #82 from OPEN.

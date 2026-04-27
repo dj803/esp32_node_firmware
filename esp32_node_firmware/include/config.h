@@ -310,8 +310,13 @@ static const char* const OTA_FALLBACK_URLS[OTA_FALLBACK_URL_COUNT] = {
 // RFID reader (MFRC522v2 via SPI)
 // Define RFID_ENABLED to activate the RFID module. Comment out on nodes
 // that do not have an MFRC522 reader attached — no code overhead either way.
+// Variant builds (#71) can override via build_flags by setting -DRFID_DISABLED
+// — the gate below skips the define so the source-level #ifdef RFID_ENABLED
+// blocks compile out at preprocess time.
 // -----------------------------------------------------------------------------
+#ifndef RFID_DISABLED
 #define RFID_ENABLED                    // Comment out to disable on reader-less nodes
+#endif
 
 #define RFID_SS_PIN        5            // SPI Slave Select GPIO
                                         // SCK=18, MISO=19, MOSI=23 (default ESP32 VSPI)

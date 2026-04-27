@@ -76,9 +76,8 @@ To resolve an entry:
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A+E shipped, B/C/D/F/G/H/I open)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
-  #82   Audit other tracking docs (FAILURE_MODES, memory_budget) for split pattern
 
-  Total open: 56
+  Total open: 55
 
 ────────────────────────────────────────────────────────────
 
@@ -88,6 +87,7 @@ To resolve an entry:
   #7    MQTT-over-TLS to the broker                         (parked 2026-04-27 — private LAN)
   #13   UID-clone / "Chinese backdoor" MIFARE support       (parked 2026-04-27 — no use case)
   #18   NFC phone / card emulation                          (parked 2026-04-27 — ESP32 cannot emulate ISO 14443A)
+  #82   Audit tracking docs for split pattern               (parked 2026-04-27 — neither candidate fits the convention)
 
 ────────────────────────────────────────────────────────────
 
