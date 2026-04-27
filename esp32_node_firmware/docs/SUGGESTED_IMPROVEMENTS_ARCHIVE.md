@@ -1536,6 +1536,50 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               in steady state. Investigate after #45 stagger lands so
               the cleanup-restart can be done safely.
 
+    UPDATE 2026-04-27 ~23:30 SAST — fresh data point on v0.4.20 release
+    (v0.4.16 cascade-fix + #78 mitigations in place):
+
+    Alpha (production v0.4.20 release, CI build app_sha_prefix
+    "a5bb3114") panicked once after ~3 hours of clean uptime. Fleet
+    was steady, no chaos in flight, no broker churn. Auto-recovered
+    via reboot; uptime restarted from 0; subsequent boot announcement
+    confirms `boot_reason:"panic"`.
+
+    The v0.4.17 coredump-to-flash path captured the backtrace cleanly
+    (the whole point of #65 sub-E):
+
+       exc_task: loopTask     (NOT async_tcp — different from
+                                tonight's earlier Bravo/Charlie
+                                coredumps which were async_tcp /
+                                lwIP raw.c)
+       exc_pc:   0x4008ec14
+       exc_cause: IllegalInstruction (PC pointing at non-code
+                                     memory; classic memory corruption
+                                     symptom)
+       backtrace: 0x4008ec14 0x4008ebd9 0x400954ad 0x401ae04b
+                  0x401ae080 0x401ae15f 0x401ae1f2 0x400e4b0d
+                  0x400e2c81 0x400ee19e 0x400f8bc2 0x40100023
+                  0x40107ce4 0x4008ff31
+
+    Cannot decode locally — Alpha's app_sha_prefix "a5bb3114" is the
+    CI v0.4.20 binary; local builds produce SHA prefix "dd877030".
+    Need either the CI artefact's ELF (may be in GitHub Actions
+    artefacts retention window) or a build-from-tag-v0.4.20-source-
+    SHA pio run to reproduce.
+
+    Significance: this is a SEPARATE bug from #78 (which is async_tcp
+    context). It's in loopTask — our main loop, where MQTT publishes
+    + heartbeats + ESP-NOW ranging happen. IllegalInstruction
+    typically means a corrupted function pointer; combined with the
+    long-uptime trigger, fits a slow heap leak or stack overflow
+    that eventually overwrites a vtable.
+
+    ACTION: include this Alpha coredump in the next-session #78 /
+    #76 sub-G follow-up audit. Charlie's canary soak (continuous
+    via OTA_DISABLE) is now the fleet's primary stack-overflow
+    detector — if Charlie hits the canary halt with a similar
+    frame count, the corrupted-stack hypothesis gets confirmed.
+
 47. Hardware verification of #39 multi-point + #41.7 per-peer calibration
     STATUS: Firmware shipped in v0.4.07 (#39 linreg) and v0.4.09 (#41.7
     per-peer constants). Dashboard UI shipped on 2026-04-25 with
