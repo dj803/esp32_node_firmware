@@ -33,19 +33,15 @@ To resolve an entry:
 
 ## OPEN
 
-  #6    OTA HTTPS certificate pinning                       (flagged 2026-04-21 review)
-  #7    MQTT-over-TLS to the broker                         (flagged 2026-04-21 review)
   #8    Sibling ESP-NOW "come back online" broadcast
   #9    Time-limited AP mode → reboot
   #10   "Has ever successfully connected" NVS flag
   #11   NTAG21x write support (NTAG213 / NTAG215 / NTAG216)
   #12   NTAG424 DNA secure messaging (AES)
-  #13   UID-clone / "Chinese backdoor" MIFARE support
   #14   Per-sector key rotation from Node-RED (cmd/rfid/set_key)
   #15   NDEF encoding / decoding helpers
   #16   Preset "program this kind of tag" forms
   #17   LF 125 kHz support (HID, EM4100, T5577)
-  #18   NFC phone / card emulation
   #19   Per-LED addressing
   #20   Scene / preset save-to-device
   #21   Group / broadcast LED commands
@@ -89,7 +85,16 @@ To resolve an entry:
   #81   Renumbering pass on archive (resolve #58–#70 collisions)
   #82   Audit other tracking docs (FAILURE_MODES, memory_budget) for split pattern
 
-  Total open: 55
+  Total open: 51
+
+────────────────────────────────────────────────────────────
+
+## WONT_DO (intentional non-actions, full text in docs/WONT_DO.txt)
+
+  #6    OTA HTTPS certificate pinning                       (parked 2026-04-27 — internal-IoT threat model)
+  #7    MQTT-over-TLS to the broker                         (parked 2026-04-27 — private LAN)
+  #13   UID-clone / "Chinese backdoor" MIFARE support       (parked 2026-04-27 — no use case)
+  #18   NFC phone / card emulation                          (parked 2026-04-27 — ESP32 cannot emulate ISO 14443A)
 
 ────────────────────────────────────────────────────────────
 

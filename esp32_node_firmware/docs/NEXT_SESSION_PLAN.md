@@ -4,40 +4,29 @@ Drafted 2026-04-27 evening, after the v0.4.13 → v0.4.20 cascade-fix
 marathon closed and the 2026-04-26 audit hygiene batch (#58-#65)
 landed. Fleet is on v0.4.20-release; OTA manifest matches.
 
-## Recommended: **A — Coredump-to-flash (#65 sub-item E)**
+## Recommendation revised 2026-04-27 evening
 
-Single most leverage-positive piece of remaining cascade-fix work.
-Every panic captured this week (v0.4.13 cascade, 14:04 backtrace,
-M3 chaos runs) cost manual serial-monitor scaffolding + addr2line
-gymnastics. With ESP-IDF coredump-to-flash, the firmware writes the
-panic backtrace to a dedicated partition on crash, then publishes it
-to MQTT on next boot — no serial monitor required, no chip needs to
-be on the bench at the moment of failure.
+The original A (coredump-to-flash) is **already shipped**. Charlie's
+canary first-boot tonight published a real coredump on
+`/diag/coredump`: AsyncTCP `InstructionFetchError`, exc_task=async_tcp,
+PC=0x3f409271. That confirms include/coredump_publish.h (added in
+v0.4.17, commit 43c71a6) is wired through, and the partition table /
+sdkconfig.defaults are correct on real fleet hardware. Backlog #65
+sub-item E moves to "shipped + validated".
 
-Concrete deliverables:
-- Add `coredump,data,coredump,,64K` to
-  [esp32_node_firmware/partitions.csv](esp32_node_firmware/partitions.csv)
-  (verify free space with current `min_spiffs.csv` budget).
-- Set `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y` and
-  `CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y` in
-  [esp32_node_firmware/sdkconfig.defaults](esp32_node_firmware/sdkconfig.defaults).
-  (File is currently untracked — commit it as part of this session.)
-- New include/coredump.h: on boot, `esp_core_dump_image_check()`; if
-  present, base64-encode and publish to
-  `Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/diag/coredump`
-  (one-shot retained), then `esp_core_dump_image_erase()`.
-- Node-RED flow: subscribe to `+/diag/coredump`, decode, post to a
-  dashboard tile or write to disk for `addr2line` post-mortem.
-- Validate via M2-style synthetic blip — confirm a forced panic on
-  one device produces a coredump on the broker before the device
-  reboots into normal operation.
+Sub-item A (pre-restart diag publish) shipped in v0.4.19 (commit
+9ed19a4). Remaining #65 sub-items B/C/D/F/G/H/I are all nice-to-have
+but not blockers.
 
-Effort: ~half a day firmware + ~1 hour Node-RED + 1 hour partition
-table validation. Risk: partition resize requires erase-flash on
-existing devices (NVS wiped — then re-bootstrap). Run on Charlie
-(bench) first; OTA-fleet only after a 24 h soak.
+**New recommended next session: B (v0.5.0 relay + Hall hardware).**
 
-## Alternative: B — Start v0.5.0 relay + Hall hardware
+The coredump win + canary build + v0.4.20 fleet stability mean the
+diagnostic + safety-net layer is now strong enough to support feature
+work. v0.5.0 is the deliberate moment to introduce hardware-divergent
+nodes; if any new failure mode emerges, the coredump path will catch
+it without requiring a serial monitor.
+
+## Originally-listed: B — Start v0.5.0 relay + Hall hardware
 
 Plan already drafted at
 [esp32_node_firmware/docs/PLAN_RELAY_HALL_v0.5.0.md](esp32_node_firmware/docs/PLAN_RELAY_HALL_v0.5.0.md).
@@ -69,12 +58,17 @@ parallel to A or B, not as the headline session.
 
 ## Recommendation
 
-A then B. Coredump-to-flash unblocks every future panic
-investigation, locking in the diagnostic gain from this week's
-cascade chase. Then v0.5.0 feature work can proceed against a
-firmware base where any new panic auto-captures its own backtrace.
+B then (if budget) the long-tail #65 sub-items (C/D/F/G/H/I —
+threshold tuning, cool-off counter, WDT bump, distinct boot_reason).
+Run C (canary soak) in parallel on Charlie — already armed
+2026-04-27 evening, see memory/canary_soak_charlie_2026_04_27.md.
 
-Run C in parallel on Charlie throughout — it costs nothing.
+The Charlie coredump from tonight (AsyncTCP InstructionFetchError)
+suggests #67 (AsyncTCP _error race) is still latent in v0.4.20 —
+the v0.4.16 broker-probe reduces the trigger surface but doesn't
+fully eliminate the underlying library bug. Investigate as a
+parallel thread, not the main session, since the coredump path is
+now the diagnostic safety-net.
 
 ## Deferred decisions
 
