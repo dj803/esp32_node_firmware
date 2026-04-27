@@ -498,6 +498,7 @@ static void rfidNormalizeUid(const char* in, char* out, size_t outLen) {
 }
 
 
+#ifdef RFID_ENABLED
 // ── RFID whitelist handler ────────────────────────────────────────────────────
 // Called from onMqttMessage when a message arrives on .../cmd/rfid/whitelist.
 // All UIDs are normalised (uppercase, no separators) before processing.
@@ -556,6 +557,7 @@ static void handleRfidWhitelist(const char* payload, size_t len) {
         LOG_W("MQTT", "cmd/rfid/whitelist: unknown cmd '%s'", cmd);
     }
 }
+#endif // RFID_ENABLED
 
 
 #ifdef RFID_ENABLED
@@ -923,10 +925,10 @@ static void onMqttMessage(char* topic, char* payload,
         LOG_I("MQTT", "cmd/locate received - flashing status LED");
         ledSetPattern(LedPattern::LOCATE);
         mqttPublishStatus(FwEvent::LOCATING);
+#ifdef RFID_ENABLED
     } else if (t == mqttTopic("cmd/rfid/whitelist")) {
         // RFID UID whitelist management
         handleRfidWhitelist(payload, len);
-#ifdef RFID_ENABLED
     } else if (t == mqttTopic("cmd/rfid/program")) {
         // v0.3.17 playground: arm a multi-block write on the next scanned card
         handleRfidProgram(payload, len);

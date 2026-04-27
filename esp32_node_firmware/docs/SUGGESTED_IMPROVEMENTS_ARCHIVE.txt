@@ -2350,6 +2350,11 @@ Phase D — Developer experience
                   mqtt-sub.md    — mosquitto_sub snapshot of fleet status topics (-W 5)
                   fleet-status.md — run tools/fleet_status.sh and summarise
     PRIORITY: Low. Quality-of-life; saves typing on daily dev tasks.
+    STATUS:   RESOLVED 2026-04-27. Created C:\Users\drowa\.claude\commands\
+              files: pio-build.md, mqtt-sub.md, fleet-status.md.
+              They appear in the available-skills list and can be invoked
+              via `/pio-build`, `/mqtt-sub`, `/fleet-status`. Scope is
+              user-level so they live outside the repo.
 
 68. Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
     DECISION: Intentionally deferred — no auth during active dev work.

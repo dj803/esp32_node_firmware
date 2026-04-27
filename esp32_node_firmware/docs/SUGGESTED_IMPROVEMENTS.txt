@@ -66,7 +66,6 @@ To resolve an entry:
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
   #55   AsyncMqttClient malformed-packet counter
   #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
-  #66   .claude/commands/ — operational shortcuts                    (2026-04-26 audit)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
   #69   Wakeup vs persistent-monitor preemption
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
@@ -77,7 +76,7 @@ To resolve an entry:
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
 
-  Total open: 55
+  Total open: 54
 
 ────────────────────────────────────────────────────────────
 
@@ -109,10 +108,11 @@ To resolve an entry:
   #62   LICENSE file                                                  (addressed 2026-04-26)
   #64   Root README.md                                               (resolved 2026-04-27)
   #65   esp32_node_firmware/include/build_config.h stub              (resolved 2026-04-27)
+  #66   .claude/commands/ — operational shortcuts                    (resolved 2026-04-27)
   #67   Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
   #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
   #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
 
-  Total resolved: 22
+  Total resolved: 23
