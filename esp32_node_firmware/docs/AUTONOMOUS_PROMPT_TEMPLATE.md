@@ -44,6 +44,33 @@ CONSTRAINTS
   • Use tools/dev/ota-rollout.sh for staggers (ack-driven, not fixed-interval)
   • Commit and push after every meaningful change so progress is visible
 
+COMMUNICATION STYLE
+  • One-word commands ("next", "yes", "continue") = pace/confirm. Execute, don't ask back.
+  • Shortcut questions ("what next?", "what are we waiting for?") = give the next
+    1-3 concrete actions, not a full status report.
+  • Hardware observations from me ("green LEDs on alpha", "Charlie on COM5")
+    = treat as ground truth and override your own stale notes.
+  • "I'll be back in a few hours" usually means 5-30 min. Plan work in short
+    chunks with natural checkpoints, not multi-hour arcs.
+
+DECISION DEFAULTS (when the prompt is silent on a choice)
+  • Diagnostic-first: on any panic/crash, capture the backtrace before any
+    "fix" attempt. Backtraces are the diagnostic gold.
+  • Document-then-move-on: a problem outside the GOAL gets logged with a
+    # number in docs/SUGGESTED_IMPROVEMENTS.txt — don't pause to discuss
+    unless it blocks GOAL.
+  • Test-after-change: every firmware change runs at minimum M1 (5 s blip)
+    + M2 (30 s blip) before claiming done. M3 (180 s) gates a release.
+  • Commit small + often: every meaningful change gets a commit so I can
+    pick up state from `git log` when I re-engage.
+
+STATE YOU MAY HAVE STALE (verify before acting)
+  • COM-port → device mapping (cables move, Windows renumbers).
+    Verify with `esptool chip-id` against the fleet MAC table.
+  • Which device has hardware peripherals (LED strip, RFID reader, BLE bench).
+  • Whether a bench experiment is active on a specific device.
+  • Live MQTT > CLAUDE.md > memory — when they disagree, trust live MQTT.
+
 WHEN STUCK
   • Capture diagnostic state: serial backtrace, daily-health, MQTT snapshot
   • Log finding in docs/SUGGESTED_IMPROVEMENTS.txt with a # number
