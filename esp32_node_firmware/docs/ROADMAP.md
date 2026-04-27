@@ -14,7 +14,14 @@ Heap-guard fix in `mqttPublish()` (#51 root cause). Plus bundled: BLE off, NDEF 
 ### v0.4.12 — DONE
 Cosmetic re-tag of v0.4.11 for OTA-path validation.
 
-### v0.4.13 — DONE (shipped 2026-04-27)
+### v0.4.14 — DONE (shipped 2026-04-27 afternoon — CASCADE ROOT-CAUSE FIX)
+- **`MQTT_HUNG_TIMEOUT_MS = 12000` was the cascade trigger.** Shorter than lwIP's TCP SYN timeout (~75 s), so any broker outage > 12 s caused every device to ESP.restart() simultaneously, producing the v0.4.10 #51, 10:42, and 14:04 cascades. The AsyncTCP `tcp_arg` panic captured at 14:04 was a SECONDARY effect of the restart-storm, not the trigger.
+- **Bumped `MQTT_HUNG_TIMEOUT_MS` to 90000** (90 s). Gives lwIP SYN room to fail naturally before the firmware aborts.
+- **Bonus: switched AsyncTCP fork from `me-no-dev` → `mathieucarbou/AsyncTCP v3.3.2`.** Doesn't fix the cascade (timeout did) but downgrades remaining int_wdt-class hangs from `panic` (memory corruption) to recoverable watchdog reset.
+- **Validated 15:36:52 SAST:** definitive M2 30 s broker blip on the entire fleet (6/6 on v0.4.14) — all 6 devices reconnected within 1 second of broker return, **zero panics, zero abnormal boots**. The same blip on v0.4.13 fleet panicked 5/6 devices.
+- Tooling shipped: `tools/blip-watcher.ps1` + `Start Blip Watcher.bat` (file-trigger watcher), `docs/CHAOS_TESTING.md` (full chaos plan + framework proposal).
+
+### v0.4.13 — DONE (shipped 2026-04-27 morning)
 - **#61 ONLINE event on reconnect** — `FwEvent::ONLINE` distinguishes true boot from broker reconnect. Eliminates misleading boot flood in Node-RED `boot_history`.
 - **#44 MQTT_HEALTHY green LED via deferred-flag** — `_mqttLedHealthyAtMs` set in `onMqttConnect()` (async_tcp task), consumed in `mqttHeartbeat()` (loop task). Avoids the v0.4.10 TWDT crash shape. Pattern documented as canonical in [TWDT_POLICY.md](TWDT_POLICY.md).
 - **Hardware verification:** 6/6 fleet on v0.4.13 (Charlie on -dev via USB, 5/6 via OTA). 14 min uptime on Alpha post-OTA, 13 min on Charlie under WS2812 + ESP-NOW load — zero crashes, no `boot_reason=panic|task_wdt|int_wdt`.
