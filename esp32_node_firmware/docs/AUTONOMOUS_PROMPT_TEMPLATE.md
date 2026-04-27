@@ -66,7 +66,7 @@ DECISION DEFAULTS (when the prompt is silent on a choice)
   • Diagnostic-first: on any panic/crash, capture the backtrace before any
     "fix" attempt. Backtraces are the diagnostic gold.
   • Document-then-move-on: a problem outside the GOAL gets logged with a
-    # number in docs/SUGGESTED_IMPROVEMENTS.txt — don't pause to discuss
+    # number in docs/SUGGESTED_IMPROVEMENTS.md — don't pause to discuss
     unless it blocks GOAL.
   • Test-after-change: every firmware change runs at minimum M1 (5 s blip)
     + M2 (30 s blip) before claiming done. M3 (180 s) gates a release.
@@ -82,7 +82,7 @@ STATE YOU MAY HAVE STALE (verify before acting)
 
 WHEN STUCK
   • Capture diagnostic state: serial backtrace, daily-health, MQTT snapshot
-  • Log finding in docs/SUGGESTED_IMPROVEMENTS.txt with a # number
+  • Log finding in docs/SUGGESTED_IMPROVEMENTS.md with a # number
   • Continue with next item, don't block on a single failed branch
 
 DONE WHEN

@@ -315,7 +315,7 @@ Ordering reflects (a) fit to observed evidence + historical baseline, (b) Alpha-
 
 ### Documentation hooks
 
-- Update [SUGGESTED_IMPROVEMENTS.txt](SUGGESTED_IMPROVEMENTS.txt) #51 with phase outcomes as they land.
+- Update [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md) #51 with phase outcomes as they land.
 - If the regression is closed, add a "Resolved" note + tag the v0.4.10.1 → v0.4.11 release whose first commit reverts the hooks.
 - If the LED feature can be re-implemented safely, document the new pattern (e.g. deferred-flag set in callback, consumed by loop()) in [TWDT_POLICY.md](TWDT_POLICY.md).
 

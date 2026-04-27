@@ -167,7 +167,7 @@ When adding new code, ask:
 
 ## Lessons from v0.1.x → v0.3.x
 
-The watchdog cluster (Cluster 1 in `SUGGESTED_IMPROVEMENTS.txt` v0.3.xx
+The watchdog cluster (Cluster 1 in `SUGGESTED_IMPROVEMENTS.md` v0.3.xx
 hardening) bit five different versions:
 
 - **v0.1.5–v0.1.7**: TWDT fired during OTA download. Fixed by

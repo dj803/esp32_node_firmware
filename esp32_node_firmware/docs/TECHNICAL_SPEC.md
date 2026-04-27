@@ -127,7 +127,7 @@ millis()-deadline driven (no `delay()` in hot paths since v0.3.06).
 - **XSS-safe HTML** (every attribute value `htmlEscape`d).
 - **ESP-NOW credential bundle** AES-GCM encrypted with per-site key.
 - **MQTT over plaintext LAN** — acceptable for trusted-wire segments,
-  documented as a follow-up (`SUGGESTED_IMPROVEMENTS.txt #7`).
+  documented as a follow-up (`SUGGESTED_IMPROVEMENTS.md #7`).
 - **OTA manifest over HTTPS** but without CA pinning — documented
   trade-off for internal-IoT threat model.
 
@@ -440,7 +440,7 @@ Dashboard 2.0 tabs (~200 nodes total, single `flows.json`):
 ## 9. Future possibilities
 
 Short-list of features the current architecture makes cheap to add.
-Full backlog is in `docs/SUGGESTED_IMPROVEMENTS.txt`; these are the
+Full backlog is in `docs/SUGGESTED_IMPROVEMENTS.md`; these are the
 ones with the best effort-to-value ratio.
 
 ### A. Hardware expansion

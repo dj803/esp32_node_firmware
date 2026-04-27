@@ -3,12 +3,12 @@ SUGGESTED IMPROVEMENTS — OPEN INDEX
 Short index of every numbered entry. Open items are listed first, with a
 one-line title and (where relevant) an ETA / link to the relevant version.
 RESOLVED items are listed at the bottom for context but the full text is
-in SUGGESTED_IMPROVEMENTS_ARCHIVE.txt.
+in SUGGESTED_IMPROVEMENTS_ARCHIVE.md.
 
 Last index sweep: 2026-04-27 (post #81 renumbering pass).
 
 To add a new entry:
-  - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.txt with a new
+  - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.md with a new
     number (continue the sequence).
   - Add a one-line summary here in the appropriate section.
 
@@ -80,7 +80,7 @@ To resolve an entry:
 
 ────────────────────────────────────────────────────────────
 
-## WONT_DO (intentional non-actions, full text in docs/WONT_DO.txt)
+## WONT_DO (intentional non-actions, full text in docs/WONT_DO.md)
 
   #6    OTA HTTPS certificate pinning                       (parked 2026-04-27 — internal-IoT threat model)
   #7    MQTT-over-TLS to the broker                         (parked 2026-04-27 — private LAN)

@@ -231,7 +231,7 @@ The biggest disagreement is the **17 dB** spread on "breakout + RFID + USB-power
 
 ## 9. Cross-reference
 
-This document is a session report. Forward-looking recommendations are mirrored in `docs/SUGGESTED_IMPROVEMENTS.txt` entry #41 (hardware) and entries #37 (asymmetry) / #40 (install guide) / #42 (firmware EMA reseed; if added).
+This document is a session report. Forward-looking recommendations are mirrored in `docs/SUGGESTED_IMPROVEMENTS.md` entry #41 (hardware) and entries #37 (asymmetry) / #40 (install guide) / #42 (firmware EMA reseed; if added).
 
 ---
 

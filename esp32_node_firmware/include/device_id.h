@@ -76,7 +76,7 @@ public:
         _uuid = _generate();
         // (#48) WARN-level so this stands out in fleet logs. A "Generated new"
         // message after first-boot provisioning is the smoking gun for UUID
-        // drift on subsequent boots — see SUGGESTED_IMPROVEMENTS.txt #48.
+        // drift on subsequent boots — see SUGGESTED_IMPROVEMENTS.md #48.
         Serial.printf("[W][DeviceId] Generated new UUID: %s "
                       "(if not first boot, NVS lost / regenerate-bug — see #48)\n",
                       _uuid.c_str());

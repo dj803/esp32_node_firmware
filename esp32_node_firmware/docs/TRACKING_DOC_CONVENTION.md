@@ -2,7 +2,7 @@
 
 How to manage long-lived "improvements / backlog / progress" documents in
 this repo. Born from the 2026-04-27 sweep that split the 3070-line
-`SUGGESTED_IMPROVEMENTS.txt` into a short index + a full archive.
+`SUGGESTED_IMPROVEMENTS.md` into a short index + a full archive.
 
 Apply this pattern to any document that:
 
@@ -11,7 +11,7 @@ Apply this pattern to any document that:
 - Has grown long enough that "what's still open?" requires scrolling past
   large resolved-entry narratives.
 
-Examples in this repo today: `SUGGESTED_IMPROVEMENTS.txt`. Future
+Examples in this repo today: `SUGGESTED_IMPROVEMENTS.md`. Future
 candidates: `ESP32_FAILURE_MODES.md`, `ROADMAP.md` (already partially
 follows this with "Now / Next / Month / v0.5.0+" sections),
 `memory_budget.md` (audit history).
@@ -72,7 +72,7 @@ code/process and unlikely to recur):
 
 **Start a fresh doc** when:
 - The new doc covers a clearly different *kind* of work (e.g.
-  `CHAOS_TESTING.md` for tests is separate from `SUGGESTED_IMPROVEMENTS.txt`
+  `CHAOS_TESTING.md` for tests is separate from `SUGGESTED_IMPROVEMENTS.md`
   for backlog).
 - You're starting a new high-traffic concept (a refactor with many
   subtasks; a multi-version release plan).
@@ -113,6 +113,6 @@ Stable entry numbers are the lookup key. Treat them like primary keys:
 ## Reference implementation
 
 See:
-- `docs/SUGGESTED_IMPROVEMENTS.txt` (INDEX after 2026-04-27 split)
+- `docs/SUGGESTED_IMPROVEMENTS.md` (INDEX after 2026-04-27 split)
 - `docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.txt` (ARCHIVE)
 - Commit 81b70e1 (the split itself)

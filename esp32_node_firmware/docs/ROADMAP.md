@@ -1,6 +1,6 @@
 # Roadmap
 
-Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.txt](SUGGESTED_IMPROVEMENTS.txt), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
+Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
 Last updated: 2026-04-27 (v0.4.13 fleet-wide OTA + USB validation complete; #44 deferred-flag verified on hardware).
 
@@ -217,4 +217,4 @@ Tier-3 (only if a need surfaces):
 
 ## How to extend this roadmap
 
-When a new release is cut, append a section under "Now" with what shipped and move open items downward. Keep the v0.5.0 / v0.6.0+ sections as the "what's beyond" buffer. SUGGESTED_IMPROVEMENTS.txt remains the long-tail backlog; this doc is the synthesized "what we're actually doing soon" view.
+When a new release is cut, append a section under "Now" with what shipped and move open items downward. Keep the v0.5.0 / v0.6.0+ sections as the "what's beyond" buffer. SUGGESTED_IMPROVEMENTS.md remains the long-tail backlog; this doc is the synthesized "what we're actually doing soon" view.

@@ -39,7 +39,7 @@ release adds page-level support.
 Used when the `cmd/rfid/program` / `cmd/rfid/read_block` payload omits
 `key_a_hex`. Default-key use is allowed but logged as a WARN in the device
 Serial because a freshly programmed tag should eventually have a site-specific
-key (out of scope for v0.3.17 — see `docs/SUGGESTED_IMPROVEMENTS.txt`).
+key (out of scope for v0.3.17 — see `docs/SUGGESTED_IMPROVEMENTS.md`).
 
 ---
 

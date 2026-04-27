@@ -61,7 +61,7 @@ of them cheap to bundle in.
    Decided:  Left as-is for internal-IoT threat model. Revisit if the OTA
              origin moves off github.com or if a CA-rotation automation
              is in place.
-   STATUS:   WONT_DO 2026-04-27 — moved to docs/WONT_DO.txt entry 3.
+   STATUS:   WONT_DO 2026-04-27 — moved to docs/WONT_DO.md entry 3.
 
 7. MQTT-over-TLS to the broker                         (flagged 2026-04-21 review)
    WHERE:    include/mqtt_client.h + include/broker_discovery.h
@@ -75,7 +75,7 @@ of them cheap to bundle in.
              Revisit if deployment moves off a trusted wire segment.
    Note:     config.h has a one-line comment next to BROKER_DISCOVERY_ENABLED
              documenting this decision so it isn't quietly forgotten.
-   STATUS:   WONT_DO 2026-04-27 — moved to docs/WONT_DO.txt entry 4.
+   STATUS:   WONT_DO 2026-04-27 — moved to docs/WONT_DO.md entry 4.
 
 ────────────────────────────────────────────────────────────────────────────────
 v0.3.15 — AP-mode recovery (rejected alternatives)         (flagged 2026-04-21)
@@ -146,7 +146,7 @@ each one small and additive.
     No MFRC522Hack, no sector-0 overwrite. Dangerous for non-experts and the
     library calls only work on specific clone silicon. Park here unless a
     clear use case appears.
-    STATUS: WONT_DO 2026-04-27 — moved to docs/WONT_DO.txt entry 5.
+    STATUS: WONT_DO 2026-04-27 — moved to docs/WONT_DO.md entry 5.
 
 14. Per-sector key rotation from Node-RED (cmd/rfid/set_key)
     v0.3.17 writes data blocks only; sector trailers are hard-refused by the
@@ -171,7 +171,7 @@ each one small and additive.
 18. NFC phone / card emulation
     ESP32 (Xtensa) cannot emulate ISO 14443A as a tag. ESP32-S3 + host card
     emulation could — out of scope for this firmware.
-    STATUS: WONT_DO 2026-04-27 — moved to docs/WONT_DO.txt entry 6.
+    STATUS: WONT_DO 2026-04-27 — moved to docs/WONT_DO.md entry 6.
 
 ────────────────────────────────────────────────────────────────────────────────
 LED CONTROL — v0.3.18 follow-ups
@@ -3235,12 +3235,12 @@ Next steps (operator decision):
     -dev devices now upgrade to the matching release on first OTA check.
 
 ────────────────────────────────────────────────────────────
-81. Renumbering pass on SUGGESTED_IMPROVEMENTS_ARCHIVE.txt
+81. Renumbering pass on SUGGESTED_IMPROVEMENTS_ARCHIVE.md
     OBSERVATION (2026-04-27):  The 2026-04-26 audit-driven
     additions and the 2026-04-27 cascade-fix-session additions
     both used #58–#70, producing collisions documented in the
     "KNOWN NUMBERING COLLISIONS" warning at the top of
-    SUGGESTED_IMPROVEMENTS.txt. Each colliding number currently
+    SUGGESTED_IMPROVEMENTS.md. Each colliding number currently
     has two entries in the archive; the index lists only the
     first-occurrence and disambiguation requires "top vs bottom
     of archive" hinting.
@@ -3260,7 +3260,7 @@ Next steps (operator decision):
          (see memory/v0_4_13_panic_cascade_2026_04_27.md and
          autonomous_session_2026_04_27.md for #65, #66, #70).
        - Remove the "KNOWN NUMBERING COLLISIONS" warning block
-         from SUGGESTED_IMPROVEMENTS.txt once the pass completes.
+         from SUGGESTED_IMPROVEMENTS.md once the pass completes.
 
     EFFORT: ~15 min mechanical edit pass.
 
@@ -3284,8 +3284,8 @@ Next steps (operator decision):
     OBSERVATION (2026-04-27):  Per the tracking-doc convention
     introduced in commit 95a9fad (memory/tracking_doc_convention.md),
     SUGGESTED_IMPROVEMENTS was split into a short OPEN INDEX
-    (SUGGESTED_IMPROVEMENTS.txt, ~115 lines) plus a full
-    SUGGESTED_IMPROVEMENTS_ARCHIVE.txt (~3070 lines). Two other
+    (SUGGESTED_IMPROVEMENTS.md, ~115 lines) plus a full
+    SUGGESTED_IMPROVEMENTS_ARCHIVE.md (~3070 lines). Two other
     docs in esp32_node_firmware/docs/ fit the same shape:
        - ESP32_FAILURE_MODES.md  (502 lines, mix of resolved + open)
        - memory_budget.md        (277 lines, mix of resolved + open)
