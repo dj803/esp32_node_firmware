@@ -1358,6 +1358,12 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     "0.4.11-dev"). Documented inline in config.h.
 
 44. Addressable LED status colors (green/yellow/red) not lighting
+    STATUS: RESOLVED 2026-04-27 in v0.4.13 via deferred-flag pattern.
+    onMqttConnect() (async_tcp task) sets _mqttLedHealthyAtMs=millis();
+    mqttHeartbeat() (loopTask) consumes the flag and posts the
+    LedEventType::MQTT_HEALTHY event safely. Visual confirmation:
+    green breathing observed on Alpha's WS2812 strip post-OTA.
+    Pattern documented as canonical in TWDT_POLICY.md.
     OBSERVATION (2026-04-25):  Devices in the triangle (Charlie/Delta/
     Echo) and Bravo on USB-PC do not exhibit the documented status-LED
     behaviour: green when WiFi+MQTT are healthy, yellow during OTA, red
@@ -2621,6 +2627,13 @@ DEEPER FIX OPPORTUNITY (future):
   refactor; defer until v0.5.x.
 
 61. Misleading "boot" event on every MQTT reconnect
+    STATUS: RESOLVED 2026-04-27 in v0.4.13. Added FwEvent::ONLINE
+    (enum value 18, string "online"). Static bool _firstMqttConnect
+    in mqtt_client.h tracks first-connect vs reconnect: BOOT on
+    first (retained, includes boot_reason); ONLINE on every
+    subsequent reconnect (non-retained, no boot_reason). Node-RED
+    boot_history filter `p.event !== 'boot'` already discards
+    non-boot events so no flow change required.
     OBSERVATION (2026-04-27 02:34 cascade):  When MQTT reconnects
     after a transient disconnect, onMqttConnect() calls
     mqttPublishStatus(FwEvent::BOOT) which republishes the retained

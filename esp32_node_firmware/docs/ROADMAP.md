@@ -2,7 +2,7 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.txt](SUGGESTED_IMPROVEMENTS.txt), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-27 (v0.4.12 fleet OTA confirmed complete; Tier 1 tooling session).
+Last updated: 2026-04-27 (v0.4.13 fleet-wide OTA + USB validation complete; #44 deferred-flag verified on hardware).
 
 ---
 
@@ -12,50 +12,70 @@ Last updated: 2026-04-27 (v0.4.12 fleet OTA confirmed complete; Tier 1 tooling s
 Heap-guard fix in `mqttPublish()` (#51 root cause). Plus bundled: BLE off, NDEF feature, #48/#49 visibility logs, heap heartbeat, tools/ directory, CLAUDE.md, .claude/settings.json.
 
 ### v0.4.12 — DONE
-Cosmetic re-tag of v0.4.11 for OTA-path validation. Same code, version string bumped so `-dev` devices accept the OTA. Fleet-wide stagger complete.
+Cosmetic re-tag of v0.4.11 for OTA-path validation.
+
+### v0.4.13 — DONE (shipped 2026-04-27)
+- **#61 ONLINE event on reconnect** — `FwEvent::ONLINE` distinguishes true boot from broker reconnect. Eliminates misleading boot flood in Node-RED `boot_history`.
+- **#44 MQTT_HEALTHY green LED via deferred-flag** — `_mqttLedHealthyAtMs` set in `onMqttConnect()` (async_tcp task), consumed in `mqttHeartbeat()` (loop task). Avoids the v0.4.10 TWDT crash shape. Pattern documented as canonical in [TWDT_POLICY.md](TWDT_POLICY.md).
+- **Hardware verification:** 6/6 fleet on v0.4.13 (Charlie on -dev via USB, 5/6 via OTA). 14 min uptime on Alpha post-OTA, 13 min on Charlie under WS2812 + ESP-NOW load — zero crashes, no `boot_reason=panic|task_wdt|int_wdt`.
+- **Visual confirmation (2026-04-27):** green MQTT_HEALTHY breathing observed on Alpha's WS2812 strip. Deferred-flag pattern works in production end-to-end.
+- Bravo back online (had been powered off since 2026-04-26 as #51 cascade-trigger suspect; #51 root cause now confirmed elsewhere).
+
+### Tier 1 tooling — DONE (2026-04-27)
+T1.1 Node-RED file logging, T1.2 Mosquitto log rotation (PowerShell scheduled task), T1.3 `.dummy/` → `tools/node_red/`, T1.4 `/less-permission-prompts`, T1.5 verify `flash_dev.sh`+`tasks.json`. Plus pulled-forward T2.1 GitHub Pages probe in `/daily-health` and T2.7 `tools/fleet_status.sh` documented.
 
 ---
 
 ## Next (week of 2026-04-28)
 
-### v0.4.13 — BLE coexistence + #61 reconnect-boot cleanup + #44 MQTT_HEALTHY LED
-Plan at [`~/.claude/plans/v0.4.13-plan.md`](C:\Users\drowa\.claude\plans\v0.4.13-plan.md). Three scopes:
-
-**A) BLE silent deadlock real fix.** With-BLE devices hang ~70 min after a network reconnect. RTC WDT doesn't bite; chip stays powered, FreeRTOS scheduler hangs. Today's workaround = BLE off in config.h. Real fix needs NimBLE 2.x + WiFi + ESP-NOW coexistence audit. Investigation steps:
-- Synthetic broker-blip every 30 min on a single bench device with BLE on + LOG_LEVEL_DEBUG.
-- Audit IDF coexist scheduler config, NimBLE deinit completeness, scan duty cycle.
-- Possible mitigations: pin nimble_host to Core 1, lower BLE scan duty, BLE-watchdog loop in main.
-
-**B) #61 misleading `event=boot` on every MQTT reconnect.** Add `FwEvent::ONLINE`, track first-boot vs reconnect via static bool. — **DONE (2026-04-27).**
-
-**C) #44 MQTT_HEALTHY green LED (pulled forward from v0.4.14).** Deferred-flag pattern: `onMqttConnect()` sets `_mqttLedHealthyAtMs = millis()`; `mqttHeartbeat()` (loop task) consumes and posts `LedEventType::MQTT_HEALTHY` to the WS2812 queue safely. Root cause of v0.4.10 TWDT crash was posting from async_tcp callback directly. — **DONE (2026-04-27). Bravo is primary validation target.**
-
-If (A) inconclusive after a day, ship (B)+(C) standalone as v0.4.13, defer (A) to v0.4.15.
-
-### Tier 1 tooling (cross-tool integration plan) — executing 2026-04-27
-- **T1.1** Node-RED file logging in `settings.js` — eliminates the "log frozen at 20:30" failure mode we hit 2026-04-26.
-- **T1.2** Mosquitto log rotation — log is 87 MB and growing ~30 MB/day.
-- **T1.3** `.dummy/` cleanup → `tools/node_red/` — partially done (tools/ created v0.4.11); completing this session.
-- **T1.4** Run `/less-permission-prompts` periodically as the session transcript grows.
-- **T1.5** `tools/flash_dev.sh` + `tasks.json` shipped in v0.4.11; verify step done this session.
-- **T2.7** `tools/fleet_status.sh` already exists; promote + document this session.
-- **T2.1** GitHub Pages probe in `/daily-health` — add `gh api .../pages` check this session.
+### v0.4.14 — Tier-2 quick wins bundle (Path B from 2026-04-27 plan)
+No firmware changes. Tooling + repo hygiene:
+- **Heap-trajectory Node-RED Dashboard 2.0 tile** — Vue template plotting rolling 24h heap_free per device (data already in heartbeats since v0.4.11). Pairs with existing `boot_history` tile.
+- **T2.3 GitHub branch protection on `master`** — require status checks (CI green) before merge; keep direct push allowed for solo-dev workflow.
+- **T2.6 Auto-tag GitHub Action** — on push-to-master, parse `config.h::FIRMWARE_VERSION`; if non-`-dev` and tag absent, auto-create + push tag. Eliminates "I forgot to tag" risk seen with prior releases.
+- **T2.4 Mosquitto WebSocket listener** — 2 lines in `mosquitto.conf` (`listener 9001 / protocol websockets`). Lets browser MQTT tools connect when Node-RED is mid-debug.
 
 ### Bench-isolate Charlie (#46)
-Charlie's chronic flake (136 mosquitto disconnects in 2 days, brownout 11:50, persistent across firmware versions) wasn't fixed by anything in this release. 12 h bench soak alone (separate desk, separate USB, no ESP-NOW peers) to establish whether it's hardware or environmental.
+Charlie's chronic flake. 12 h bench soak (separate desk, separate USB, no ESP-NOW peers) to establish hardware vs environmental. Independent of firmware versions.
+
+### v0.4.13 stability soak
+24h `silent_watcher.sh` + `boot_history` poller. Watch for any post-OTA crash in #51-style failure modes. Charlie on `-dev` is the primary watch target — re-flash to release via OTA after soak.
+
+### v0.4.15 — BLE coexistence real fix (Path C — queued for after v0.4.14)
+The deeper fix for the BLE silent-deadlock workaround currently shipped as `BLE_ENABLED 0` in `config.h`. Plan at [`~/.claude/plans/v0.4.15-plan.md`](C:\Users\drowa\.claude\plans\v0.4.15-plan.md) (to be created when v0.4.14 closes).
+
+**Failure shape recap.** With BLE enabled, devices hang ~70 min after a Wi-Fi/broker reconnect cycle. RTC WDT does not bite; chip stays powered; FreeRTOS scheduler hangs. Symptom: LWT-only on broker, no heartbeats, no panic.
+
+**Investigation plan (week of 2026-05-04 if v0.4.14 holds):**
+1. **Bench rig.** Single bench device (Bravo or a spare) with `BLE_ENABLED 1`, `LOG_LEVEL_DEBUG`, no ESP-NOW peers. Eliminates fleet noise.
+2. **Synthetic broker-blip.** PowerShell loop on the host stops + restarts mosquitto every 30 min for 24 h. Forces the reconnect-then-deadlock window.
+3. **Coexistence audit (parallel).**
+   - IDF `CONFIG_ESP_COEX_*` settings vs current sdkconfig — check `BTDM_CTRL_COEX_*` knobs.
+   - NimBLE `nimble_port_deinit()` completeness on shutdown paths.
+   - BLE scan duty cycle vs Wi-Fi DTIM beacon overlap.
+4. **Mitigation candidates** (try one at a time, leave the bench rig running 24 h between each):
+   - Pin `nimble_host` task to Core 1 (currently floating).
+   - Lower BLE scan duty (`BLE_SCAN_INTERVAL_MS` ↑, `BLE_SCAN_WINDOW_MS` ↓).
+   - Add a BLE-watchdog loop in main: if `nimble_host` task hasn't ticked in N minutes, deinit + reinit.
+   - Drop NimBLE entirely → switch to esp32-arduino's built-in BLE stack (heavier RAM, but simpler coexistence model).
+5. **Acceptance criterion.** 24h soak with BLE on + 30-min broker blips + zero silent deadlocks.
+
+**Risks.**
+- Coexistence bugs are notoriously timing-dependent — fix on bench may not reproduce in fleet.
+- Re-enabling BLE adds ~50 KB heap pressure; verify `mqttPublish()` heap-guard threshold (4096) is still adequate post-fix.
+- If we end up swapping NimBLE for arduino-bt, that pulls in another ~80 KB flash and changes the BLE scanner API surface — significant refactor of `ble.h`.
+
+**Defer if:** v0.4.14 surfaces any post-OTA instability; Charlie's chronic flake (#46) turns out to be hardware. Either consumes the cycle budget Path C needs.
 
 ---
 
-## Month (v0.4.14, v0.4.15)
+## Month — observability accretion (v0.4.16+)
 
-### v0.4.14 — re-introduce MQTT_HEALTHY green LED (#56) + Bravo back online
-Plan at [`~/.claude/plans/v0.4.14-plan.md`](C:\Users\drowa\.claude\plans\v0.4.14-plan.md). Use the deferred-flag pattern: callback sets `_mqttLedHealthyAtMs = millis()`, `loop()` consumes and posts the ws2812 event from a non-TWDT-subscribed context. Document the pattern in TWDT_POLICY.md as canonical "callback wants long work".
+Note: v0.4.14 (Path B Tier-2 wins) and v0.4.15 (Path C BLE) are both in the "Next" section above. The v0.4.14 MQTT_HEALTHY scope and Bravo reintroduction shipped early in v0.4.13.
 
-**Bravo reintroduction.** Bravo has been powered off since 2026-04-26 ~10:50 as the cascade-trigger suspect. Now that #51 root cause is identified as bad_alloc (not Bravo's transmit behavior), Bravo can rejoin the fleet. v0.4.14 is the natural moment — power Bravo on, OTA-update or USB-flash to v0.4.14. Watch for whether the chronic-flake pattern (#46, 136 disconnects in 2 days) recurs; if it does, Bravo is hardware-side and a candidate for the bench-supply rig (#59).
-
-### v0.4.15+ — observability accretion
+### v0.4.16+ — observability accretion
 Bundle in any minor:
-- Per-heartbeat `LOG_HEAP` (#53) — already partially done, surface as Node-RED dashboard tile.
+- Heap-trajectory dashboard tile — split out into v0.4.14 explicitly above.
 - Silent-failure dashboard tile (#60) — already have `tools/silent_watcher.sh`; promote to Node-RED Vue tile for at-a-glance.
 - Stack canary build (#54) — `[env:esp32dev_canary]` in platformio.ini for one-device soak.
 - AsyncMqttClient malformed-packet counter (#55) — surface the rare 2-events-in-2-days signal.
@@ -99,7 +119,7 @@ v0.4.11's heap-guard is a workaround. The deeper fix is to replace AsyncMqttClie
 
 | Follow-up | Where | When |
 |---|---|---|
-| BLE silent-deadlock real fix | v0.4.13 (A) | Next |
+| BLE silent-deadlock real fix | v0.4.15 (Path C) | After v0.4.14 |
 | Re-introduce MQTT_HEALTHY safely | v0.4.13 (C) | DONE — deferred-flag pattern |
 | AsyncMqttClient replacement | v0.5.0 (deeper fix) | Bigger lift |
 | Mass-flash Charlie/Echo/Foxtrot to v0.4.12 | OTA complete | DONE |

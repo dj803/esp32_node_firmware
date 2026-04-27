@@ -53,6 +53,8 @@ Today's Pages-disabled event went undetected until daily-health ran and reported
 ### T2.2 Heap-trajectory dashboard tile (depends on #53 firmware)
 Once v0.4.11 ships heap_free + heap_largest in heartbeats, add a Node-RED Dashboard 2.0 tile (Vue.js template) that plots a rolling 24-hour line per device. Slow downward trend = leak. Sudden drop + recovery = transient pressure. Pairs with the existing `boot_history` tile.
 
+**STATUS (2026-04-27):** v0.4.14 Tier-2 bundle includes T2.3, T2.4, T2.6 + the heap-trajectory dashboard tile (T2.2). See ROADMAP.md.
+
 ### T2.3 GitHub branch protection + signed commits
 Currently `master` accepts any push. Three checkboxes in repo Settings → Branches:
 - Require a pull request before merging (off if solo-dev → keep direct push)
