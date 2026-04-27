@@ -1,0 +1,11 @@
+# CRLF normalisation. Dev box is Windows, CI is Ubuntu — without an
+# explicit policy, every text file accumulates spurious CRLF/LF diffs.
+
+* text=auto eol=lf
+
+# Binary firmware/asset artefacts that must not be line-ending-converted.
+*.bin   binary
+*.hex   binary
+*.elf   binary
+*.png   binary
+*.jpg   binary

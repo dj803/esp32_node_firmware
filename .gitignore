@@ -1,0 +1,22 @@
+# Repo-root ignore patterns. The firmware subdir
+# (esp32_node_firmware/.gitignore) covers PlatformIO build artefacts.
+
+# PlatformIO + cross-builds (in case someone runs pio at the repo root)
+.pio/
+
+# Build output binaries — release artefacts live on gh-pages, not in git
+*.bin
+*.hex
+*.elf
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Local logs and lock files (Claude scheduled-tasks lock, etc.)
+Logs/
+.claude/scheduled_tasks.lock
+
+# Python build / cache
+__pycache__/
+*.pyc

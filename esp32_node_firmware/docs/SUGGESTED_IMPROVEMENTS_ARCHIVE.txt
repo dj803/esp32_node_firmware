@@ -2216,6 +2216,10 @@ Phase A — Fix confirmed breakage
     VERIFY:   python C:\Users\drowa\tools\daily_health_check.py — confirm no
               "path not found" warnings in the report.
     PRIORITY: High. Silent failure in the daily health baseline.
+    STATUS:   RESOLVED 2026-04-27. local_clone now points at the repo root
+              (NOT the firmware subdir) so the .git presence check passes.
+              daily_health_check.py reports "Local firmware clone: present
+              on branch master".
 
 59. Root .gitignore (repo root is currently unprotected)         (2026-04-26 audit)
     WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\.gitignore  (create)
@@ -2231,6 +2235,9 @@ Phase A — Fix confirmed breakage
                   *.lock
                   __pycache__/  *.pyc
     PRIORITY: Medium. Keeps git status clean; prevents accidental binary commits.
+    STATUS:   RESOLVED 2026-04-27. Created at repo root with the patterns
+              above (substituted .claude/scheduled_tasks.lock for *.lock so
+              poetry/package locks aren't accidentally swept up).
 
 60. Root .gitattributes (CRLF normalisation)                     (2026-04-26 audit)
     WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\.gitattributes (create)
@@ -2244,6 +2251,8 @@ Phase A — Fix confirmed breakage
                   *.elf  binary
                   *.png  binary
     PRIORITY: Medium. Prevents CI/local diff noise on every text file.
+    STATUS:   RESOLVED 2026-04-27. Created at repo root with the patterns
+              above plus *.jpg as binary.
 
 Phase B — Security & identity
 
@@ -2293,6 +2302,9 @@ Phase C — CI completeness
     FIX:      Minimal README: one-paragraph description, link to CLAUDE.md,
               link to esp32_node_firmware/docs/. No need to duplicate content.
     PRIORITY: Low. Cosmetic, no operational impact.
+    STATUS:   RESOLVED 2026-04-27. Created at repo root with one-paragraph
+              description, layout, and pointers to CLAUDE.md / docs / OTA
+              manifest URL.
 
 Phase D — Developer experience
 
@@ -2309,6 +2321,9 @@ Phase D — Developer experience
               Document in platformio.ini comment that flags go here.
     PRIORITY: Low. No active include errors today, but resolves the dangling
               spec reference before Phase 1 feature work references it.
+    STATUS:   RESOLVED 2026-04-27. Created at esp32_node_firmware/include/
+              build_config.h with the stub above. esp32dev build verified
+              clean.
 
 66. .claude/commands/ — operational shortcuts                    (2026-04-26 audit)
     WHERE:    C:\Users\drowa\.claude\commands\  (create dir + 3 files)
@@ -3068,3 +3083,67 @@ Next steps (operator decision):
     RELATED to #66 (adaptive OTA stagger) and #68 (ack-driven
     rollout) — both rely on the OTA path actually firing for -dev
     devices.
+
+────────────────────────────────────────────────────────────
+81. Renumbering pass on SUGGESTED_IMPROVEMENTS_ARCHIVE.txt
+    OBSERVATION (2026-04-27):  The 2026-04-26 audit-driven
+    additions and the 2026-04-27 cascade-fix-session additions
+    both used #58–#70, producing collisions documented in the
+    "KNOWN NUMBERING COLLISIONS" warning at the top of
+    SUGGESTED_IMPROVEMENTS.txt. Each colliding number currently
+    has two entries in the archive; the index lists only the
+    first-occurrence and disambiguation requires "top vs bottom
+    of archive" hinting.
+
+    PROPOSAL:  Reassign today's cascade-fix-session items to a
+    fresh range. Today's items currently sharing numbers with
+    audit items are #58, #59, #60, #63, #64, #65, #66, #67, #68,
+    #70 — ten items, fitting cleanly into #71–#80. Walk both
+    files in lockstep:
+       - Update each cascade-fix entry's heading number in the
+         archive (top half) to its new value in #71–#80.
+       - Update the matching summary line in the OPEN INDEX.
+       - Update any cross-references inside other entries (e.g.
+         entry #70's "RELATED to #66 / #68" becomes its renumbered
+         equivalents).
+       - Update memory files that reference these numbers
+         (see memory/v0_4_13_panic_cascade_2026_04_27.md and
+         autonomous_session_2026_04_27.md for #65, #66, #70).
+       - Remove the "KNOWN NUMBERING COLLISIONS" warning block
+         from SUGGESTED_IMPROVEMENTS.txt once the pass completes.
+
+    EFFORT: ~15 min mechanical edit pass.
+
+    SEVERITY: LOW. Cosmetic / hygiene; the warning block already
+    documents the workaround. But the workaround relies on
+    "first-occurrence" ordering inside the archive which is
+    fragile if entries are ever inserted out of order.
+
+────────────────────────────────────────────────────────────
+82. Audit other tracking-style docs for the index/archive split pattern
+    OBSERVATION (2026-04-27):  Per the tracking-doc convention
+    introduced in commit 95a9fad (memory/tracking_doc_convention.md),
+    SUGGESTED_IMPROVEMENTS was split into a short OPEN INDEX
+    (SUGGESTED_IMPROVEMENTS.txt, ~115 lines) plus a full
+    SUGGESTED_IMPROVEMENTS_ARCHIVE.txt (~3070 lines). Two other
+    docs in esp32_node_firmware/docs/ fit the same shape:
+       - ESP32_FAILURE_MODES.md  (502 lines, mix of resolved + open)
+       - memory_budget.md        (277 lines, mix of resolved + open)
+
+    PROPOSAL:  Apply the same INDEX + ARCHIVE split to both:
+       - ESP32_FAILURE_MODES.md  → short INDEX of failure modes
+                                   (one-line summary per item)
+                                   plus ESP32_FAILURE_MODES_ARCHIVE.md
+                                   for full per-incident detail.
+       - memory_budget.md        → short INDEX of memory hotspots
+                                   plus memory_budget_ARCHIVE.md
+                                   for full per-region history.
+       Resolved items move to a "RESOLVED" tail in the index;
+       full text stays in the archive.
+
+    EFFORT:  ~30 min per doc. Lower priority than #81 since
+    these don't have collision warnings — purely a length /
+    scannability improvement.
+
+    SEVERITY: LOW. Improves agent + human navigation when these
+    docs grow further; no functional impact today.
