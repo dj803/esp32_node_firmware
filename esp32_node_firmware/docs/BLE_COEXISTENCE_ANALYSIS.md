@@ -89,6 +89,29 @@ This is the leading hypothesis for the deadlock. After a Wi-Fi reconnect, lwIP n
 | Hung at T+70 ± 10 min | Still tracking the original failure shape | Apply #2 + #4 together |
 | Crashed (panic / *_wdt) | Different bug than the silent deadlock | Investigate stack trace |
 
+## RESOLVED 2026-04-27 18:39 SAST
+
+After v0.4.16's broker probe (#67 option C) eliminated the long-outage cascade,
+re-ran Bravo on v0.4.17-dev BLE-bench through M3 (180 s broker blip):
+
+- Bravo with `BLE_ENABLED + BLE_BENCH_RIG` (10 % scan duty) reconnected
+  cleanly at uptime 241 s preserving uptime — no panic, no restart, no
+  int_wdt.
+- All 5 non-BLE fleet devices on v0.4.16 release also clean.
+- The "70-min BLE silent-deadlock" hypothesis was actually a symptom of
+  the same cascade trigger — broker outages (planned or accidental)
+  caused MQTT_HUNG_TIMEOUT_MS to fire, which raced AsyncTCP's _error
+  path. With the broker probe in place, neither BLE-on nor BLE-off
+  devices ever enter the bad code path.
+
+**Path C closure:** the original BLE silent-deadlock investigation was
+chasing a symptom of the cascade bug, not a BLE-specific issue. With
+v0.4.16/v0.4.17 deployed, BLE can be re-enabled fleet-wide with the
+existing scan-duty mitigation (300/30 ms) without expecting deadlocks.
+
+The BLE_BENCH_RIG → fleet rollout decision is now independent of the
+cascade fix.
+
 ## Open questions
 
 1. Does the heap drop from 74→59 in 7 min stabilise, or is it linear?
