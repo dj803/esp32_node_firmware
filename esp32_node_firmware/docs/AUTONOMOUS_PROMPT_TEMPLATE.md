@@ -32,7 +32,12 @@ DO NOT (without asking)
   • Push to gh-pages directly
   • Force-push to master
   • Roll back the OTA manifest
-  • Reflash devices currently mid-bench-experiment without confirming
+  • Reflash a device whose CURRENT state would be lost without a note —
+    bench rigs actively producing data, devices mid-soak with unique
+    crash history. Reflashing IS fine when (a) it's useful (e.g. canary
+    soak, fix validation) AND (b) you record what was on the device
+    first (firmware version, uptime, last boot reason) in a memory file
+    or commit message.
   • Make user-visible Node-RED dashboard changes
   • Modify CI workflows
   • Disable security features (auth, TLS) even if mocked

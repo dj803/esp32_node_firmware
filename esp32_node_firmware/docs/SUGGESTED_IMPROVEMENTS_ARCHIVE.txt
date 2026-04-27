@@ -2158,6 +2158,10 @@ with an empty buffer. CRITICAL fix path:
     PRIORITY: Medium-High. Restores the operator-visible green-MQTT
               indicator without the WDT risk. Small change with
               high UX value.
+    STATUS:   RESOLVED 2026-04-27 in v0.4.13. Verified in
+              include/mqtt_client.h: `_mqttLedHealthyAtMs` set in
+              onMqttConnect() callback (line 1179) and consumed in
+              mqttHeartbeat() (line 1597) on loopTask.
 
 57. Install host gcc/g++ to enable native unit tests
     OBSERVATION (2026-04-25 + 2026-04-26):  CLAUDE.md says
@@ -2197,6 +2201,12 @@ with an empty buffer. CRITICAL fix path:
     PRIORITY: Low. Operational quality-of-life. No active blocker
               today. Address when convenient — most likely
               alongside the next batch of Tier 1 tooling work.
+    STATUS:   RESOLVED 2026-04-27. MinGW-w64 (UCRT, gcc 15.2.0) is
+              installed at C:\mingw64\bin. Verified with
+              `PATH=/c/mingw64/bin:$PATH pio test -e native -v` from
+              esp32_node_firmware/: 105 test cases passed in 3.09 s.
+              Pre-commit hook (downstream item) still pending — file
+              separately if/when wanted.
 
 ────────────────────────────────────────────────────────────────────────────────
 Setup gaps — 2026-04-26 full-stack audit

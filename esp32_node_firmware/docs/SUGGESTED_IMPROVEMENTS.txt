@@ -82,8 +82,6 @@ To resolve an entry:
   #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
   #55   AsyncMqttClient malformed-packet counter
-  #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern
-  #57   Install host gcc/g++ to enable native unit tests
   #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
   #66   .claude/commands/ — operational shortcuts                    (2026-04-26 audit)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
@@ -91,7 +89,7 @@ To resolve an entry:
   #81   Renumbering pass on archive (resolve #58–#70 collisions)
   #82   Audit other tracking docs (FAILURE_MODES, memory_budget) for split pattern
 
-  Total open: 57
+  Total open: 55
 
 ────────────────────────────────────────────────────────────
 
@@ -103,6 +101,8 @@ To resolve an entry:
   #4    Dependency SBOM + supply-chain scan                 (was audit item 22)
   #5    Local PlatformIO validation                 (addressed 2026-04-22)
   #44   Addressable LED status colors (green/yellow/red) not lighting
+  #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern   (resolved 2026-04-27 in v0.4.13)
+  #57   Install host gcc/g++ to enable native unit tests             (resolved 2026-04-27)
   #58   Fix daily_health_config.json local_clone path                (resolved 2026-04-27)
   #59   Root .gitignore                                              (resolved 2026-04-27)
   #60   Root .gitattributes (CRLF normalisation)                     (resolved 2026-04-27)
@@ -113,4 +113,4 @@ To resolve an entry:
   #67   Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
   #70   -dev suffix breaks OTA upgrade path (recurring friction)
 
-  Total resolved: 15
+  Total resolved: 17
