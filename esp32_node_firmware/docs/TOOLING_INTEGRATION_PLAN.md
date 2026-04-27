@@ -63,13 +63,14 @@ Currently `master` accepts any push. Three checkboxes in repo Settings → Branc
 
 For solo development, just enabling "require status checks" prevents merging without CI green. Low cost, high signal.
 
-### T2.4 Mosquitto WebSocket listener
-Add to `mosquitto.conf`:
+### T2.4 Mosquitto WebSocket listener — STAGED 2026-04-27
+Block added to `C:\Program Files\mosquitto\mosquitto.conf` after `listener 1883`:
 ```
 listener 9001
 protocol websockets
+allow_anonymous true
 ```
-Lets browser tools (e.g. MQTT.fx Web, MQTT Explorer) connect directly without a Node-RED proxy. Useful when Node-RED itself is being debugged.
+Pending: elevated `net stop mosquitto && net start mosquitto` to take effect. Defer restart until next planned maintenance window — restarting mid-soak would interrupt the live fleet.
 
 ### T2.5 Stack canary build env (already #54)
 Add `[env:esp32dev_canary]` in `platformio.ini` with `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2`. One-time setup; flash to one device once we have a stable baseline post-#51.

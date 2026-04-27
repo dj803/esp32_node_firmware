@@ -1,0 +1,63 @@
+name: Auto-tag on FIRMWARE_VERSION change
+
+# T2.6 from TOOLING_INTEGRATION_PLAN — eliminates "I forgot to tag" risk.
+#
+# On push to master, parse FIRMWARE_VERSION from include/config.h.
+# If the literal is non-`-dev` AND no matching tag exists yet, create
+# and push the tag. The build.yml workflow then triggers off the new tag.
+#
+# Skip if version ends with `-dev` (local development builds) or if the
+# tag already exists (re-pushed branch with no version bump).
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'esp32_node_firmware/include/config.h'
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history to query existing tags
+
+      - name: Extract FIRMWARE_VERSION
+        id: version
+        run: |
+          VERSION=$(grep -E '^#define FIRMWARE_VERSION ' esp32_node_firmware/include/config.h \
+            | head -n1 | awk -F'"' '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected FIRMWARE_VERSION: $VERSION"
+
+      - name: Skip if -dev suffix
+        if: endsWith(steps.version.outputs.version, '-dev')
+        run: |
+          echo "Version is a -dev build (${{ steps.version.outputs.version }}); not tagging."
+          exit 0
+
+      - name: Skip if tag already exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist; will create."
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check_tag.outputs.skip == 'false' && !endsWith(steps.version.outputs.version, '-dev')
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.check_tag.outputs.tag }}" \
+            -m "Auto-tagged from config.h FIRMWARE_VERSION on push to master"
+          git push origin "${{ steps.check_tag.outputs.tag }}"
+          echo "Tagged: ${{ steps.check_tag.outputs.tag }}"

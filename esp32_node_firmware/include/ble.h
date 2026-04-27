@@ -420,8 +420,18 @@ inline void bleInit() {
     pScan->setScanCallbacks(&_bleScanCbInstance, /*wantDuplicates=*/false);
     // setActiveScan is NOT set here — it is set per-scan in _bleRunScan()
     // so discovery scans can stay passive while tracking scans use active mode
-    pScan->setInterval(100);      // ms
+    // Scan duty cycle. Stock 100/99 = ~99% — leaves Wi-Fi only ~1% radio time
+    // and is the leading hypothesis for the v0.4.0x BLE silent-deadlock window
+    // observed ~70 min after Wi-Fi reconnect (Path C Phase 1 audit, 2026-04-27).
+    // Bench rig drops to 300/30 = 10% to give Wi-Fi adequate airtime for
+    // beacon/DTIM, DHCP, MQTT keepalive, and OTA TLS.
+#ifdef BLE_BENCH_RIG
+    pScan->setInterval(300);      // ms — 10% duty (mitigation #2)
+    pScan->setWindow(30);         // ms
+#else
+    pScan->setInterval(100);      // ms — stock 99% duty
     pScan->setWindow(99);         // ms
+#endif
 
     if (_bleTrackedCount > 0) {
         Serial.printf("[BLE] scanner ready (NimBLE) — tracking %u beacon(s)\n", _bleTrackedCount);
