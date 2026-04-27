@@ -304,6 +304,26 @@ the heap state lost).
 - Reverted Charlie to me-no-dev/AsyncTCP (functional but race remains).
 - v0.4.14 release **PARKED** until a compatible fork is identified.
 
+### v0.4.15 fleet-wide validation (2026-04-27 17:29 SAST)
+
+After OTA stagger to v0.4.15 across the fleet, M2 30 s blip results:
+
+| Device | Build | Result | Uptime preserved? |
+|---|---|---|---|
+| Alpha | v0.4.15 release | online via #61 | yes (492 s → 492 s) |
+| Delta | v0.4.15 release | online via #61 | yes (337 s → 337 s) |
+| Echo | v0.4.15 release | online via #61 | yes (204 s → 204 s) |
+| Foxtrot | v0.4.15 release | online via #61 | yes (157 s → 157 s) |
+| Bravo | v0.4.15-dev | online via #61 | yes (1830 s → 1830 s) |
+| Charlie | v0.4.15-dev | online via #61 | yes (1832 s → 1832 s) |
+
+**0 panics, 0 abnormal boots, 0 ESP.restart() — clean reconnect across the entire fleet.**
+
+EN1 (ESP-NOW ranging toggle on Alpha) — PASS, espnow stream resumed after `cmd/espnow/ranging '1'`.
+
+O2 (OTA-to-bad-URL) — skipped (would require corrupting live Pages manifest).
+I1 (Node-RED restart) — skipped (would interrupt watchers + dashboard).
+
 ### M3 (180 s blip) — KNOWN LIMITATION
 
 Even after v0.4.15's `MQTT_HUNG_TIMEOUT_MS=300000` + `mqttForceDisconnect()` (no
