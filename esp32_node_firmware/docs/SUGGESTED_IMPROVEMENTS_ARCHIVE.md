@@ -404,6 +404,12 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     that includes a soak test on Alpha first.
     PRIORITY: Low — current fork works. Promote when next fleet
               reliability incident traces to AsyncTCP.
+    STATUS: RESOLVED 2026-04-27 (v0.4.14 cascade-fix). platformio.ini
+    line 118 now pins https://github.com/mathieucarbou/AsyncTCP.git
+    @v3.3.2. Used during the v0.4.13 → v0.4.20 cascade-fix marathon.
+    Fleet-wide M2 + M3 chaos tests pass on the new fork. The use-after-
+    free in lwIP raw_pcbs walk under Wi-Fi flap (#78) is independent of
+    the fork choice and tracked separately.
 
 31. Pin LED + RFID tasks to Core 1
     App tasks currently default to Core 0 alongside WiFi. Pinning LED
@@ -2025,6 +2031,25 @@ with an empty buffer. CRITICAL fix path:
               quick revert ships, or v0.4.10 gets blacklisted
               and the fleet rolls back to v0.4.09 manually.
 
+    STATUS: RESOLVED 2026-04-27 in the v0.4.13 → v0.4.20 cascade-fix
+    marathon. Root cause was NOT the LED hooks — it was
+    `MQTT_HUNG_TIMEOUT_MS = 12s` triggering simultaneous ESP.restart()
+    on every device whenever a broker outage exceeded 12 s, then
+    AsyncTCP _error path race during the restart storm. Fixed via:
+       - v0.4.11 mqttPublish heap-guard for bad_alloc (intermediate)
+       - v0.4.14 timeout 12s → 90s (intermediate)
+       - v0.4.15 force-disconnect + 300s timeout (intermediate)
+       - v0.4.16 pre-connect broker probe (FINAL FIX) — eliminates
+         the disconnect-storm trigger; lwIP's natural ~75s SYN
+         timeout never fires AsyncTCP's _error path.
+    Validated fleet-wide via M3 (180s outage) on 2026-04-27 17:59:
+    6/6 devices reconnected via event=online preserving uptime, zero
+    panics, zero abnormal boots. Same M3 on v0.4.15 produced 4/4
+    abnormal boots — clear delta. The LED MQTT_HEALTHY hooks themselves
+    were re-implemented safely via deferred-flag pattern in v0.4.13
+    (see #56). The latent AsyncTCP `_error` path race in lwIP
+    raw_netif_ip_addr_changed (Wi-Fi flap trigger, NOT broker) is
+    tracked separately as #78.
 
 52. Node-RED file logging not configured (observability gap)
     OBSERVATION (2026-04-26):  Node-RED is running as PID 2184 since
