@@ -101,6 +101,15 @@ static volatile bool    _mqttOtaActive     = false;          // OTA in progress 
 // deferred-flag pattern moves the post to loop() where it is safe.
 static volatile uint32_t _mqttLedHealthyAtMs = 0;
 
+// (#67 v0.4.16) Pre-connect broker probe gate.
+// Set by mqttReconnectTimerCb when it WANTS to reconnect; consumed by
+// mqttHeartbeat() (loop task) which probes the broker via a quick TCP SYN
+// and only calls _mqttClient.connect() if the probe succeeds. Avoids
+// AsyncMqttClient.connect() against an unreachable broker — that's the
+// scenario where lwIP's natural ~75 s TCP timeout fires AsyncTCP's _error
+// path and triggers the tcp_arg() race (M3 cascade pattern).
+static volatile bool     _mqttProbePending  = false;
+
 // ── Sleep dispatch state (v0.3.20) ───────────────────────────────────────────
 // `cmd/sleep` and `cmd/deep_sleep` take the radio offline, so dispatch is
 // deferred SLEEP_DEFER_MS after the status publish — same shape as restart.
@@ -1286,9 +1295,13 @@ static void mqttReconnectTimerCb(TimerHandle_t) {
     if (_mqttOtaActive) return;
 
     if (WiFi.isConnected()) {
-        LOG_I("MQTT", "Attempting reconnect...");
-        _mqttConnectStartMs = millis();   // Start watchdog — loop() will restart if no callback arrives
-        _mqttClient.connect();            // Triggers onMqttConnect on success, onMqttDisconnect on failure
+        // (#67 v0.4.16) Don't call _mqttClient.connect() directly from the
+        // timer task — instead set a flag and let loop() do a TCP probe first.
+        // AsyncMqttClient.connect() against an unreachable broker leaves
+        // queued state inside AsyncTCP that races with lwIP's eventual
+        // SYN-timeout error callback (the M3 cascade signature). The probe
+        // ensures we only enter connect() when the broker is actually reachable.
+        _mqttProbePending = true;
     } else {
         // Wi-Fi not yet up (e.g. post-light-sleep association delay).  The
         // one-shot timer stops permanently if we do nothing here, meaning MQTT
@@ -1420,6 +1433,26 @@ bool mqttIsHung() {
 bool mqttIsConnected() { return _mqttClient.connected(); }
 
 
+// ── _mqttBrokerProbe ──────────────────────────────────────────────────────────
+// (#67 v0.4.16) Quick non-blocking TCP probe to the broker. Uses synchronous
+// WiFiClient with a 1500 ms timeout — short enough that loop() doesn't stall
+// noticeably, long enough to confirm a TCP three-way handshake on a healthy
+// LAN. Returns true if the SYN-SYN/ACK-ACK completes; false on any failure
+// (broker down, ARP fail, RST, timeout). Called from mqttHeartbeat() to gate
+// _mqttClient.connect() so we only attempt MQTT when the broker is reachable.
+//
+// IMPORTANT: WiFiClient blocks the calling task. Always called from loop()
+// (loopTask is NOT TWDT-subscribed during normal operation). Never call from
+// a TWDT-subscribed task (OTA, mbedTLS) or from a timer callback.
+static bool _mqttBrokerProbe() {
+    WiFiClient probe;
+    probe.setTimeout(2);   // seconds (Arduino API). 2s tolerates a slow LAN.
+    bool ok = probe.connect(_mqttHost.c_str(), 1883, 1500 /*ms*/);
+    if (ok) probe.stop();
+    return ok;
+}
+
+
 // ── mqttForceDisconnect ───────────────────────────────────────────────────────
 // (v0.4.15) Releases a stuck async-client state without rebooting. Called from
 // loop() when mqttIsHung() returns true: the connect() call has been pending
@@ -1511,6 +1544,29 @@ void mqttHeartbeat() {
         LedEvent e{};
         e.type = LedEventType::MQTT_HEALTHY;
         ws2812PostEvent(e);
+    }
+
+    // ── Pre-connect broker probe gate (#67 v0.4.16) ──────────────────────────
+    // Set by mqttReconnectTimerCb when it WANTS to reconnect. Probe via a
+    // quick TCP connect — only call _mqttClient.connect() if broker is
+    // reachable. Avoids the AsyncTCP _error race that fires when lwIP's
+    // ~75 s SYN-timeout finally errors out a connect() against a dead broker.
+    if (_mqttProbePending && !_mqttClient.connected() && WiFi.isConnected() && !_mqttOtaActive) {
+        _mqttProbePending = false;
+        if (_mqttBrokerProbe()) {
+            LOG_I("MQTT", "Broker probe OK — calling connect()");
+            _mqttConnectStartMs = millis();
+            _mqttClient.connect();
+        } else {
+            LOG_D("MQTT", "Broker probe failed — skipping connect, timer will retry");
+            // The reconnect timer in mqttReconnectTimerCb is a one-shot. We need
+            // to re-arm it so the next cycle fires after the current backoff.
+            if (xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
+                xTimerChangePeriod(_mqttReconnectTimer,
+                                   pdMS_TO_TICKS(_mqttReconnectDelay), 0);
+                xTimerStart(_mqttReconnectTimer, 0);
+            }
+        }
     }
 
     if (millis() - _lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
