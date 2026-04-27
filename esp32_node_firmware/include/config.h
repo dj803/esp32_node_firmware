@@ -36,7 +36,13 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.4.19-dev"
+// (#70 option B, v0.4.20) Local dev builds use 4-component "MAJOR.MINOR.PATCH.DEV"
+// instead of "MAJOR.MINOR.PATCH-dev". The 4th component orders strictly older
+// than the same-numbered release (0.4.20.0 < 0.4.20), and increments per dev
+// build to allow operators to distinguish iterations. CI builds get the tag
+// injected via FIRMWARE_VERSION_OVERRIDE = "0.4.20" (no 4th component) so a
+// release is always the cleaner 3-component form.
+#define FIRMWARE_VERSION           "0.4.20.0"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 

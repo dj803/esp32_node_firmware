@@ -669,6 +669,28 @@ void test_semver_numeric_diff_overrides_suffix() {
     TEST_ASSERT_FALSE(semverIsNewer("0.4.18",     "0.4.17-dev")); // do not downgrade
 }
 
+// (#70 option B, v0.4.20) 4-component "MAJOR.MINOR.PATCH.DEV" versioning.
+// Cleaner than -dev suffix because it's pure-numeric and unambiguous to
+// any string-compare-based comparator.
+void test_semver_four_component_dev_older_than_release() {
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.20.0", "0.4.20"));    // dev → release upgrade
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.20",   "0.4.20.0"));  // no downgrade
+}
+
+void test_semver_four_component_numeric_dev_compare() {
+    // Two 4-component dev builds order strictly by 4th component.
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.20.0", "0.4.20.5"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.20.5", "0.4.20.0"));
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.20.5", "0.4.20.5")); // equal → not newer
+}
+
+void test_semver_four_component_numeric_diff_still_works() {
+    // Numeric diff in MAJOR.MINOR.PATCH overrides 4th-component, both ways.
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.20.99", "0.4.21"));    // 0.4.21 > 0.4.20.99
+    TEST_ASSERT_TRUE( semverIsNewer("0.4.20",    "0.4.21.0"));  // even 0.4.21.0 > 0.4.20
+    TEST_ASSERT_FALSE(semverIsNewer("0.4.21",    "0.4.20.99")); // do not downgrade
+}
+
 
 // =============================================================================
 // topic_sanitizer — additional pathological segment tests (v0.3.08)
@@ -1303,6 +1325,9 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_semver_pre_release_arbitrary_suffix);
     RUN_TEST(test_semver_both_suffixes_treated_as_equal);
     RUN_TEST(test_semver_numeric_diff_overrides_suffix);
+    RUN_TEST(test_semver_four_component_dev_older_than_release);
+    RUN_TEST(test_semver_four_component_numeric_dev_compare);
+    RUN_TEST(test_semver_four_component_numeric_diff_still_works);
 
     // topic_sanitizer — pathological segment values
     RUN_TEST(test_topic_sanitizer_multiple_slashes);
