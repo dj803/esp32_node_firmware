@@ -27,6 +27,8 @@ If the broker doesn't support native rotation (older builds), use Windows Task S
 ### T1.3 Move `.dummy/` scripts into `tools/`
 The patches and orchestrators that were one-shot during this session (`patch_stagger.py`, `patch_canary.py`, `patch_boot_reason.py`, `fleet_ota.sh`) are useful on paper but get lost in `.dummy/` (ignored). Promote the keepers to `tools/node_red/`, commit them, document `tools/README.md`. Future sessions can call `python tools/node_red/patch_stagger.py` without re-discovering the API.
 
+**STATUS (2026-04-27):** `tools/` directory and `tools/fleet_ota.sh` created in v0.4.11. `.dummy/` cleanup (promote keepers → `tools/node_red/`, delete junk) completing this session.
+
 ### T1.4 Run `/less-permission-prompts`
 Already-installed Claude Code skill. Scans the session transcripts for read-only Bash and MCP tool calls that we're approving repeatedly, generates a project-level `.claude/settings.json` allowlist. Cuts the prompt-spam during diagnostic sessions like this morning's.
 
@@ -37,6 +39,8 @@ The encoding/path issues we hit (`pio run` truncating Unicode; `esptool` failing
 - Add `tasks.json` (already exists per v0.4.x commits) with VS Code Tasks for "Build", "Flash COM5", "Monitor COM5" — saves typing.
 
 Document both in `CLAUDE.md` under "Build & Test" so the next session uses them.
+
+**STATUS (2026-04-27):** `tools/flash_dev.sh` and `.vscode/tasks.json` shipped in v0.4.11. CLAUDE.md already documents them. Verify-only step this session — no changes expected.
 
 ---
 
@@ -77,6 +81,8 @@ Promote the JSON-decoder block I've been hand-typing all session into `tools/fle
 mosquitto_sub -h 192.168.10.30 -t '...+/status' -F '%t %p' -W 7 | python tools/fleet_status_parse.py
 ```
 Cuts every "what's the fleet doing" check from 30 seconds of typing to 1 command.
+
+**STATUS (2026-04-27):** `tools/fleet_status.sh` already exists. Verify + document in `tools/README.md` this session.
 
 ---
 

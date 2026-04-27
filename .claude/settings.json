@@ -2,14 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(mosquitto_sub *)",
+      "Bash(timeout * mosquitto_sub *)",
       "Bash(curl -s http://127.0.0.1:*)",
       "Bash(curl -sI http://127.0.0.1:*)",
       "Bash(curl -s https://dj803.github.io/*)",
+      "Bash(curl -sS https://dj803.github.io/*)",
       "Bash(npm show *)",
       "Bash(tasklist *)",
       "Bash(tasklist)",
       "Bash(where *)",
-      "Bash(mode)"
+      "Bash(mode)",
+      "mcp__ccd_session__mark_chapter",
+      "mcp__node-red__get-flow",
+      "mcp__node-red__get-flows",
+      "mcp__node-red__list-tabs",
+      "mcp__node-red__search-nodes",
+      "mcp__mcp-registry__search_mcp_registry"
     ]
   }
 }

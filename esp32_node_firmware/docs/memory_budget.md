@@ -267,3 +267,11 @@ worked:
 Track future drift via `grep -E "iram0_0_seg" .pio/build/esp32dev/firmware.map`
 in CI or as a release-time check. Add to daily-health if drift becomes a
 recurring theme.
+
+---
+
+## v0.4.11 release note (2026-04-27)
+
+Heap-guard shipped in `mqttPublish()` (drops publish if free heap < threshold).
+No new feature code added relative to the 2026-04-26 BLE-disabled audit above.
+Budget unchanged from that audit — all figures in this document remain valid.

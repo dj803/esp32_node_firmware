@@ -1637,6 +1637,11 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               before the relay+Hall hardware (v0.5.0) ships, since
               that scope adds another set of devices that will need
               stable identities.
+    STATUS (v0.4.11): Visibility improvement shipped — firmware now logs
+              a WARN if UUID is regenerated at boot and publishes the
+              actual UUID in the /status payload so MQTT reflects the
+              truth. Root cause (NVS partial-wipe path) still open;
+              targeted fix deferred to v0.5.0 (#48 dependency).
 
 49. Bootstrap protocol does not propagate OTA URL to new siblings
     OBSERVATION (2026-04-25, during v0.4.10 fleet OTA):  Delta serial
@@ -1705,6 +1710,12 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               because OTA reliability is the foundation for every
               future fleet operation. Cheap fix (~50 lines) and
               the visibility win alone justifies it.
+    STATUS (v0.4.11): Visibility improvement shipped — firmware now logs
+              a WARN on boot if gAppConfig.ota_json_url is empty or
+              matches the config.h placeholder, so the failure mode
+              surfaces in serial/MQTT before the next OTA attempt.
+              Propagating the OTA URL through the bootstrap bundle
+              (root fix) still open; targeted for v0.5.0.
 
 50. esptool v5.2 erase-flash does NOT wipe NVS on first-power-on chips
     OBSERVATION (2026-04-25):  Brand-new ESP32 module ("Foxtrot",
@@ -2050,6 +2061,10 @@ with an empty buffer. CRITICAL fix path:
 
     PRIORITY: Medium. Cheap implementation; high diagnostic value.
               Bundle with v0.4.11 release if Phase A passes.
+    STATUS (v0.4.11): Firmware part SHIPPED — heap_free and heap_largest
+              included in every /status heartbeat payload. Node-RED
+              dashboard tile (DOWNSTREAM above) still pending; planned
+              for v0.4.15.
 
 54. Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
     OBSERVATION (2026-04-26 audit):  arduino-esp32 default has stack

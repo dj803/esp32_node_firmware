@@ -1,6 +1,6 @@
 # ESP32 Node Firmware — Technical Specification
 
-> **Status:** Living document. Written 2026-04-23 against v0.4.04. ESP-NOW ranging section updated 2026-04-24. v0.4.10 update 2026-04-25 — added MQTT_HEALTHY LED state, dev-build version suffix, Node-RED fleet stagger + canary OTA. Fleet expanded to 6 nodes (added Foxtrot with RFID). Logged provisioning/UUID/OTA-URL anomalies (#48–#50) for follow-up.
+> **Status:** Living document. Written 2026-04-23 against v0.4.04. ESP-NOW ranging section updated 2026-04-24. v0.4.10 update 2026-04-25 — added MQTT_HEALTHY LED state, dev-build version suffix, Node-RED fleet stagger + canary OTA. Fleet expanded to 6 nodes (added Foxtrot with RFID). Logged provisioning/UUID/OTA-URL anomalies (#48–#50) for follow-up. v0.4.11 update 2026-04-27 — heap-guard in `mqttPublish()` (#51 root cause: bad_alloc), BLE disabled via `BLE_ENABLED 0` in config.h pending NimBLE/WiFi coexistence audit (#61), heap heartbeat added to status payload (#53), `#48/#49` UUID/boot-reason visibility logs, `tools/` directory, NDEF feature on Foxtrot.
 > The firmware is a fleet-management IoT platform built around a
 > mesh-capable ESP32 node with on-device sensing, local auto-recovery,
 > and a Node-RED dashboard as the operator surface.
@@ -72,12 +72,12 @@ millis()-deadline driven (no `delay()` in hot paths since v0.3.06).
 | **Credential provisioning** | `include/espnow_bootstrap.h`, `include/credentials.h` | Async ESP-NOW credential request + encrypted wire-format bundle (versioned `WireBundle`) |
 | **WiFi recovery** | `include/wifi_recovery.h`, loop in `main.cpp` | Indefinite exponential backoff (15s → 10min cap) for router outages; auth-fail hysteresis fall-through to AP mode |
 | **AP-mode HTTPS portal** | `include/ap_portal.h` | ESP-IDF httpd_ssl, self-signed cert generated on first boot, persisted to NVS; CSRF + XSS hardened; 5-min idle timeout |
-| **MQTT client** | `include/mqtt_client.h` | AsyncMqttClient with LWT, deferred-action dispatch (restart/sleep), `FwEvent` enum for status events |
+| **MQTT client** | `include/mqtt_client.h` | AsyncMqttClient with LWT, deferred-action dispatch (restart/sleep), `FwEvent` enum for status events. Heap-guard in `mqttPublish()`: drops publish if free heap < `MQTT_PUBLISH_HEAP_GUARD_BYTES` (workaround for bad_alloc panic — #51). Long-term fix: replace AsyncMqttClient with static-buffer client (v0.5.0). |
 | **Broker discovery** | `include/broker_discovery.h` | mDNS → AsyncTCP parallel port scan → cached URL fallback |
 | **ESP-NOW responder** | `include/espnow_responder.h` | Credential server for siblings, OTA URL fallback, sibling-provided broker address, rate-limited (per-MAC token bucket) |
 | **ESP-NOW ranging** | `include/espnow_ranging.h`, `include/peer_tracker.h`, `include/ranging_math.h` | Passive RSSI sampling of all received ESP-NOW frames, LRU peer table, calibrated path-loss distance, EMA drift smoothing |
 | **RFID** | `include/rfid.h`, `include/rfid_types.h` | MFRC522v2 card detection via IRQ, NVS-persisted whitelist, read/program playground for MIFARE Classic |
-| **BLE scanner** | `include/ble.h` | NimBLE periodic scan, per-device tracking of specified MACs, RSSI-to-distance estimate (separate path-loss constant from ESP-NOW) |
+| **BLE scanner** | `include/ble.h` | NimBLE periodic scan, per-device tracking of specified MACs, RSSI-to-distance estimate (separate path-loss constant from ESP-NOW). **Currently disabled** (`BLE_ENABLED 0` in config.h) — NimBLE/WiFi/ESP-NOW coexistence audit pending v0.4.13 (#61). |
 | **WS2812 LED** | `include/ws2812.h`, `include/led.h` | FreeRTOS task driving the strip with event queue (bounded, drop-on-full); status-LED patterns |
 | **OTA** | `include/ota.h`, `include/ota_validation.h` | Manifest poll + URL fallback chain + `esp_https_ota` writer + NVS-flag post-OTA validation with active rollback |
 | **Logging + telemetry** | `include/logging.h`, `include/fwevent.h` | Compile-time filtered log levels, typed event strings (grep-friendly), boot-reason + heap-phase structured telemetry |
