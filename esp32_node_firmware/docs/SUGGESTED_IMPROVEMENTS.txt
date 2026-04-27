@@ -2828,3 +2828,39 @@ Next steps (operator decision):
     manual serial monitor + addr2line to root-cause. The 2026-04-27
     14:04 backtrace cost ~2 hours of session time we wouldn't have
     spent if (E) were already shipped.
+
+────────────────────────────────────────────────────────────
+66. Adaptive OTA stagger interval
+    OBSERVATION (2026-04-27): Manual OTA staggers use a fixed
+    2-minute gap between device triggers. That's conservative —
+    sized for worst-case OTA download (1.6 MB over slow Wi-Fi)
+    plus reboot + Wi-Fi reassoc + MQTT reconnect. Most devices
+    finish the cycle in 30-50 seconds.
+
+    PROPOSAL — adaptive stagger driven by ack:
+
+    A. Reduce default 120s → 60s.
+       Most observed cycles complete in <50s. 60s leaves headroom
+       without doubling the rollout time.
+
+    B. Adaptive: trigger next device as soon as previous publishes
+       a heartbeat on the new firmware version (proves OTA succeeded
+       AND the new build is healthy). Subscribe to `+/status`,
+       wait for `event=heartbeat AND firmware_version=<target>`.
+       Floor at 30s to give the broker time to flush retained
+       messages from the just-rebooted device. Cap at 180s to
+       protect against silent-fail.
+
+    C. Backoff on observed failure.
+       If the previous device shows `boot_reason=panic|task_wdt|
+       int_wdt` after OTA, PAUSE the rollout. Operator decides
+       whether to retry, roll back manifest, or escalate.
+
+    D. Shipped as `tools/fleet_ota.sh` (already exists at
+       tools/fleet_ota.sh — needs the adaptive logic added).
+
+    SEVERITY: LOW. Quality-of-life improvement. Saves ~5-10
+    minutes per fleet rollout. With #65 restart-policy hardening
+    in place, the safety net is robust enough to allow shorter
+    stagger.
+
