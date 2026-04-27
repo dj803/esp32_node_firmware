@@ -2864,3 +2864,57 @@ Next steps (operator decision):
     in place, the safety net is robust enough to allow shorter
     stagger.
 
+
+────────────────────────────────────────────────────────────
+67. AsyncTCP _error path race — replace stack or patch library
+    OBSERVATION (2026-04-27 chaos M3 180s):  After v0.4.14 fixed
+    the firmware-side trigger (MQTT_HUNG_TIMEOUT_MS too short) and
+    v0.4.15 removed the ESP.restart() from mqttIsHung, M3 STILL
+    cascades. Charlie panics at ~113s into a 180s broker outage
+    with multiple distinct exception shapes across reboots:
+       - LoadStoreAlignment (EXCVADDR ends in odd nibble)
+       - StoreProhibited    (write to read-only / NULL+offset)
+       - InstructionFetchError (PC in DRAM, function ptr corrupted)
+
+    All backtraces converge on:
+       PC: tcp_arg @ lwip/src/core/tcp.c:2039
+       Caller: AsyncClient::_error @ AsyncTCP.cpp:1024
+       From: _async_service_task
+
+    The bug is inside AsyncTCP's error-callback path triggered when
+    lwIP's natural TCP-timeout fires after a long unreachable connect
+    attempt. The race is between AsyncTCP's async-task processing
+    queued events and lwIP's TCP timer firing a separate error
+    callback. Tested with mathieucarbou/AsyncTCP v3.3.2 — same shape.
+
+    PROPOSAL (one of):
+
+    A. Patch AsyncTCP locally.
+       Add tcpip_api_call wrappers around tcp_arg / tcp_recv /
+       tcp_sent / tcp_err in _error path so all lwIP calls happen
+       under the TCPIP core lock. Vendor a patched AsyncTCP into
+       lib/ to keep the patch reproducible.
+
+    B. Replace AsyncMqttClient + AsyncTCP with a synchronous stack.
+       PubSubClient or arduino-esp32's bundled WiFiClient + manual
+       MQTT framing. No async race surface. ~50 KB extra flash;
+       loses non-blocking publish (every publish blocks loop()
+       briefly under network stress). Acceptable for the heartbeat
+       cadence (every 30 s).
+
+    C. Pre-connect broker probe.
+       Before AsyncMqttClient.connect(), do a non-blocking TCP
+       SYN probe (raw socket, 1 s timeout). If probe fails, skip
+       this reconnect cycle and wait. Avoids issuing connect()
+       calls into a dead broker, eliminating the ~75 s lwIP
+       timeout window where the race fires.
+
+    Option C is the most surgical (no library changes); option B
+    is the most robust (eliminates whole bug class); option A is
+    medium-cost-medium-risk.
+
+    SEVERITY: MEDIUM. M2 (30s outages) which represent the
+    common production failure (mosquitto log rotation, AP blip)
+    are clean on v0.4.14+. M3 (>75s outages) hit primarily during
+    network maintenance windows and AP / broker host crashes —
+    less frequent but real. Devices DO recover via boot loop.
