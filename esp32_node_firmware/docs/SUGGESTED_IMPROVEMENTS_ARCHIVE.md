@@ -2927,6 +2927,18 @@ Next steps (operator decision):
        announcement (NVS-stored, set just before ESP.restart()).
        Lets the dashboard distinguish a deliberate cred_rotate
        boot from an emergency restart.
+       SHIPPED 2026-04-27 in commit ef13507. New include/restart_cause.h
+       wraps Preferences with set()/consume() (NVS namespace "rstdiag",
+       key "cause"). mqttScheduleRestart() now persists the reason
+       to NVS just before arming the deferred-restart deadline.
+       mqttBegin() consumes-and-clears the saved cause once on boot,
+       caches in _firstBootRestartCause. mqttPublishStatus("boot")
+       appends `"restart_cause":"<reason>"` to the JSON when non-empty.
+       Validated on Bravo: cmd/restart → reboot → boot announcement
+       carries `restart_cause:"cmd_restart"`; subsequent heartbeats
+       do not (one-shot). M1+M2 chaos pass on the new build.
+       Sub-G complete; only persists software-initiated restarts
+       (panic/wdt boots correctly produce empty restart_cause).
 
     H. Better backoff math.
        Current: 1 → 2 → 4 → 8 → 16 → 32 → 60 s. With
