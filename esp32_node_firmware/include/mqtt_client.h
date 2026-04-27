@@ -14,6 +14,7 @@
 #include "app_config.h"   // gAppConfig: runtime GitHub + MQTT topic segments (NVS-backed)
 #include "broker_discovery.h"  // BrokerResult from mDNS / port scan / stored URL
 #include "led.h"
+#include "restart_cause.h"  // (#76 sub-G) NVS-persisted restart cause for boot announce
 
 // Forward declarations collected into dedicated _fwd.h headers so include
 // order in esp32_firmware.ino no longer needs to be fragile.
@@ -235,6 +236,11 @@ static void mqttPublish(const char* prefix, const String& payload,
 // it during this boot's lifetime) and emitted in the retained boot announcement
 // so the fleet manager can correlate field reboots with their cause.
 static esp_reset_reason_t _firstBootReason  = ESP_RST_UNKNOWN;
+// (#76 sub-G) Cause string from the LAST software-initiated restart (NVS-stored
+// in mqttScheduleRestart, consumed once on boot before the first announcement).
+// Empty unless we restarted ourselves on purpose. Surfaced in the boot
+// announcement JSON as `restart_cause`.
+static String _firstBootRestartCause;
 static bool               _firstMqttConnect = true;   // distinguishes true boot from reconnect (#61)
 static const char* bootReasonStr(esp_reset_reason_t r) {
     switch (r) {
@@ -300,8 +306,17 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
         if (anchorOff < 0 || anchorOff >= (int)sizeof(anchorSnip)) anchorOff = 0;
     }
     if (strcmp(event, "boot") == 0 && anchorOff < (int)sizeof(anchorSnip) - 32) {
-        snprintf(anchorSnip + anchorOff, sizeof(anchorSnip) - anchorOff,
+        int written = snprintf(anchorSnip + anchorOff, sizeof(anchorSnip) - anchorOff,
             ",\"boot_reason\":\"%s\"", bootReasonStr(_firstBootReason));
+        if (written > 0) anchorOff += written;
+        // (#76 sub-G) Append the restart cause if the previous boot was a
+        // software-initiated restart that called RestartCause::set() before
+        // ESP.restart(). Empty for poweron / panic / wdt boots.
+        if (_firstBootRestartCause.length() > 0 &&
+            anchorOff < (int)sizeof(anchorSnip) - 32) {
+            snprintf(anchorSnip + anchorOff, sizeof(anchorSnip) - anchorOff,
+                ",\"restart_cause\":\"%s\"", _firstBootRestartCause.c_str());
+        }
     }
 
     // (#53) Heap snapshot — sampled at publish time so heartbeat consumers
@@ -1346,6 +1361,13 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
     if (_firstBootReason == ESP_RST_UNKNOWN) {
         _firstBootReason = esp_reset_reason();
     }
+    // (#76 sub-G) Pull and clear the restart cause that was tagged just before
+    // ESP.restart() last cycle. Empty if the previous boot ended in a panic or
+    // power loss. Cached in _firstBootRestartCause so it lasts long enough to
+    // be included in the BOOT announcement and not lost on reconnect.
+    if (_firstBootRestartCause.length() == 0) {
+        _firstBootRestartCause = RestartCause::consume();
+    }
 
     // Use the persistent UUID as the device identity in all MQTT topics.
     // DeviceId::init() is called at the start of setup() before mqttBegin().
@@ -1486,6 +1508,10 @@ static void mqttScheduleRestart(const char* reason, uint32_t deferMs) {
     }
     LOG_W("MQTT", "Scheduling restart (%s) in %u ms", reason, (unsigned)deferMs);
     mqttPublishStatus(FwEvent::RESTARTING, extra);
+    // (#76 sub-G) Persist the cause to NVS so the next boot announcement can
+    // surface it. NVS commit takes ~5 ms; well within the deferMs window
+    // (typical 200-300 ms) before ESP.restart() actually fires.
+    RestartCause::set(reason);
     _mqttRestartAtMs = millis() + deferMs;
 }
 

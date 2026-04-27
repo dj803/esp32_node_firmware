@@ -3117,6 +3117,34 @@ Next steps (operator decision):
          (`netsh wlan disconnect; sleep 5; netsh wlan connect`).
        - If D fails, attempt B (PubSubClient + WiFiClient.publish).
 
+    UPDATE 2026-04-27 ~22:00 — option D NOT obviously wrong-but-needed:
+       The mathieucarbou fork ALREADY wraps tcp_close + tcp_abort in
+       `tcpip_api_call`, which holds LOCK_TCPIP_CORE for the duration
+       of the lwIP call. The IP-change callback `raw_netif_ip_addr_changed`
+       walks `raw_pcbs` (a SEPARATE list from `tcp_pcbs`), and our app
+       does not allocate raw_pcbs — those are managed by ESP-IDF
+       internally for ICMP / ping. So the "use-after-free walking a
+       freed pcb" hypothesis doesn't fit cleanly: a TCP free shouldn't
+       corrupt raw_pcbs at all.
+
+       Two possibilities remain:
+         (a) Memory corruption from elsewhere (stack overflow in some
+             task, heap overrun in our code, ESP-IDF regression in a
+             3rd-party component) leaves bad bytes in a freed memp slot
+             that raw_pcbs's iterator later reads. The PC is just the
+             unfortunate site that exposes the corruption.
+         (b) raw_pcbs entries ARE present (ESP-IDF created them for
+             internal ICMP/DHCP) and one of them got freed by a code
+             path we don't control. Then walked under the lock by
+             raw_netif_ip_addr_changed.
+
+       Charlie's canary soak (#54, now sticky after the OTA_DISABLE
+       gate fix) is the right next data point: if Charlie panics with
+       a stack-overflow halt → (a) confirmed → bump task stack. If
+       Charlie panics with the same lwIP raw.c backtrace → (a) NOT
+       stack overflow → likely (b), needs deeper memp_malloc audit.
+       Defer fix attempt until canary produces a failure signature.
+
 ────────────────────────────────────────────────────────────
 79. Version-update watcher as a standing dev tool + ack-driven OTA
     OBSERVATION (2026-04-27): During the v0.4.13 → v0.4.15 OTA
