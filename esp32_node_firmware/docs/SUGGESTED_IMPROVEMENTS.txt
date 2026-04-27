@@ -2728,3 +2728,103 @@ Next steps (operator decision):
     SEVERITY: MEDIUM. Manual today; risks regression of v0.4.13
     class bugs unless promoted to automated framework.
 
+
+────────────────────────────────────────────────────────────
+65. Recovery + reporting hardening — restart policy redesign
+    OBSERVATION (2026-04-27 chaos tests M2 ×2): When a 30-second
+    broker outage triggers reconnect-storm, the firmware's
+    "MQTT_RESTART_THRESHOLD = 10 → ESP.restart()" path fires
+    aggressively on mathieucarbou/AsyncTCP because the new fork
+    retries faster (= fail count climbs faster). On me-no-dev
+    the path doesn't always fire because devices panic first.
+    Either way, the operator sees a reset cluster with limited
+    diagnostic context — only `boot_reason` and `firmware_version`
+    survive the reboot. The actual reason WHY MQTT was deemed
+    unrecoverable (heap state, last reconnect error, retry count,
+    elapsed time since first failure) is lost.
+
+    PROPOSAL — bundle these as v0.4.16 "restart-policy hardening":
+
+    A. Pre-restart MQTT publish before ESP.restart().
+       Already done for cred_rotate / cmd/restart (event=restarting
+       with extra JSON). Extend to the MQTT-unrecoverable path:
+         {
+           "event":"restarting",
+           "reason":"mqtt_unrecoverable",
+           "fail_count":<n>,
+           "first_fail_age_s":<sec>,
+           "last_disconnect_reason":"<TCP_DISCONNECTED|...>",
+           "heap_free":<n>,
+           "heap_largest":<n>,
+           "wifi_rssi":<n>
+         }
+       Drains in 200 ms (existing pattern). Without this, post-mortem
+       in mosquitto.log shows only the LWT — no firmware-side context.
+
+    B. Persist restart context to NVS for surfacing on next boot.
+       Cross-boot diagnostics. NVS namespace "rstdiag" with last
+       N entries (ring buffer, e.g. last 8). Boot announcement
+       includes "last_restart_reasons":["mqtt_unrecoverable",...]
+       so the dashboard sees patterns ("3 of last 8 boots were
+       MQTT-unrecoverable" → broker is unstable, not the device).
+
+    C. Increase MQTT_RESTART_THRESHOLD from 10 → 30 (or make it
+       time-based: "no successful publish in N minutes" instead
+       of "N consecutive failed reconnects"). Time-based is more
+       intuitive and survives backoff-window weirdness.
+
+    D. Reduce restart-loop risk via NVS cool-off counter.
+       If a device has restarted ≥3 times in the last 10 minutes
+       AND each was reason=mqtt_unrecoverable, fall back to
+       AP/config portal mode (or modem-sleep + heartbeat-only
+       passive mode) instead of restarting again. Operator can
+       inspect via web UI; broker can be fixed without device-side
+       interaction.
+
+    E. Capture core dump on panic.
+       Add `coredump` partition to partitions.csv (~64 KB).
+       Configure `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y` +
+       `CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y`. After a panic
+       reboot, firmware reads the saved core dump and publishes
+       its base64-encoded blob to .../diag/coredump (one-shot,
+       cleared after publish). Eliminates the "no backtrace
+       captured" problem we hit twice today (#51 and the 10:42
+       cascade) — backtrace is in flash, not lost on RTC WDT.
+
+    F. Tune the watchdog.
+       CONFIG_ESP_TASK_WDT_TIMEOUT_S default is 5 s. The reconnect
+       handshake under high jitter / packet loss can come close.
+       Bump to 10-15 s in sdkconfig.defaults — tradeoff: longer
+       hangs are harder to detect, but legitimate slow reconnects
+       no longer get clobbered. Combine with (A) so we publish
+       diagnostic state before the WDT bites.
+
+    G. Distinct boot_reason granularity.
+       Today: "software" lumps together cred_rotate restart,
+       cmd/restart, MQTT-unrecoverable, OTA reboot, etc. Add
+       a complementary `restart_cause` field to the boot
+       announcement (NVS-stored, set just before ESP.restart()).
+       Lets the dashboard distinguish a deliberate cred_rotate
+       boot from an emergency restart.
+
+    H. Better backoff math.
+       Current: 1 → 2 → 4 → 8 → 16 → 32 → 60 s. With
+       MQTT_RESTART_THRESHOLD=10, the 10th attempt happens at
+       sum(1..60) ≈ 4 minutes. So today a 30-second outage can
+       hit threshold via fast retries OR a 5-minute outage can
+       hit it via cap-of-60. Make the threshold time-based
+       ("no successful publish in 10 minutes") rather than
+       attempt-based.
+
+    I. Decouple the two failure modes in chaos tests.
+       The watchdog reset (TG1WDT/TG0WDT, "int_wdt") and the
+       MQTT_RESTART_THRESHOLD path (SW_CPU_RESET) are both
+       "device rebooted itself" but the diagnostic value is
+       very different. Surface them as separate metrics in
+       /daily-health and the heap-trajectory tile.
+
+    SEVERITY: HIGH for fleet operability — without core dumps and
+    pre-restart publishes, every fleet-wide event today required
+    manual serial monitor + addr2line to root-cause. The 2026-04-27
+    14:04 backtrace cost ~2 hours of session time we wouldn't have
+    spent if (E) were already shipped.
