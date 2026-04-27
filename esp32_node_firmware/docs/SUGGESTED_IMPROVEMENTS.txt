@@ -2918,3 +2918,52 @@ Next steps (operator decision):
     are clean on v0.4.14+. M3 (>75s outages) hit primarily during
     network maintenance windows and AP / broker host crashes —
     less frequent but real. Devices DO recover via boot loop.
+
+────────────────────────────────────────────────────────────
+68. Version-update watcher as a standing dev tool + ack-driven OTA
+    OBSERVATION (2026-04-27): During the v0.4.13 → v0.4.15 OTA
+    rollouts today the operator asked "can you watch for the
+    version update?" — confirming a per-session need for an
+    always-on watcher that streams `firmware_version` transitions
+    per device. Without it, OTA verification is a manual
+    mosquitto_sub | grep cycle that hides edge cases (Charlie
+    running -dev when fleet was meant to be on release).
+
+    ALSO from #66: the "trigger next when previous is verified up"
+    pattern is the natural complement.
+
+    PROPOSAL — bundle as `tools/dev/`:
+
+    A. tools/dev/version-watch.sh
+       Long-running mosquitto_sub on `+/status` that prints one
+       line per (device, version) transition. Filter to first
+       boot/online/heartbeat per (device, version) pair so the
+       output is signal-only. Print uptime + boot_reason for
+       diagnostic context.
+
+    B. tools/dev/ota-rollout.sh <target_version>
+       Read fleet UUIDs from cached config (or discover via live
+       MQTT). For each:
+         (1) record current firmware_version
+         (2) publish cmd/ota_check
+         (3) wait for status with firmware_version == target AND
+             event in (boot, online, heartbeat) AND uptime_s > 30
+             (proves device stayed up)
+         (4) on success → next device after a short safety gap
+             (e.g. 15s)
+         (5) on failure (no transition in N min, or device boot
+             with abnormal boot_reason) → PAUSE and prompt
+             operator
+       Logs to JSON for post-rollout audit.
+
+    C. Promote both to chaos-suite (#64):
+       version-watch.sh runs always during chaos tests so version
+       drift between expected/actual is caught immediately.
+       ota-rollout.sh becomes a chaos scenario itself
+       (sequenced_ota_storm) — verify rollouts don't spawn
+       cascade-shaped failures.
+
+    SEVERITY: MEDIUM. Saves ~10 min per rollout. Catches version
+    drift earlier. Provides audit trail. With #67 broker-probe
+    in firmware, OTA storms become a non-issue and ack-driven
+    stagger can be aggressive (15-30s gaps).
