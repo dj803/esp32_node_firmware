@@ -12,17 +12,18 @@ Tiered by impact ÷ cost. Do Tier 1 first; Tier 3 only if the underlying need su
 Add `logging.file` block to `~/.node-red/settings.js` with `flushInterval: 10`. Restart Node-RED. Live-tail with `Get-Content -Wait`. Eliminates the "log frozen at 20:30" failure mode that hit us this morning.
 
 ### T1.2 Mosquitto log rotation
-The current log is **87 MB** and growing (~30 MB/day at this fleet size). Will eventually fill the disk silently. Two-line fix in `mosquitto.conf`:
+The current log is **87 MB** and growing (~30 MB/day at this fleet size). Will eventually fill the disk silently.
+
+Mosquitto has no native `log_max_size` directive. Use Windows Task Scheduler with a daily PowerShell rotation script:
 
 ```
-log_dest file C:\ProgramData\mosquitto\mosquitto.log
-log_type all
-log_timestamp true
-# rotate when log hits 50 MB; keep 5 generations
-log_max_size 52428800
+C:\ProgramData\mosquitto\rotate-log.ps1
 ```
 
-If the broker doesn't support native rotation (older builds), use Windows Task Scheduler running a daily PowerShell script that renames the log + restarts the Mosquitto service.
+Renames `mosquitto.log` to `mosquitto.log.YYYY-MM-DD`, keeps 5 generations, restarts the service. Register elevated:
+```
+schtasks /create /tn "MosquittoLogRotate" /tr "powershell -File C:\ProgramData\mosquitto\rotate-log.ps1" /sc daily /st 02:00 /ru SYSTEM
+```
 
 ### T1.3 Move `.dummy/` scripts into `tools/`
 The patches and orchestrators that were one-shot during this session (`patch_stagger.py`, `patch_canary.py`, `patch_boot_reason.py`, `fleet_ota.sh`) are useful on paper but get lost in `.dummy/` (ignored). Promote the keepers to `tools/node_red/`, commit them, document `tools/README.md`. Future sessions can call `python tools/node_red/patch_stagger.py` without re-discovering the API.
