@@ -91,6 +91,7 @@
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
 #include "ota_validation.h"  // Phase 2 / v0.3.34 — post-OTA self-test + rollback
+#include "coredump_publish.h"  // v0.4.17 / #65 — publish ESP-IDF core-dump summary on boot
 #include "espnow_ranging.h"  // MUST come after mqtt_client.h — uses mqttPublish/mqttConnected
 #include "rfid.h"          // MUST come after mqtt_client.h AND ws2812.h
 #ifdef BLE_ENABLED
@@ -669,6 +670,15 @@ void loop() {
 
     // ── MQTT heartbeat ────────────────────────────────────────────────────────
     mqttHeartbeat();
+
+    // ── Core-dump publish (#65, v0.4.17) ──────────────────────────────────────
+    // Once per boot, after MQTT is up, drain any stored core dump by publishing
+    // its summary (PC, exception cause, faulting task, backtrace) to
+    // .../diag/coredump retained QoS 1, then erase. coredumpPublishIfAny() is
+    // idempotent — second call is a no-op once erased. Cheap to call every loop.
+    if (mqttIsConnected()) {
+        coredumpPublishIfAny();
+    }
 
     // ── MQTT self-heal ────────────────────────────────────────────────────────
     // (v0.4.15, 2026-04-27) Hung-watchdog NO LONGER calls ESP.restart().
