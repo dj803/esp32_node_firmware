@@ -2408,7 +2408,7 @@ live observers; Charlie still on the v0.4.10.1-dev test bed.
 Next experiments documented in ESP32_FAILURE_MODES.md "2026-04-26
 mid-day update" section.
 
-58. Per-device feature-subset firmware variants
+71. Per-device feature-subset firmware variants
     OBSERVATION (operator suggestion 2026-04-26):  Devices in the
     fleet have different physical hardware + roles. Foxtrot has an
     RFID reader; Alpha has a WS2812 strip; not every device needs
@@ -2485,7 +2485,7 @@ mid-day update" section.
     needs BLE back, USB-flash that one device with an alternate
     build. Manual but cheap.
 
-59. Bench-supply voltage stress testing rig
+72. Bench-supply voltage stress testing rig
     OBSERVATION (2026-04-26 operator suggestion):  Failure modes #51
     include `brownout` and `other_wdt` as candidates. Today we
     can't easily distinguish "firmware bug" from "marginal Vcc"
@@ -2536,7 +2536,7 @@ mid-day update" section.
               into v0.5.0 hardware design (relay + Hall on the
               same board) where current draw will be higher.
 
-# ── #51 / #58 follow-up — 2×2 BLE × ESP-NOW build matrix ────────────
+# ── #51 / #71 follow-up — 2×2 BLE × ESP-NOW build matrix ────────────
 Once #51 settles, build a follow-up A/B with three additional firmware
 variants to isolate which subsystem contributes to which failure mode:
 
@@ -2558,10 +2558,10 @@ Also useful for IRAM characterisation:
      independently. Currently we know BLE = ~30 KB IRAM. ESP-NOW alone is
      unknown.
 
-Pairs naturally with #58 per-device variants once that infrastructure lands.
+Pairs naturally with #71 per-device variants once that infrastructure lands.
 
 
-60. Silent-failure watcher (catches deadlocks that don't reboot)
+73. Silent-failure watcher (catches deadlocks that don't reboot)
     OBSERVATION (2026-04-26):  Today's boot_history watcher fires on
     NEW abnormal-boot entries — i.e., devices that crashed AND
     rebooted. Today's silent-deadlock failure mode (Alpha, Echo,
@@ -2593,6 +2593,9 @@ Pairs naturally with #58 per-device variants once that infrastructure lands.
     PRIORITY: HIGH for diagnostic sessions like today's; Medium for
               steady-state operations. Cheap to implement (~30 lines
               of Python in tools/silent_watcher.sh).
+    STATUS:   RESOLVED 2026-04-27. tools/silent_watcher.sh exists and
+              CLAUDE.md "Monitoring sessions" section documents it as
+              the standard Monitor task to arm during stability work.
 
 # ── #51 ROOT CAUSE 2026-04-27 ─────────────────────────────────────
 The 24-hour diagnostic chase culminated in a captured serial panic
@@ -2714,7 +2717,7 @@ Next steps (operator decision):
 
 
 ────────────────────────────────────────────────────────────
-63. IPv6Address.h support — unblock newer AsyncTCP forks
+74. IPv6Address.h support — unblock newer AsyncTCP forks
     OBSERVATION (2026-04-27): When swapping to esphome/AsyncTCP
     for the v0.4.14 fix, the latest release (v2.1.4) failed to
     compile with:
@@ -2733,7 +2736,7 @@ Next steps (operator decision):
     the LAN is IPv4-only today.
 
 ────────────────────────────────────────────────────────────
-64. Chaos-testing framework — promote tools/chaos/ + site_acceptance.sh
+75. Chaos-testing framework — promote tools/chaos/ + site_acceptance.sh
     OBSERVATION (2026-04-27): The v0.4.13 panic cascade was only
     diagnosable because we manually arranged a synthetic broker
     blip with a no-DTR serial monitor armed on Charlie (COM5).
@@ -2759,7 +2762,7 @@ Next steps (operator decision):
 
 
 ────────────────────────────────────────────────────────────
-65. Recovery + reporting hardening — restart policy redesign
+76. Recovery + reporting hardening — restart policy redesign
     OBSERVATION (2026-04-27 chaos tests M2 ×2): When a 30-second
     broker outage triggers reconnect-storm, the firmware's
     "MQTT_RESTART_THRESHOLD = 10 → ESP.restart()" path fires
@@ -2859,7 +2862,7 @@ Next steps (operator decision):
     spent if (E) were already shipped.
 
 ────────────────────────────────────────────────────────────
-66. Adaptive OTA stagger interval
+77. Adaptive OTA stagger interval
     OBSERVATION (2026-04-27): Manual OTA staggers use a fixed
     2-minute gap between device triggers. That's conservative —
     sized for worst-case OTA download (1.6 MB over slow Wi-Fi)
@@ -2889,13 +2892,13 @@ Next steps (operator decision):
        tools/fleet_ota.sh — needs the adaptive logic added).
 
     SEVERITY: LOW. Quality-of-life improvement. Saves ~5-10
-    minutes per fleet rollout. With #65 restart-policy hardening
+    minutes per fleet rollout. With #76 restart-policy hardening
     in place, the safety net is robust enough to allow shorter
     stagger.
 
 
 ────────────────────────────────────────────────────────────
-67. AsyncTCP _error path race — replace stack or patch library
+78. AsyncTCP _error path race — replace stack or patch library
     OBSERVATION (2026-04-27 chaos M3 180s):  After v0.4.14 fixed
     the firmware-side trigger (MQTT_HUNG_TIMEOUT_MS too short) and
     v0.4.15 removed the ESP.restart() from mqttIsHung, M3 STILL
@@ -2949,7 +2952,7 @@ Next steps (operator decision):
     less frequent but real. Devices DO recover via boot loop.
 
 ────────────────────────────────────────────────────────────
-68. Version-update watcher as a standing dev tool + ack-driven OTA
+79. Version-update watcher as a standing dev tool + ack-driven OTA
     OBSERVATION (2026-04-27): During the v0.4.13 → v0.4.15 OTA
     rollouts today the operator asked "can you watch for the
     version update?" — confirming a per-session need for an
@@ -2958,7 +2961,7 @@ Next steps (operator decision):
     mosquitto_sub | grep cycle that hides edge cases (Charlie
     running -dev when fleet was meant to be on release).
 
-    ALSO from #66: the "trigger next when previous is verified up"
+    ALSO from #77: the "trigger next when previous is verified up"
     pattern is the natural complement.
 
     PROPOSAL — bundle as `tools/dev/`:
@@ -2985,7 +2988,7 @@ Next steps (operator decision):
              operator
        Logs to JSON for post-rollout audit.
 
-    C. Promote both to chaos-suite (#64):
+    C. Promote both to chaos-suite (#75):
        version-watch.sh runs always during chaos tests so version
        drift between expected/actual is caught immediately.
        ota-rollout.sh becomes a chaos scenario itself
@@ -2993,9 +2996,14 @@ Next steps (operator decision):
        cascade-shaped failures.
 
     SEVERITY: MEDIUM. Saves ~10 min per rollout. Catches version
-    drift earlier. Provides audit trail. With #67 broker-probe
+    drift earlier. Provides audit trail. With #78 broker-probe
     in firmware, OTA storms become a non-issue and ack-driven
     stagger can be aggressive (15-30s gaps).
+    STATUS: RESOLVED 2026-04-27. Both tools shipped:
+    tools/dev/ota-rollout.sh and tools/dev/version-watch.sh
+    (commit deaa97f). Used through the v0.4.13 → v0.4.20 cascade
+    rollout sessions. Sub-item C (promote to chaos-suite) carries
+    forward into #75.
 
 ────────────────────────────────────────────────────────────
 69. Wakeup vs persistent-monitor preemption
@@ -3040,7 +3048,7 @@ Next steps (operator decision):
        /loop for adaptive work.
 
     E. Single orchestrator script.
-       tools/dev/ota-rollout.sh from #68 runs the entire stagger
+       tools/dev/ota-rollout.sh from #79 runs the entire stagger
        in one shell process. Agent uses ONE Monitor task on its
        output, not many. Operator watches one stream, agent
        responds to one signal stream.
@@ -3051,7 +3059,7 @@ Next steps (operator decision):
     semantic events (summary not raw), single orchestrator.
 
 ────────────────────────────────────────────────────────────
-70. -dev suffix breaks OTA upgrade path (recurring friction)
+80. -dev suffix breaks OTA upgrade path (recurring friction)
     OBSERVATION (2026-04-27 multiple times):  Devices USB-flashed
     with a `0.4.X-dev` binary do not OTA-upgrade to the matching
     `0.4.X` release. Triggering `cmd/ota_check` on a -dev device
@@ -3094,9 +3102,15 @@ Next steps (operator decision):
     when devs need to USB-reflash to bypass. Option B is the
     smallest change with the cleanest semantics.
 
-    RELATED to #66 (adaptive OTA stagger) and #68 (ack-driven
+    RELATED to #77 (adaptive OTA stagger) and #79 (ack-driven
     rollout) — both rely on the OTA path actually firing for -dev
     devices.
+    STATUS: RESOLVED 2026-04-27 in v0.4.18 + v0.4.20. v0.4.18
+    (commit b0705b1) made the firmware's semverIsNewer treat
+    `0.4.X-dev` as older than the same-numbered release.
+    v0.4.20 (commit 08142c2) added the 4-component
+    "MAJOR.MINOR.PATCH.DEV" dev versioning for cleaner monotonicity.
+    -dev devices now upgrade to the matching release on first OTA check.
 
 ────────────────────────────────────────────────────────────
 81. Renumbering pass on SUGGESTED_IMPROVEMENTS_ARCHIVE.txt
@@ -3132,6 +3146,16 @@ Next steps (operator decision):
     documents the workaround. But the workaround relies on
     "first-occurrence" ordering inside the archive which is
     fragile if entries are ever inserted out of order.
+    STATUS: RESOLVED 2026-04-27. Cascade-fix-session entries
+    renumbered to #71-#80 in archive + index. Cross-references
+    inside renumbered entries updated. KNOWN NUMBERING
+    COLLISIONS warning removed from index header. Memory files
+    autonomous_session_2026_04_27.md and v0_4_13_panic_cascade_2026_04_27.md
+    were not edited because they describe a moment-in-time state
+    (which numbers were being used during the cascade session)
+    and rewriting the numbers would falsify the historical record;
+    forward references in those files now refer to a stale numbering
+    scheme but the surrounding context disambiguates.
 
 ────────────────────────────────────────────────────────────
 82. Audit other tracking-style docs for the index/archive split pattern

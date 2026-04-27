@@ -5,19 +5,7 @@ one-line title and (where relevant) an ETA / link to the relevant version.
 RESOLVED items are listed at the bottom for context but the full text is
 in SUGGESTED_IMPROVEMENTS_ARCHIVE.txt.
 
-Last index sweep: 2026-04-27.
-
-⚠️  KNOWN NUMBERING COLLISIONS (to be resolved by renumbering pass):
-The 2026-04-26 audit-driven additions and the 2026-04-27 cascade-fix-session
-additions both used #58–#70. The archive contains both; this index lists only
-the first-occurrence per number. Items affected (today's interpretation in
-parens):
-  #58 (per-device firmware variants), #59 (...), #60 (...), #63 (IPv6Address.h
-  support), #64 (chaos framework), #65 (restart-policy hardening), #66
-  (adaptive OTA stagger), #67 (AsyncTCP race — RESOLVED v0.4.16), #68
-  (version-watch + ack-driven OTA), #70 (-dev OTA — RESOLVED v0.4.18+v0.4.20).
-Until renumbered, use the archive file's full text and the relative position
-(top occurrence = audit, bottom occurrence = cascade-fix session) to disambiguate.
+Last index sweep: 2026-04-27 (post #81 renumbering pass).
 
 To add a new entry:
   - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.txt with a new
@@ -82,10 +70,16 @@ To resolve an entry:
   #66   .claude/commands/ — operational shortcuts                    (2026-04-26 audit)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
   #69   Wakeup vs persistent-monitor preemption
-  #81   Renumbering pass on archive (resolve #58–#70 collisions)
+  #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
+  #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
+  #74   IPv6Address.h support — unblock newer AsyncTCP forks         (was #63 cascade-session)
+  #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session)
+  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A+E shipped, B/C/D/F/G/H/I open)
+  #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
+  #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #82   Audit other tracking docs (FAILURE_MODES, memory_budget) for split pattern
 
-  Total open: 51
+  Total open: 57
 
 ────────────────────────────────────────────────────────────
 
@@ -116,6 +110,9 @@ To resolve an entry:
   #64   Root README.md                                               (resolved 2026-04-27)
   #65   esp32_node_firmware/include/build_config.h stub              (resolved 2026-04-27)
   #67   Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
-  #70   -dev suffix breaks OTA upgrade path (recurring friction)
+  #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
+  #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
+  #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
+  #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
 
-  Total resolved: 17
+  Total resolved: 21
