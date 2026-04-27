@@ -248,7 +248,54 @@ script per failure mode.
   ```
 - The same shape almost certainly explains the v0.4.10 (#51) and 10:42 cascades.
 
-### v0.4.14 attempted fix — esphome/AsyncTCP — FAILED, ROLLED BACK
+### Diagnosis revision (after M1, M2 ×3, M4)
+
+The "AsyncTCP race during disconnect" hypothesis was **wrong**. M1 (5 s) and
+M4 (3 × 5 s rapid) both passed cleanly across the entire fleet on me-no-dev
+and on mathieucarbou. Only M2 (30 s) reproduced the cascade. The trigger
+isn't the disconnect path; it's the **firmware's own self-heal threshold**:
+
+```c
+// main.cpp:674
+if (mqttIsHung()) {  // millis() - _mqttConnectStartMs >= 12000
+    LOG_W("Loop", "MQTT hung (no callback) — restarting device");
+    ESP.restart();
+}
+```
+
+`MQTT_HUNG_TIMEOUT_MS = 12000` was tuned for the "TCP up, MQTT CONNACK never
+arrived" hang. But the same path fires on the much more common "broker down,
+lwIP SYN retrying" case — lwIP's TCP connect timeout is ~75 s by default. So
+any broker outage longer than 12 s caused every device to ESP.restart()
+simultaneously, producing the cascade. The AsyncTCP tcp_arg use-after-free
+panic was a **secondary** effect of the restart-storm, not the trigger.
+
+### v0.4.14 fix shipped: MQTT_HUNG_TIMEOUT_MS 12 s → 90 s
+
+```c
+#define MQTT_HUNG_TIMEOUT_MS  90000   // gives lwIP SYN room to fail naturally
+```
+
+Validation (M2 30 s blip at 15:06:44 SAST, 2026-04-27):
+
+| Device | Build | Result |
+|---|---|---|
+| **Charlie** | **v0.4.14 (90 s timeout, mathieucarbou)** | **clean reconnect 34 s, no restart** ✅ |
+| Foxtrot/Delta/Echo | v0.4.13 (12 s timeout, me-no-dev) | panic |
+| Alpha/Bravo | v0.4.13 (12 s timeout, me-no-dev) | int_wdt |
+
+The restart-storm is gone. `event=online` (#61) publishes confirm clean reconnect.
+
+### v0.4.14 also bundles esphome → mathieucarbou AsyncTCP swap
+
+mathieucarbou/AsyncTCP v3.3.2 doesn't fix the cascade (the cascade was the
+hung-timeout). Its contribution: under int_wdt-class crashes (which still
+*can* happen under sustained network instability) it gives a **recoverable
+watchdog reset** instead of a **memory-corruption panic**. That's strictly
+better for postmortem (`boot_reason=int_wdt` vs unrecoverable `panic` with
+the heap state lost).
+
+### Legacy (do not delete) — esphome/AsyncTCP attempt rolled back
 
 - Pinned `esphome/AsyncTCP@dc64fedec0c953ba4f52b6bb8bc5ef1a3abdc22d` (v2.0.1, pre-IPv6).
   v2.1.4 was first choice but requires `IPv6Address.h` not shipped by arduino-esp32 3.3.8 (#63).
