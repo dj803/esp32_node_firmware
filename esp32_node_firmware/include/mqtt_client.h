@@ -40,6 +40,7 @@ void    rfidWhitelistList(char out[][RFID_UID_STR_LEN], uint8_t& count);
 // pulling in MFRC522v2. rfid.h defines the implementations.
 #ifdef RFID_ENABLED
 #include "rfid_types.h"
+#include "ndef.h"             // ndefBuildUri — used by handleRfidNdefWrite
 void rfidArmProgram(const RfidProgramRequest& req);
 void rfidArmRead(const RfidReadRequest& req);
 void rfidCancelPending();
@@ -169,11 +170,39 @@ static String mqttBroadcastRotateTopic() {
 
 // ── Publish helpers ────────────────────────────────────────────────────────────
 
-// Low-level publish — silently drops messages if the client is not connected.
-// `prefix` becomes the last segment of the topic path.
+// Low-level publish — silently drops messages if the client is not connected
+// OR if the heap is too fragmented to safely allocate the publish buffer.
+//
+// (#51 root-cause fix, 2026-04-27)  AsyncMqttClient::publish() internally
+// `new`s a contiguous buffer for the framed MQTT message. Under network
+// reconnect storms the heap fragments — `free` may stay healthy but the
+// largest contiguous block drops below what the publish needs, and the
+// allocation throws std::bad_alloc which arduino-esp32 escalates to abort()
+// (see backtrace in #51 panic dump 2026-04-27 02:44 SAST). Pre-check the
+// largest free block; if too small, drop the publish with a WARN. The
+// next call (after broker stabilises and queue drains) will succeed.
+//
+// Threshold: 4 KB — empirically large enough to fit any typical publish
+// payload (status JSON ~250 B, espnow ~370 B, response ~600 B) plus
+// AsyncMqttClient framing overhead and async_tcp internal buffers.
+#define MQTT_PUBLISH_HEAP_MIN  4096
+
 static void mqttPublish(const char* prefix, const String& payload,
                         uint8_t qos = 0, bool retain = false) {
     if (!_mqttClient.connected()) return;   // Do nothing if not connected
+    if (ESP.getMaxAllocHeap() < MQTT_PUBLISH_HEAP_MIN) {
+        // Heap fragmented — skip rather than risk bad_alloc panic.
+        // Rate-limit the warning to avoid log flooding (one per second max).
+        static uint32_t _lastSkipWarnMs = 0;
+        uint32_t now = millis();
+        if (now - _lastSkipWarnMs > 1000) {
+            LOG_W("MQTT", "publish skipped (heap_largest=%u < %u) — "
+                          "fragmentation under network stress; #51",
+                  (unsigned)ESP.getMaxAllocHeap(), (unsigned)MQTT_PUBLISH_HEAP_MIN);
+            _lastSkipWarnMs = now;
+        }
+        return;
+    }
     String topic = mqttTopic(prefix);
     LOG_D("MQTT", "pub %s  %s", topic.c_str(), payload.c_str());
     _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
@@ -252,6 +281,12 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             ",\"boot_reason\":\"%s\"", bootReasonStr(_firstBootReason));
     }
 
+    // (#53) Heap snapshot — sampled at publish time so heartbeat consumers
+    // can plot heap-free trajectory per device and surface slow leaks
+    // BEFORE they manifest as panic. Cheap to call (~µs each).
+    uint32_t heapFree    = ESP.getFreeHeap();
+    uint32_t heapLargest = ESP.getMaxAllocHeap();
+
     char buf[640];
     int n;
     if (extraJson && *extraJson) {
@@ -264,6 +299,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
             "\"wifi_channel\":%u,"
+            "\"heap_free\":%u,"
+            "\"heap_largest\":%u,"
             "\"event\":\"%s\","
             "%s%s}",
             DeviceId::get().c_str(),
@@ -273,6 +310,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
             (unsigned)wifiCh,
+            (unsigned)heapFree,
+            (unsigned)heapLargest,
             event, extraJson, anchorSnip);
     } else {
         n = snprintf(buf, sizeof(buf),
@@ -284,6 +323,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
             "\"wifi_channel\":%u,"
+            "\"heap_free\":%u,"
+            "\"heap_largest\":%u,"
             "\"event\":\"%s\"%s}",
             DeviceId::get().c_str(),
             nodeName,
@@ -292,6 +333,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
             (unsigned)wifiCh,
+            (unsigned)heapFree,
+            (unsigned)heapLargest,
             event, anchorSnip);
     }
     if (n < 0 || n >= (int)sizeof(buf)) {
@@ -583,6 +626,57 @@ static void handleRfidCancel(const char* /*payload*/, size_t /*len*/) {
     LOG_I("MQTT", "cmd/rfid/cancel: clearing any armed request");
     rfidCancelPending();
 }
+
+// cmd/rfid/ndef_write — encode a URI as an NDEF Type-2 message and arm a
+// multi-page Ultralight write starting at page 4 (the user-data region).
+// Reuses the existing rfidArmProgram path so the response schema, timeout
+// handling, and trailer guard are identical.
+//
+// Payload: {"uri":"https://example.com","request_id":"...","timeout_ms":15000}
+//
+// Length budget: 32 pages × 4 B = 128 B, of which 4 B are TLV/terminator
+// overhead and 5 B record header — leaves ~119 B for the URI body. With the
+// "https://" prefix abbreviation that covers URLs up to ~119 chars, which
+// fits virtually every real-world deep-link.
+static void handleRfidNdefWrite(const char* payload, size_t len) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        LOG_W("MQTT", "cmd/rfid/ndef_write: JSON parse error");
+        return;
+    }
+    const char* uri = doc["uri"] | "";
+    if (!*uri) {
+        LOG_W("MQTT", "cmd/rfid/ndef_write: missing 'uri' field");
+        return;
+    }
+
+    uint8_t buf[RFID_MAX_WRITE_BLOCKS * 4 + 4] = {0};   // +4 padding headroom
+    size_t n = ndefBuildUri(uri, buf, RFID_MAX_WRITE_BLOCKS * 4);
+    if (n == 0) {
+        LOG_W("MQTT", "cmd/rfid/ndef_write: encoded NDEF too large for tag (max %u B)",
+              (unsigned)(RFID_MAX_WRITE_BLOCKS * 4));
+        return;
+    }
+
+    // Pad to 4-byte page boundary; pages must be written whole.
+    size_t pageBytes = (n + 3) & ~3u;
+    uint8_t pageCount = (uint8_t)(pageBytes / 4);
+
+    RfidProgramRequest req = {};
+    strlcpy(req.profile, RFID_PROFILE_NTAG21X, sizeof(req.profile));
+    strlcpy(req.request_id, doc["request_id"] | "", sizeof(req.request_id));
+    req.timeout_ms = doc["timeout_ms"] | 0u;
+    req.write_count = pageCount;
+    for (uint8_t p = 0; p < pageCount; p++) {
+        req.writes[p].block = (uint16_t)(4 + p);     // NTAG21x user data starts at page 4
+        memcpy(req.writes[p].data, buf + p * 4, 4);
+        req.writes[p].has_key_a = false;
+    }
+
+    LOG_I("MQTT", "cmd/rfid/ndef_write: %u-page NDEF (%u B) arming for '%s' (req=%s)",
+          (unsigned)pageCount, (unsigned)n, uri, req.request_id);
+    rfidArmProgram(req);
+}
 #endif // RFID_ENABLED
 
 
@@ -813,6 +907,9 @@ static void onMqttMessage(char* topic, char* payload,
     } else if (t == mqttTopic("cmd/rfid/cancel")) {
         // v0.3.17 playground: clear any pending program/read arm
         handleRfidCancel(payload, len);
+    } else if (t == mqttTopic("cmd/rfid/ndef_write")) {
+        // v0.4.11: encode URI as NDEF + arm multi-page write on next NTAG21x
+        handleRfidNdefWrite(payload, len);
 #endif
 #ifdef BLE_ENABLED
     } else if (t == mqttTopic("cmd/ble/scan")) {
@@ -1046,14 +1143,13 @@ static void onMqttConnect(bool sessionPresent) {
     responderSetHealthFlag(1, true);
     ledSetPattern(LedPattern::MQTT_CONNECTED);   // 50ms pulse / 2s off — normal operational
 
-    // (#44) WS2812 strip: switch to slow green breathing so a glance at the
-    // device tells the operator MQTT is up. Without this the strip stays in
-    // IDLE (blue breathing) indistinguishable from the WiFi-only-no-broker state.
-    {
-        LedEvent e{};
-        e.type = LedEventType::MQTT_HEALTHY;
-        ws2812PostEvent(e);
-    }
+    // (#44 / #51 v0.4.10.1) MQTT_HEALTHY ws2812 post DISABLED — suspected
+    // regression behind the v0.4.10 fleet-wide crash pattern documented in
+    // SUGGESTED_IMPROVEMENTS #51. The LedState::MQTT_HEALTHY enum value and
+    // render case remain in ws2812.h so the dashboard's status/led contract
+    // is unchanged, but no event is posted from this callback. Once the
+    // root cause is understood the post can be re-enabled (likely via a
+    // deferred-flag pattern set here and consumed by loop()).
 
     // Subscribe to all command topics for this device.
     // QoS 1 = "at least once" delivery (safe for commands, may duplicate but won't lose)
@@ -1077,6 +1173,7 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/rfid/program").c_str(),    1); // RFID playground: arm write
     _mqttClient.subscribe(mqttTopic("cmd/rfid/read_block").c_str(), 1); // RFID playground: arm read
     _mqttClient.subscribe(mqttTopic("cmd/rfid/cancel").c_str(),     1); // RFID playground: cancel arm
+    _mqttClient.subscribe(mqttTopic("cmd/rfid/ndef_write").c_str(), 1); // NDEF URI write (v0.4.11)
 #endif
 #ifdef BLE_ENABLED
     _mqttClient.subscribe(mqttTopic("cmd/ble/scan").c_str(),      1);   // BLE: trigger scan
@@ -1140,15 +1237,9 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     responderSetHealthFlag(1, false);
     ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow 2s/2s blink — Wi-Fi up, MQTT reconnecting
 
-    // (#44) WS2812 strip: revert to BOOT_INDICATOR "wifi" (fast blue pulse) so
-    // the operator can see at a glance that the broker is unreachable. The
-    // mqtt-reconnect timer will restore MQTT_HEALTHY on the next onMqttConnect().
-    {
-        LedEvent e{};
-        e.type = LedEventType::BOOT_STATE;
-        strlcpy(e.animName, "wifi", sizeof(e.animName));
-        ws2812PostEvent(e);
-    }
+    // (#44 / #51 v0.4.10.1) BOOT_STATE "wifi" ws2812 post DISABLED for the same
+    // reason documented in onMqttConnect above. Posting from the async_tcp
+    // disconnect callback is the most likely watchdog-trigger path.
     if (_mqttReconnectCount == MQTT_REDISCOVERY_THRESHOLD) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }

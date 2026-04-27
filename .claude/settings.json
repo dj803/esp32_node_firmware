@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mosquitto_sub *)",
+      "Bash(curl -s http://127.0.0.1:*)",
+      "Bash(curl -sI http://127.0.0.1:*)",
+      "Bash(curl -s https://dj803.github.io/*)",
+      "Bash(npm show *)",
+      "Bash(tasklist *)",
+      "Bash(tasklist)",
+      "Bash(where *)",
+      "Bash(mode)"
+    ]
+  }
+}

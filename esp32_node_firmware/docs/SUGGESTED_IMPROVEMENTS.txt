@@ -1576,3 +1576,1081 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               but unproven". Capture the resulting tx_power/n
               values per pair as Part C of RF_CONFIG_TEST_2026_04_25
               when the test is run.
+
+48. Device UUID drift — Delta and Echo had unexpected UUIDs on 2026-04-25
+    OBSERVATION (2026-04-25, post-v0.4.10 OTA chain):  Three of the four
+    OTA commands in the staggered fleet rollout silently failed because
+    Delta and Echo were publishing under DIFFERENT UUIDs than the values
+    that had been carried in CLAUDE.md / fleet scripts:
+
+       Expected (from prior session notes):
+         Delta: 2b89f43c-c66e-4b30-9020-ff7da99ac3eb
+         Echo:  2fdd4112-c2cc-43d2-bdc0-30cd76b09ec0
+
+       Actual (mosquitto.log evidence on 2026-04-25 ~19:21 SAST):
+         Delta: 2b89f43c-2fd8-4ed6-ac9d-fb0d8f97c282
+         Echo:  2fdd4112-9255-42a8-a099-ada0075a677b
+
+    Note: the FIRST 8 hex characters match — same prefix, different
+    suffix. That rules out "we swapped two devices" and is consistent
+    with the UUID being PARTIALLY regenerated. DeviceId::get() is
+    expected to load a single immutable UUID from NVS namespace
+    "esp32id"; if the namespace is missing, a NEW UUID is generated
+    and persisted. So the prefix matching is suspicious — needs
+    code-level inspection.
+
+    POSSIBLE CAUSES:
+       a) NVS namespace "esp32id" was wiped at some point — full
+          reflash (esptool erase_flash) followed by upload would
+          do this. Delta has been reflashed multiple times during
+          the calibration work; Echo less so.
+       b) DeviceId::ensure() / generate() bug — partial-write to
+          NVS leaves a half-formed UUID that gets rebuilt next
+          boot, yielding new bytes after the prefix.
+       c) Two UUIDs co-existed in NVS at one point (e.g. credential
+          rotation race) and the wrong one became authoritative.
+       d) Operator reset via the AP portal — does the portal
+          regenerate the device UUID? If so, that's the leak.
+
+    INVESTIGATION STEPS:
+       1. Read include/device_id.h (or equivalent) and trace every
+          path that writes NVS_KEY for the UUID. Is there any code
+          that REGENERATES the UUID after the first boot?
+       2. Check git log for the device_id module — was a regeneration
+          path added in v0.4.x that didn't exist earlier?
+       3. On Delta/Echo: dump NVS namespace "esp32id" via serial
+          (add a temporary debug command) and confirm only one
+          UUID is stored.
+       4. After flashing v0.4.10 to Delta + Echo, capture their
+          boot UUIDs. If they change again on a clean reflash that
+          PRESERVES NVS, that's smoking gun for cause (b) or (c).
+
+    IMPACT: Operational. Fleet scripts that hardcode UUIDs silently
+            fail when devices "rotate" their UUID. Workaround in
+            place (always resolve UUIDs from live MQTT first) but
+            the root cause should be fixed — a stable per-device
+            UUID is foundational for credential rotation, OTA
+            tracking, and the boot_history dedup logic.
+
+    PRIORITY: Medium. Workaround is viable for now; track silent
+              UUID regeneration as a stability bug worth fixing
+              before the relay+Hall hardware (v0.5.0) ships, since
+              that scope adds another set of devices that will need
+              stable identities.
+
+49. Bootstrap protocol does not propagate OTA URL to new siblings
+    OBSERVATION (2026-04-25, during v0.4.10 fleet OTA):  Delta serial
+    log captured during MQTT-triggered OTA shows:
+
+       [I][OTA] Manifest fetch 1/3: https://myorg.github.io/esp32-firmware/ota.json
+       [W][OTA] Manifest fetch 1/3 failed (code 404)
+       [I][OTA] Manifest fetch 2/3: https://dj803.github.io/esp32_node_firmware/ota.json
+       [I][OTA] Manifest fetched from fallback URL #1
+
+    The PRIMARY URL `myorg.github.io/esp32-firmware/ota.json` is the
+    placeholder LITERAL from include/config.h:239 (OTA_JSON_URL define).
+    Delta's NVS field gAppConfig.ota_json_url is empty, so the firmware
+    fell through to the compile-time default — which has never been a
+    real deployment URL.
+
+    OTA only succeeded because the OTA_FALLBACK_URLS array hardcodes
+    the correct dj803 URL as fallback #1. Remove that safety net and
+    Delta + Echo would NEVER have OTA'd.
+
+    ROOT CAUSE (probable):  The ESP-NOW bootstrap protocol exchanges
+    credential bundles (WiFi SSID/password + MQTT URL + keys) between
+    siblings, but the OTA URL is a SEPARATE field with its own
+    message type pair (ESPNOW_MSG_OTA_URL_REQ 0x05 /
+    ESPNOW_MSG_OTA_URL_RESP 0x06) that the new sibling apparently
+    does NOT request after credential bootstrap completes. So:
+
+       1. New device boots, has no credentials  → ESP-NOW broadcast
+          credential request.
+       2. Sibling responds with credential bundle (NO ota_json_url).
+       3. New device persists credentials, connects WiFi+MQTT, marks
+          itself OPERATIONAL.
+       4. New device NEVER asks any sibling "what is your OTA URL?"
+       5. Result: gAppConfig.ota_json_url stays empty; compile-time
+          placeholder is used; manifest fetch falls through to
+          OTA_FALLBACK_URLS.
+
+    This is consistent with #48 — Delta + Echo were re-bootstrapped
+    at some point (which also explains the unexpected UUID change
+    if NVS was wiped before re-bootstrap).
+
+    INVESTIGATION STEPS:
+       1. Read include/espnow_responder.h and trace whether the
+          credential bundle includes ota_json_url, OR whether the
+          bootstrap state machine fires ESPNOW_MSG_OTA_URL_REQ as
+          a follow-up after persisting credentials.
+       2. If ota_json_url is missing from the credential bundle:
+          add it (one extra string field, version-bump
+          ESPNOW_PROTOCOL_VERSION to keep mixed fleets safe).
+       3. Alternatively: have the new sibling send
+          ESPNOW_MSG_OTA_URL_REQ once after MQTT comes up; persist
+          the response to NVS and update gAppConfig.
+       4. Best hardening: have the firmware log a WARN line on
+          every boot if gAppConfig.ota_json_url is empty / equals
+          the config.h placeholder, so the failure mode is visible
+          in MQTT before the next OTA attempt.
+
+    IMPACT: Tied to #48 — every freshly-bootstrapped sibling has
+            silently been using the safety-net fallback URL since
+            the manifest URL changed. Today this works because the
+            fallback is correct, but it's a latent failure: changing
+            the manifest URL would brick OTA for any device whose
+            NVS was wiped without re-provisioning via the AP portal.
+
+    PRIORITY: HIGH — same priority class as the OTA stagger (#45),
+              because OTA reliability is the foundation for every
+              future fleet operation. Cheap fix (~50 lines) and
+              the visibility win alone justifies it.
+
+50. esptool v5.2 erase-flash does NOT wipe NVS on first-power-on chips
+    OBSERVATION (2026-04-25):  Brand-new ESP32 module ("Foxtrot",
+    MAC 28:05:a5:32:50:44, factory shrink-wrapped, never flashed)
+    flashed with v0.4.10 immediately after running:
+
+        python -m esptool --chip esp32 --port COM5 erase-flash
+
+    Output: "Flash memory erased successfully in 1.8 seconds."
+
+    1.8 seconds is suspicious — a typical 4 MB SPI NOR chip-erase takes
+    30+ s, not 1.8 s. Likely the command performed a sector-level erase
+    of a single region rather than a true chip-erase.
+
+    First-boot serial log on Foxtrot:
+        [DeviceId] Loaded UUID: 3b3b7342-80e7-43dd-afc7-78d0470861e2
+        [AppConfig] OTA JSON URL: https://dj803.github.io/esp32_node_firmware/ota.json
+        [BOOT] Admin credentials found — skipping bootstrap
+        [WiFi] Association attempt 1 of 3 — SSID: Enigma
+        [MQTT] Connected to broker
+
+    All three of these REQUIRE pre-existing NVS state:
+        - "Loaded UUID" (vs. "Generated new UUID") = device_id.h read NVS,
+          found a stored UUID, used it.
+        - OTA URL = correct dj803 URL = previously saved AppConfig.
+        - "Admin credentials found" = CredentialStore::hasPrimary()
+          returned true = NVS namespace "esp32cred" had src=ADMIN.
+
+    On a TRULY blank chip, all three should be:
+        - "Generated new UUID: ..."
+        - OTA URL = config.h placeholder ("myorg.github.io...")
+        - bootstrap path entered (no admin creds in NVS)
+
+    This finding REOPENS the diagnosis of #48 + #49:
+        - The "UUID drift" theory for Delta/Echo (#48) needs revisiting.
+          If chip-erase silently doesn't wipe NVS, then a re-flash without
+          a separate NVS-erase step leaves stale state — including stale
+          UUID.
+        - The "OTA URL not propagated by bootstrap" theory for #49 may
+          be partly wrong: AppConfig.ota_json_url was the correct dj803
+          URL on Foxtrot. The earlier Delta/Echo fallthrough to the
+          placeholder might have been a different bug (e.g. NVS read
+          racing with first boot).
+
+    INVESTIGATION STEPS:
+       1. Re-run the experiment with explicit NVS-region erase:
+            python -m esptool --chip esp32 --port COM5 erase-region 0x9000 0x6000
+          (assuming partitions.csv places NVS at 0x9000, 24 KB). Or
+          read partitions.bin to get the exact NVS range.
+       2. After the explicit erase, re-flash and watch serial. If
+          "Generated new UUID" + bootstrap path now appear, the
+          chip-erase command was the culprit.
+       3. File an upstream esptool issue if confirmed; pin to v4.x
+          or use `erase-region` for NVS until fixed.
+       4. Update CLAUDE.md "Build & Test" section to use a known-good
+          erase sequence for fresh-device provisioning.
+
+    THEORIES BEYOND esptool BUG (2026-04-25 update — operator confirms
+    Foxtrot was sealed shrink-wrapped, never powered, never flashed):
+
+       T1. esptool erase-flash silently no-ops or partial-erases on
+           this chip variant. The 1.8 s erase time supports this.
+
+       T2. PySerial DTR-toggle on port-open caused a reset between
+           firmware first-boot and our serial capture, so the log we
+           see is the SECOND boot. The FIRST boot ran ESP-NOW
+           bootstrap from a healthy sibling (Alpha/Bravo/etc were all
+           on v0.4.10 by this point and broadcasting), persisted
+           creds + UUID + OTA URL, then DTR-reset interrupted, and
+           on second boot the NVS was already populated.
+           This theory is WEAKENED by the bootstrap window math:
+           ESP-NOW channel scan needs 13 × 500 ms = 6.5 s minimum
+           per attempt, and the gap between write-flash hard-reset
+           and pyserial open is ~1-2 s. Bootstrap couldn't complete
+           in that window — UNLESS the new sibling-respond path is
+           faster than the spec timing, or a sibling responds on
+           the FIRST channel hit (Wi-Fi channel 6 is the active one,
+           which a fresh device would scan early).
+
+       T3. The dev-board vendor flashed test firmware that happens
+           to share our NVS namespace names ("esp32cred", "esp32id",
+           "esp32appcfg") and persisted the user's credentials
+           somehow. Vanishingly unlikely.
+
+       T4. Factory eFuse / OTP region holds default values that the
+           firmware reads. ESP32 has eFuse but it's chip-id / MAC,
+           not arbitrary key/value pairs. Unlikely.
+
+       Operator-recommended next step: re-erase + isolate Foxtrot
+       from the broadcast range of other v0.4.10 nodes (power down
+       the fleet, OR move Foxtrot to a different room) to rule out
+       theory T2. If the same NVS state still appears after that,
+       T1 is confirmed.
+
+    RESOLVED 2026-04-25 (same session — fleet-isolation re-test):
+       Sequence: powered down all 5 v0.4.10 fleet nodes, then on
+       Foxtrot:
+          esptool --after no-reset erase-flash       (2.0 s — same fast time)
+          esptool --after no-reset write-flash ...
+          pyserial open with controlled RTS reset
+
+       First-boot serial captured cleanly:
+          [E][Preferences.cpp:47] begin(): nvs_open failed: NOT_FOUND
+          [I][ESP-NOW] My MAC: 28:05:A5:32:50:44
+          [I][ESP-NOW] Async bootstrap attempt 1 of 3
+          [I][ESP-NOW] Init OK — scanning channels 1–13
+          [W][ESP-NOW] Timeout — no sibling response
+          (repeats for attempts 2 and 3)
+
+       CONCLUSION:
+          T1 (esptool bug) → REJECTED. erase-flash IS clearing NVS
+            properly. The NOT_FOUND error on nvs_open is the
+            authoritative proof of an empty namespace.
+          T2 (DTR-induced second-boot) → CONFIRMED. The previous
+            "Loaded UUID + Admin credentials found" log was a
+            SECOND boot. Between write-flash hard-reset and
+            pyserial DTR-open (~1-2 s wall-clock), Foxtrot:
+              (a) booted ROM bootloader (~300 ms)
+              (b) booted firmware app (~500 ms — faster than spec)
+              (c) found a sibling on Wi-Fi channel 6 (the active
+                  channel) within sub-second by sheer luck of
+                  scanning channel order — much faster than the
+                  6.5 s worst-case spec
+              (d) received credential bundle, persisted NVS,
+                  generated UUID, persisted UUID, advanced to
+                  WIFI_CONNECT
+              (e) PySerial open asserted DTR → reset
+              (f) second boot showed populated NVS
+
+       SECONDARY FINDING (revises #49): the OTA URL on Foxtrot's
+       second boot was the CORRECT dj803 URL. So the credential
+       bundle exchanged via ESP-NOW DOES include ota_json_url
+       (or AppConfig's load() applies a smart default). #49's
+       theory ("OTA URL not propagated") is partly wrong — needs
+       a code-level audit of CredentialBundle wire format to
+       confirm. The Delta/Echo OTA-URL fallthrough that opened
+       #49 must have a different cause; possibly Delta/Echo were
+       provisioned BEFORE the firmware version that added
+       ota_json_url to the bundle.
+
+    UPDATED PRIORITY:  esptool tooling = NOT a bug. Drop priority.
+       Workflow change still warranted: when capturing serial of
+       a fresh provisioning, USE `--after no-reset` on esptool
+       AND open serial with controlled RTS reset (do NOT let
+       pyserial DTR-toggle the chip). Documented in CLAUDE.md.
+
+    IMPACT:  Provisioning workflow is broken — operators believe a
+             chip-erased device is fresh, but it actually retains
+             credentials, UUID, OTA URL, and any other NVS state.
+             Combined with #48, this means a re-flashed device may
+             silently come up with a NEW UUID (if device_id.h has a
+             retry path that regenerates on read failure) AND old
+             credentials, leading to identity confusion in the fleet.
+
+    PRIORITY: HIGH — affects every future device provisioning.
+              Trivial workaround (explicit erase-region) but the
+              one-line tooling fix prevents days of triage on
+              future "why is this fresh device behaving like an
+              old one" investigations.
+
+# ── #48 UPDATE 2026-04-25 (live capture) ─────────────────────────────
+Foxtrot UUID drift caught LIVE during the same session it was first
+provisioned. Sequence:
+  1. Foxtrot first-boot bootstrap → UUID 3b3b7342-80e7-43dd-afc7-78d0470861e2,
+     creds + OTA URL + UUID persisted to NVS.
+  2. Subsequent restart (USB cable wiggle / RTS reset / similar) →
+     fresh boot serial shows  UUID c1278367-21af-478d-8a8b-0b84a4de60df.
+     Same physical chip, same NVS partition (admin credentials still
+     present), but UUID is new.
+
+This rules out the "NVS wiped" hypothesis for #48 — credentials AND
+ota_json_url survived the restart, only the UUID was regenerated. So
+DeviceId::init() is reading SOMETHING wrong on the second boot and
+falling through to the regenerate path (Serial.printf "Generated new
+UUID:" was suppressed in this capture but the new value proves it
+ran). Smoking gun is in include/device_id.h — likely the NVS namespace
+"esp32id" is being opened in a way that fails intermittently after
+first write, OR the load path has a subtle bug that returns success
+with an empty buffer. CRITICAL fix path:
+  - Add LOG_W on the UUID-regenerate branch in device_id.h so the
+    issue is visible without serial capture.
+  - Inspect prefsTryBegin(NVS_NAMESPACE="esp32id") for namespace-name
+    string-length issues (limit 15 chars — "esp32id" is 7, fine).
+  - Consider migrating UUID storage to the same namespace as
+    credentials (esp32cred) to eliminate the multi-namespace race.
+
+
+51. v0.4.10 stability regression — suspected LED MQTT_HEALTHY hooks
+    OBSERVATION (2026-04-26 morning daily-health, RED status):
+    Fleet experienced widespread instability overnight that does NOT
+    fit a simple "mains power outage" explanation. boot_history
+    captures from Node-RED (flow context boot_history on tab
+    0cc8e394107eb034) show paired firmware crashes — not
+    power-cycle reboots:
+
+       2026-04-25 23:42:56  Alpha v0.4.10      panic
+       2026-04-25 23:43:12  Delta v0.4.10-dev  int_wdt
+       2026-04-26 00:04:26  Alpha v0.4.10      other_wdt
+       2026-04-26 00:04:56  Delta v0.4.10-dev  other_wdt
+       2026-04-26 ~08:54    Alpha v0.4.10      other_wdt   (live-observed)
+
+    Mosquitto.log timeline of last-seen disconnects (all "exceeded
+    timeout" except where noted):
+
+       21:04   Echo     v0.4.10-dev  (mains; no power issue at this hour)
+       23:02   Charlie  v0.4.10-dev  (battery — only death attributable to power)
+       23:36   Foxtrot  v0.4.11-dev  ("closed by client" — caused by
+                                      isolation-test pyserial RTS-reset)
+       23:38   Bravo    v0.4.10-dev  (battery STILL CHARGED — operator
+                                      confirmed; not power)
+       02:05   Delta    v0.4.10-dev  (mains)
+       08:54   Alpha    v0.4.10      (mains, currently in crash loop)
+
+    OPERATOR CONFIRMS: only Charlie's death is explained by battery
+    exhaustion. Bravo's battery still has charge. Mains was off
+    overnight but mains-powered devices show panic / watchdog boot
+    reasons, not poweron — i.e., they were running when they crashed.
+    Plus Alpha continues to crash at idle ~8 hours after the most
+    recent mains restoration.
+
+    LEADING HYPOTHESIS — v0.4.10 LED MQTT_HEALTHY hooks:
+       v0.4.10 introduced exactly two new firmware code paths that
+       fire on every MQTT connect/disconnect (ref: include/mqtt_client.h
+       in onMqttConnect — the ws2812PostEvent for LedEventType::MQTT_HEALTHY,
+       and onMqttDisconnect — the ws2812PostEvent for LedEventType::BOOT_STATE
+       with animName="wifi"). Every other v0.4.10 change is either
+       cosmetic (config.h "0.4.10-dev" literal) or server-side
+       (Node-RED stagger + canary). So the LED hooks are the only
+       runtime addition.
+
+    KEY DATAPOINT — only ALPHA has a WS2812 strip physically wired:
+       Alpha is the only device in the fleet with the addressable
+       LED strip on GPIO 27 actually connected. Bravo had the strip
+       earlier in the day (it was on COM5 during the LED-fix verify)
+       but the strip is now on Alpha. Other devices toggle GPIO 27
+       with nothing attached — the data stream goes nowhere. So:
+         - If the regression is purely software (queue post race,
+           memory corruption), every device should crash equally.
+           That fits Alpha + Delta + Bravo + Echo crashes.
+         - If the regression is hardware (current spike, brownout
+           when strip is driven), only Alpha would be hit. That
+           fits Alpha being the most chronic crasher (3 events in
+           9 hours) while Delta has 2 over the same window despite
+           NO physical strip.
+
+       The truth is probably "both" — a software defect that's
+       easy to trigger and a hardware-amplified version of it on
+       Alpha. Or, Delta's 2 crashes were artifacts of yesterday's
+       OTA-chaos session and only Alpha's are live.
+
+    CONFOUNDS to rule out:
+       - Many of last night's crashes overlap my session activity
+         (OTA chain test, Foxtrot fleet-isolation test, USB flash
+         pass for v0.4.10 across 4 devices). The 23:42-00:04 window
+         particularly was during multiple device repower cycles.
+         Alpha's 08:54 crash is the cleanest "idle steady-state"
+         data point — no operator activity at that moment.
+       - GitHub Pages was disabled on the repo overnight (cause
+         unclear — maybe inactivity-related auto-disable on free
+         tier). Restored by operator 2026-04-26 ~08:50. UNRELATED
+         to firmware crashes but scared us as a RED on the morning
+         check.
+
+    PROPOSED VERIFICATION:
+       Cut a v0.4.10.1 patch reverting ONLY the two new
+       ws2812PostEvent calls in mqtt_client.h (keep the LedState
+       MQTT_HEALTHY enum + render case — they're inert without
+       a poster). USB-flash Alpha. If Alpha stays up >4 h with
+       no abnormal boot reasons, regression confirmed and the
+       fix is to either (a) re-architect the post path to be
+       fully async-tcp-safe, or (b) leave the LED feature out
+       and revert to v0.4.09 visual behavior. If Alpha STILL
+       crashes, hypothesis falsified — root cause is elsewhere
+       (maybe the upgraded asynctcp / ESP-NOW interaction added
+       in earlier v0.4.x).
+
+    PRIORITY: HIGH — fleet is unreliable on v0.4.10. Either a
+              quick revert ships, or v0.4.10 gets blacklisted
+              and the fleet rolls back to v0.4.09 manually.
+
+
+52. Node-RED file logging not configured (observability gap)
+    OBSERVATION (2026-04-26):  Node-RED is running as PID 2184 since
+    2026-04-25 11:57:38 (started in a Command Prompt with stdout
+    redirected). Operator reported the log file appearing frozen at
+    20:30 last night, which was during the v0.4.10 fleet-wide crash
+    window (#51). Investigation showed:
+       - No *.log files exist anywhere under ~/.node-red/
+       - No ProgramData/node-red/ logs
+       - No Node-RED running as a Windows service
+       - Logging falls back to stdout, captured by the cmd window's
+         line buffer; buffer flushes only on full / window close
+
+    IMPACT:  When something goes wrong overnight (broker drops,
+    mass-disconnect, runtime exception), there is no historical
+    record. Today the boot_history flow context recovered enough
+    info to triage #51, but only because that flow was already
+    capturing retained boot announcements; runtime errors / flow
+    exceptions / MQTT-broker disconnects from Node-RED's side are
+    lost.
+
+    PROPOSED FIX:  Add a file logger to ~/.node-red/settings.js:
+
+        logging: {
+            console:  { level: 'info' },
+            file:     { level: 'info',
+                        file: 'C:/Users/drowa/.node-red/nodered.log',
+                        flushInterval: 10 }
+        }
+
+    Restart Node-RED after the change. With flushInterval = 10 the
+    file is written every 10 lines, so progress is live-tail-able
+    via `Get-Content -Wait`. Add log rotation if the file grows
+    unbounded (built-in support: maxFiles + maxSize keys).
+
+    Update CLAUDE.md "Diagnostic process" section to point at the
+    new log path so future sessions know to check it.
+
+    PRIORITY: Low — operational quality-of-life. Action when convenient.
+
+53. Per-heartbeat LOG_HEAP for fleet-wide leak surveillance
+    OBSERVATION (2026-04-26 audit):  Existing LOG_HEAP markers fire
+    at boot phases (after-serial, after-wifi, after-mqtt, after-ble)
+    but never during steady-state operation. Heap fragmentation /
+    leak hypotheses (#51 hypothesis #4) cannot be confirmed or
+    ruled out without runtime sampling.
+
+    PROPOSED FIX:  In include/mqtt_client.h, extend the heartbeat
+    publisher to include `heap_free` and `heap_largest` fields in
+    the JSON status payload. Sample is taken just before publish,
+    every HEARTBEAT_INTERVAL_MS (60 s). One-line change in the
+    payload builder. No new MQTT topic — reuses /status.
+
+    DOWNSTREAM:  Add a Node-RED dashboard tile that plots the
+    rolling 24 h heap-free trajectory per device. Slow downward
+    trend over hours = leak. Sudden drop + recovery = transient
+    pressure (e.g. TLS handshake spike). Stable = healthy.
+
+    BENEFIT:  Catches future leaks BEFORE they cause a crash.
+    Also gives a lower-bound baseline for v0.4.10.1 stability
+    confirmation: if Alpha runs 24 h with flat heap, hypothesis #4
+    is conclusively ruled out.
+
+    PRIORITY: Medium. Cheap implementation; high diagnostic value.
+              Bundle with v0.4.11 release if Phase A passes.
+
+54. Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
+    OBSERVATION (2026-04-26 audit):  arduino-esp32 default has stack
+    overflow detection OFF. Hypothesis #5 in #51 (stack overflow in
+    ws2812 task at 4 KB) cannot be detected at runtime without
+    rebuilding the IDF base.
+
+    PROPOSED FIX:  Provide an alternate platformio.ini env
+    [env:esp32dev_canary] that adds:
+
+        build_flags = -DCONFIG_FREERTOS_CHECK_STACKOVERFLOW=2
+
+    This is the "canary" mode (writes a known pattern at the bottom
+    of every stack and checks it at every context switch). Cost is
+    ~+8 ms per task switch on average — fine for a single soak
+    device, not for production fleet.
+
+    USAGE:  Build the canary env, USB-flash to ONE device, soak for
+    7 days. If any task overflows its stack, the firmware halts
+    with a serial print of the offending task name and the stack
+    high-water mark. We then bump that task's stack and ship the
+    fix without canary in production.
+
+    PRIORITY: Low. Diagnostic only. Schedule alongside the v0.4.13
+              tag if no other stack-related issues surface by then.
+
+55. AsyncMqttClient malformed-packet counter
+    OBSERVATION (2026-04-25 mosquitto log review):  Mosquitto recorded
+    2 'malformed packet' disconnect events in 2 days — Charlie at
+    16:02:48 and Delta at 18:07:02. Rare but non-zero signal.
+    Possible causes: transient memory corruption mid-publish, bug
+    in AsyncMqttClient framing, bit-flip on the wire.
+
+    PROPOSED FIX:  Add a counter `_mqttMalformedCount` to
+    mqtt_client.h, incremented from the AsyncMqttClient onError
+    callback (or onDisconnect with reason indicating protocol
+    error). Surface in heartbeat status JSON alongside #53's heap
+    fields. Operators can spot a device drifting from "0" to "1+"
+    over time without log archaeology.
+
+    BENEFIT:  Surfaces a class of low-frequency-but-high-importance
+    failures that are currently invisible.
+
+    PRIORITY: Low. Bundle with #53 work — same heartbeat payload
+              extension.
+
+56. Re-implement MQTT_HEALTHY safely via deferred-flag pattern
+    OBSERVATION (2026-04-26 audit + #51 Phase A in progress):  The
+    v0.4.10 LED hooks posted ws2812 events directly from
+    onMqttConnect/onMqttDisconnect, both of which run on the
+    TWDT-subscribed async_tcp task. Suspected cause of #51.
+    v0.4.10.1 disables the posts; the LED state machine itself is
+    fine.
+
+    PROPOSED FIX (v0.4.12):  Re-introduce the visual feedback
+    (operator-facing green-when-healthy + revert-on-disconnect)
+    using the same deferred-flag pattern already proven in the
+    sleep / restart paths (search mqtt_client.h for `_mqttSleepAtMs`
+    and `_mqttRestartAtMs`):
+
+        // In callback (async_tcp ctx):
+        _mqttLedHealthyAtMs = millis();   // single atomic store
+
+        // In loop() (loopTask ctx, not WDT-subscribed in normal ops):
+        if (_mqttLedHealthyAtMs && millis() >= _mqttLedHealthyAtMs) {
+            LedEvent e{}; e.type = LedEventType::MQTT_HEALTHY;
+            ws2812PostEvent(e);
+            _mqttLedHealthyAtMs = 0;
+        }
+
+    The flag is a single 32-bit volatile store (atomic on Xtensa).
+    The actual ws2812PostEvent + struct copy happen on loopTask
+    where we have full FreeRTOS budget. No queue-fill risk during
+    rapid reconnect cycles either: the flag is overwritten, not
+    queued.
+
+    DOCUMENTATION:  Add the pattern to TWDT_POLICY.md as the
+    canonical "callback wants to do work" template. Update #44 and
+    #51 with the resolution.
+
+    DEPENDENCY:  Phase A of #51 must pass first to confirm the
+    revert is sufficient. Then v0.4.11 ships the revert; v0.4.12
+    re-enables this safely.
+
+    PRIORITY: Medium-High. Restores the operator-visible green-MQTT
+              indicator without the WDT risk. Small change with
+              high UX value.
+
+57. Install host gcc/g++ to enable native unit tests
+    OBSERVATION (2026-04-25 + 2026-04-26):  CLAUDE.md says
+    "Host-side unit tests: pio test -e native -v ← run before
+    every commit". Reality: `pio test -e native` fails with
+    "'gcc' is not recognized as an internal or external command"
+    because no host C/C++ compiler is installed on this Windows
+    workstation. The xtensa-esp32-elf cross-compiler bundled with
+    PlatformIO works for ESP32 builds, but the native env needs
+    a host gcc.
+
+    IMPACT:  Unit tests in test/test_native/ have never run on
+    this machine. Code that those tests would catch (NVS namespace
+    drift, sector-trailer guard math, ranging math, hex helpers)
+    is going out untested. We've shipped without crashes attributable
+    to those subsystems, but the safety net is missing.
+
+    PROPOSED FIX:  Install a Windows-native gcc. Two cleanest
+    options:
+
+       1. winget install -e --id MartinStorsjo.LLVM-MinGW.UCRT
+          (LLVM-based, ~150 MB, modern, single command).
+       2. Download WinLibs MinGW-w64 zip from https://winlibs.com/
+          and unzip into C:\mingw64\, then add C:\mingw64\bin to
+          system PATH. Lower-tech but well-tested.
+
+    Verify: open a fresh shell, run `gcc --version`. Then from
+    esp32_node_firmware/: `pio test -e native -v` should compile
+    and run the test suite (~30 s).
+
+    DOWNSTREAM:  Once gcc works, enforce the CLAUDE.md rule via
+    a pre-commit git hook that runs `pio test -e native -v` and
+    blocks the commit on failure. Documented in
+    docs/TOOLING_INTEGRATION_PLAN.md — fits Tier 1 / T1.5
+    (PlatformIO standardisation).
+
+    PRIORITY: Low. Operational quality-of-life. No active blocker
+              today. Address when convenient — most likely
+              alongside the next batch of Tier 1 tooling work.
+
+────────────────────────────────────────────────────────────────────────────────
+Setup gaps — 2026-04-26 full-stack audit
+(Claude / GitHub / PlatformIO / Mosquitto / Node-RED / repo hygiene)
+────────────────────────────────────────────────────────────────────────────────
+
+Phase A — Fix confirmed breakage
+
+58. Fix daily_health_config.json local_clone path                (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\tools\daily_health_config.json  →  "local_clone" key
+    PROBLEM:  Path set to C:\Users\drowa\git\esp32_node_firmware — that directory
+              does not exist. The canonical clone is at
+              C:\Users\drowa\Documents\git\Arduino\NodeFirmware\esp32_node_firmware.
+              File-system health checks in daily_health_check.py fail silently.
+    FIX:      Update the value to
+              C:\Users\drowa\Documents\git\Arduino\NodeFirmware\esp32_node_firmware
+    VERIFY:   python C:\Users\drowa\tools\daily_health_check.py — confirm no
+              "path not found" warnings in the report.
+    PRIORITY: High. Silent failure in the daily health baseline.
+
+59. Root .gitignore (repo root is currently unprotected)         (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\.gitignore  (create)
+    PROBLEM:  No .gitignore at the repo root. The firmware subfolder may have
+              its own, but top-level dirs like Logs/, ble_dashboard_flow.json,
+              ble_track_inject.json, and .claude/scheduled_tasks.lock are
+              already showing as untracked noise in git status.
+    FIX:      Create root-level .gitignore covering:
+                  .pio/
+                  *.bin  *.hex  *.elf
+                  .DS_Store  Thumbs.db
+                  Logs/
+                  *.lock
+                  __pycache__/  *.pyc
+    PRIORITY: Medium. Keeps git status clean; prevents accidental binary commits.
+
+60. Root .gitattributes (CRLF normalisation)                     (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\.gitattributes (create)
+    PROBLEM:  CI runs on Ubuntu; dev machine is Windows. Without an explicit
+              line-ending policy, mixed CRLF/LF commits accumulate and produce
+              spurious diffs.
+    FIX:      Minimal root .gitattributes:
+                  * text=auto eol=lf
+                  *.bin  binary
+                  *.hex  binary
+                  *.elf  binary
+                  *.png  binary
+    PRIORITY: Medium. Prevents CI/local diff noise on every text file.
+
+Phase B — Security & identity
+
+61. Mosquitto: add auth (passwd + ACL)                           (2026-04-26 audit)
+    DECISION: Intentionally deferred — no auth during active dev work.
+              Open broker on private LAN is acceptable for now.
+    REVISIT:  Before any of: guest network access, remote access, or moving
+              beyond the dev phase. When ready:
+      1. Copy mosquitto.conf.new → mosquitto.conf, uncomment:
+             allow_anonymous false
+             password_file C:\ProgramData\mosquitto\passwd
+             acl_file C:\ProgramData\mosquitto\acl
+      2. Create passwd:  mosquitto_passwd -c passwd esp32_fleet
+                         mosquitto_passwd passwd nodered
+                         mosquitto_passwd passwd claude_mcp
+      3. Create ACL restricting the fleet to Enigma/JHBDev/Office/# only.
+      4. Restart service; verify all 6 nodes still publish within 30 s.
+      5. Update async-mqtt credentials in include/config.h + Node-RED MQTT nodes.
+    PRIORITY: Deferred. Re-evaluate at end of dev phase.
+
+62. LICENSE file                                                  (addressed 2026-04-26)
+    DECISION: All rights reserved. LICENSE file created at repo root.
+              Copyright (c) 2026 dj803. No open-source licence at this time.
+
+Phase C — CI completeness
+
+63. Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
+    WHERE:    .github/workflows/build.yml
+    PROBLEM:  docs/SUGGESTED_IMPROVEMENTS references §11.3 (secrets scanning)
+              and TOOLING_INTEGRATION_PLAN.md lists trufflehog as a required
+              CI job — but build.yml only has compile + host-test + release jobs.
+              No secrets scan has ever run on any commit.
+    FIX:      Add a job after the build job:
+                  secrets-scan:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - uses: actions/checkout@v4 --fetch-depth 0
+                      - uses: trufflesecurity/trufflehog@main
+                        with:
+                          path: ./
+                          base: ${{ github.event.repository.default_branch }}
+    PRIORITY: Medium. Blocks secrets-in-commit incidents; already spec'd.
+
+64. Root README.md                                               (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\README.md  (create)
+    PROBLEM:  Cloning the repo shows a blank GitHub landing. No orientation.
+    FIX:      Minimal README: one-paragraph description, link to CLAUDE.md,
+              link to esp32_node_firmware/docs/. No need to duplicate content.
+    PRIORITY: Low. Cosmetic, no operational impact.
+
+Phase D — Developer experience
+
+65. esp32_node_firmware/include/build_config.h stub              (2026-04-26 audit)
+    WHERE:    esp32_node_firmware/include/build_config.h  (create)
+    PROBLEM:  docs/TECHNICAL_SPEC.md §10.1 references build_config.h as the
+              home for build-time flags. The file does not exist. Any code
+              or doc that tries to include it will fail to compile.
+    FIX:      Create a minimal stub:
+                  #pragma once
+                  // Build-time feature flags. Set via platformio.ini build_flags.
+                  // #define ENABLE_SERIAL_DEBUG
+                  // #define SKIP_BOOTSTRAP_WAIT
+              Document in platformio.ini comment that flags go here.
+    PRIORITY: Low. No active include errors today, but resolves the dangling
+              spec reference before Phase 1 feature work references it.
+
+66. .claude/commands/ — operational shortcuts                    (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\.claude\commands\  (create dir + 3 files)
+    PROBLEM:  .claude/commands/ directory does not exist. Repeated multi-step
+              workflows (compile+test, fleet snapshot, fleet OTA status) have
+              no single-keystroke entry point. daily-health.md exists as a
+              skill but is invoked via a different mechanism.
+    FIX:      Create three command files:
+                  pio-build.md   — pio test -e native -v && pio run -e esp32dev
+                  mqtt-sub.md    — mosquitto_sub snapshot of fleet status topics (-W 5)
+                  fleet-status.md — run tools/fleet_status.sh and summarise
+    PRIORITY: Low. Quality-of-life; saves typing on daily dev tasks.
+
+68. Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
+    DECISION: Intentionally deferred — no auth during active dev work.
+              Admin API is localhost-only (127.0.0.1:1880); acceptable for now.
+              CLAUDE.md documents this explicitly.
+    REVISIT:  Before any of: exposing Node-RED on the LAN/WAN, adding other
+              users, or moving beyond the dev phase. When ready:
+        In C:\Users\drowa\.node-red\settings.js, uncomment and fill in:
+            adminAuth: {
+                type: "credentials",
+                users: [{ username: "admin", password: "<bcrypt hash>",
+                          permissions: "*" }]
+            }
+        Generate hash: node-red admin hash-pw
+    PRIORITY: Deferred. Re-evaluate at end of dev phase.
+
+67. Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
+    WHERE:    C:\Users\drowa\.node-red\projects\esp32-node-firmware\package.json
+    PROBLEM:  package.json lists only basic metadata (name, description,
+              version 0.0.1). All custom nodes (Dashboard 2.0, MQTT nodes, etc.)
+              are installed globally in Node-RED but not declared as project deps.
+              Setting up on a second machine requires manually identifying which
+              nodes the flows use.
+    FIX:      Add a "dependencies" block listing all @flowfuse/node-red-dashboard
+              and other palette nodes the flows.json references. Can be extracted
+              by scanning flows.json for "type" fields prefixed with custom module
+              names.
+    PRIORITY: Low. Only matters at second-machine setup time.
+
+# ── #51 UPDATE 2026-04-26 mid-day — Phase A INCOMPLETE ─────────────────
+Phase A's hypothesis (LED hooks alone cause the crashes) is REFUTED:
+
+  10:14  Foxtrot  int_wdt   v0.4.11-dev  (had hooks — fits original hypothesis)
+  10:18  Alpha    HUNG      v0.4.10.1-dev (silent deadlock, no boot_reason — NEW failure mode)
+  10:29  Delta    int_wdt   v0.4.10-dev  (had hooks)
+  10:29  Bravo    int_wdt   v0.4.10-dev  (had hooks)
+  10:29  Charlie  int_wdt   v0.4.10.1-dev (HOOKS REVERTED — refutes hooks-only theory)
+
+Two separate failure modes now in scope:
+
+  (a) int_wdt cascade across multiple devices simultaneously, regardless
+      of firmware version. Strongest theory: peer-broadcast storm via
+      ESP-NOW from a misbehaving transmitter (Bravo top suspect — 136
+      mosquitto disconnects in 2 days, predates v0.4.10, chronic flake
+      per #46). Bravo currently powered off; ~1 h watch in progress.
+
+  (b) Silent FreeRTOS deadlock on Alpha after ~70 min uptime. RTC WDT
+      did not recover the chip. WS2812 frozen mid-frame, GPIO 2 LED
+      off. Single observation; needs reproduction. Worst-case path:
+      both cores blocked + watchdog silenced.
+
+Decision: do NOT cut v0.4.11 release yet. Working-tree firmware
+(revert + NDEF + heap + visibility) flashed to Alpha + Foxtrot as
+live observers; Charlie still on the v0.4.10.1-dev test bed.
+
+Next experiments documented in ESP32_FAILURE_MODES.md "2026-04-26
+mid-day update" section.
+
+58. Per-device feature-subset firmware variants
+    OBSERVATION (operator suggestion 2026-04-26):  Devices in the
+    fleet have different physical hardware + roles. Foxtrot has an
+    RFID reader; Alpha has a WS2812 strip; not every device needs
+    BLE; not every device needs ESP-NOW ranging. Currently all
+    devices flash the SAME firmware.bin which includes every
+    optional subsystem regardless of hardware. Flash is at 93.3%
+    (down to 82.1% with BLE disabled per #51 diagnostic).
+
+    PROPOSAL:  Build multiple firmware variants from the same source
+    tree, each compiled with a different set of feature flags
+    (BLE_ENABLED, RFID_ENABLED, ESPNOW_RANGING_ENABLED, etc.). The
+    OTA manifest grows from one URL to N URLs keyed by variant
+    string. Each device announces its variant in the credential
+    bundle / boot status; OTA picks the matching firmware.bin.
+
+    PROS:
+       - Smaller binaries per role (estimated):
+            "minimal" (no BLE, no RFID, no ranging): ~1.3 MB → ~600 KB headroom
+            "rfid-only": ~1.5 MB
+            "ranging-only": ~1.4 MB
+         Enables features blocked by the 1966080-byte app partition
+         (NTAG424 DNA #12, recovery partition #26).
+       - Lower attack surface per device. Subsystems compile out.
+       - Faster boot (fewer init paths).
+       - Easier #51-style diagnosis: deploy a feature-stripped
+         variant to a subset of the fleet to isolate which
+         subsystem is misbehaving.
+       - IRAM/DRAM headroom — NimBLE pulls IRAM from a tight
+         budget (currently 98% with sleep driver, 128 KB base + 2 KB
+         extension per memory.ld). Variants without BLE recover
+         that IRAM for other features.
+
+    CONS:
+       - CI build pipeline complexity 1 → N variants per release.
+         Build time multiplies; gh-pages storage grows.
+       - OTA manifest schema must change (today is single
+         {Version,URL}; new is per-variant array). Backwards-compat
+         needs care so existing devices don't break on the next
+         manifest fetch.
+       - Wrong variant flashed to wrong device = device boots
+         without the hardware-driving code it needs. Mitigation:
+         capability negotiation in bootstrap, but adds round-trip.
+       - Credential bundle / bootstrap must carry variant string;
+         requires ESPNOW_PROTOCOL_VERSION bump.
+       - Documentation churn: every feature doc gets a "variant
+         availability" badge. Roster doc tracks per-device variant.
+
+    DESIGN SKETCH:
+       1. platformio.ini envs: [env:esp32dev_full],
+          [env:esp32dev_rfid], [env:esp32dev_minimal], etc.
+          Each env overrides flags via build_flags.
+       2. CI builds all envs on tag; uploads each binary to
+          gh-pages as firmware-<variant>-<version>.bin.
+       3. OTA manifest:
+            { "Configurations": [
+                { "Variant": "full",    "Version": "0.5.0", "URL": "..." },
+                { "Variant": "rfid",    "Version": "0.5.0", "URL": "..." },
+                { "Variant": "minimal", "Version": "0.5.0", "URL": "..." }
+            ] }
+       4. Firmware bakes BUILD_VARIANT define at compile time;
+          OTA check picks matching entry.
+       5. CLAUDE.md fleet-roster table: device → variant.
+       6. Optional NVS override `cmd/ota/variant` for testing.
+
+    PRIORITY: Medium-High once #51 stability is resolved. Flash-
+              savings ROI alone justifies the CI work. Pairs
+              naturally with v0.5.0 relay+Hall hardware
+              introduction — that's when the fleet starts having
+              genuinely different hardware roles.
+
+    NEAR-TERM SUBSTITUTE:  The per-device feature flag flip we
+    just did for #51 (BLE off via single config.h #define comment)
+    is enough until the variant infrastructure lands. If a device
+    needs BLE back, USB-flash that one device with an alternate
+    build. Manual but cheap.
+
+59. Bench-supply voltage stress testing rig
+    OBSERVATION (2026-04-26 operator suggestion):  Failure modes #51
+    include `brownout` and `other_wdt` as candidates. Today we
+    can't easily distinguish "firmware bug" from "marginal Vcc"
+    when a device crashes. A bench power supply lets us drive
+    one ESP32 at controlled voltage and reproduce the failure
+    mode deterministically.
+
+    PROPOSED RIG:
+       - Bench supply set to 5.0 V (nominal USB), 4.5 V (cable
+         resistance / weak hub), 3.7 V (battery sag near cutoff),
+         5.5 V (USB-C high-side spec), and 6.0 V (regulator stress).
+       - Connect to VIN of a dev-board ESP32 (the on-board AMS1117
+         drops to 3.3 V).
+       - Or skip the regulator and feed 3.3 V directly into the
+         3V3 pin to test the chip's own brownout threshold (~2.43 V
+         per ESP32 datasheet).
+       - Optional: add a programmable load on a GPIO to simulate
+         RFID coil / WS2812 strip current spikes during the test.
+
+    TEST MATRIX:
+       - Vcc sweep down from 5 V to 3 V in 100 mV steps; log boot
+         success / fail / brownout boot reason at each.
+       - Hold at 4.0 V (worst-case brownout-prone) for 4 hours;
+         compare crash rate to nominal 5 V.
+       - Compare: device with WS2812 strip drawing 500 mA peak vs.
+         no strip — does Vcc dip during peak cause crashes?
+
+    DIAGNOSTIC VALUE:
+       - Deterministic reproduction of brownout-class failures.
+       - Separates firmware bugs from hardware/power issues — the
+         Alpha int_wdt + silent-deadlock pattern can be re-tested
+         at controlled Vcc to rule in/out brownout.
+       - Validates the brownout detector threshold (config.h
+         doesn't set one; IDF default is ~2.43 V).
+       - Catches regulator inadequacy (AMS1117 thermal cutoff at
+         ~150 °C, sustained 600+ mA loads can push it).
+
+    DATA TO CAPTURE:
+       - Vcc reading at the chip (multimeter or oscilloscope on
+         the 3V3 pin during peak load).
+       - Boot reasons over time at each voltage.
+       - Heap free at boot (now in heartbeat per #53).
+       - Wi-Fi RSSI (proxies for radio-side power demand).
+
+    PRIORITY: Medium. Worth doing once the immediate #51 cascade is
+              understood — then bench-supply rig characterises the
+              fleet's brownout margin properly. Could also feed
+              into v0.5.0 hardware design (relay + Hall on the
+              same board) where current draw will be higher.
+
+# ── #51 / #58 follow-up — 2×2 BLE × ESP-NOW build matrix ────────────
+Once #51 settles, build a follow-up A/B with three additional firmware
+variants to isolate which subsystem contributes to which failure mode:
+
+   1. BLE on,  ESP-NOW on   (current default — baseline failure mode)
+   2. BLE off, ESP-NOW on   (just flashed — current no-BLE build, stable so far)
+   3. BLE on,  ESP-NOW off  (NEW variant to build) — implementation: comment
+                              ESPNOW_BEACON_INTERVAL_MS init / disable
+                              espnowResponderStart() in main.cpp
+   4. BLE off, ESP-NOW off  (minimum-baseline sanity)
+
+Flash variant 3 to one device alongside the existing test bed:
+   - If variant 3 stays stable → ESP-NOW (or BLE+ESP-NOW interaction) is
+     the regression source, not BLE alone.
+   - If variant 3 crashes like the default → BLE alone is sufficient to
+     trigger the failure mode.
+
+Also useful for IRAM characterisation:
+   - Each variant's `.iram0.text` size tells us BLE vs ESP-NOW IRAM cost
+     independently. Currently we know BLE = ~30 KB IRAM. ESP-NOW alone is
+     unknown.
+
+Pairs naturally with #58 per-device variants once that infrastructure lands.
+
+
+60. Silent-failure watcher (catches deadlocks that don't reboot)
+    OBSERVATION (2026-04-26):  Today's boot_history watcher fires on
+    NEW abnormal-boot entries — i.e., devices that crashed AND
+    rebooted. Today's silent-deadlock failure mode (Alpha, Echo,
+    Delta) produces NO boot event because the chip stays powered
+    but FreeRTOS hangs. We only noticed because operator eyeballed
+    the LEDs. No automated alert fired.
+
+    PROPOSED FIX (cheap):  Run a Monitor task that subscribes to
+    each device's /status topic and alerts when:
+       (a) The retained value flips to {"online":false,"event":"offline"}
+           — Mosquitto publishes this LWT after MQTT keepalive
+           timeout (~15-30 s).
+       (b) Or: poll Node-RED's hb_devices flow context every 60 s;
+           alert if any device's lastSeen timestamp is >3 min old.
+
+    Either approach catches silent deadlocks within ~1-3 minutes,
+    not "next time the operator looks at the bench".
+
+    PROPOSED FIX (richer):  Combine LWT-based + heartbeat-staleness
+    + boot_history-new-entry into one unified watcher. Output one
+    line per event regardless of failure mode:
+        [time] DEVICE down — reason: timeout|crash|hang|brownout
+
+    DOWNSTREAM:  Add a Node-RED dashboard tile "Silent failures"
+    that lists devices in the offline-but-not-rebooted state.
+    Adjacent to the existing boot_history tile. Operators see the
+    full picture in one glance.
+
+    PRIORITY: HIGH for diagnostic sessions like today's; Medium for
+              steady-state operations. Cheap to implement (~30 lines
+              of Python in tools/silent_watcher.sh).
+
+# ── #51 ROOT CAUSE 2026-04-27 ─────────────────────────────────────
+The 24-hour diagnostic chase culminated in a captured serial panic
+backtrace from Charlie at 02:44 SAST during a network-reconnect cascade:
+
+   abort() called at PC 0x401ad3f7 on Core 1
+   Decoded backtrace:
+     panic_abort
+       abort()
+         std::terminate()
+           __cxa_throw                  ← bad_alloc thrown
+             operator new(unsigned int) ← heap allocation FAILED
+               AsyncMqttClient::publish (AsyncMqttClient.cpp:742)
+                 mqttPublish (mqtt_client.h:180)
+                   espnowRangingLoop (mqtt_client.h:339)
+                     loop (main.cpp:703)
+
+   Last log line before panic:
+   "[I][Responder] BROKER_RESP → sibling: 192.168.10.30:1883"
+
+INTERPRETATION:
+  AsyncMqttClient::publish() internally `new`s a contiguous buffer
+  for the framed MQTT message. Under network-reconnect storms the
+  heap fragments — `free` heap stays healthy (~117k observed) but
+  the LARGEST contiguous block drops below what the publish needs.
+  operator new throws std::bad_alloc. arduino-esp32 doesn't have
+  full C++ exception support → throw escalates to std::terminate()
+  → abort() → boot_reason=panic. The trigger is the per-3s ESP-NOW
+  ranging publish hitting the fragmented heap right after a network
+  blip.
+
+EXPLAINS BOTH OBSERVED CASCADES:
+  - 2026-04-26 10:34 (Bravo+Delta+Charlie int_wdt within 22s).
+    Charlie was on hooks-reverted v0.4.10.1 yet still crashed →
+    not LED-hooks. Now we know it was bad_alloc in stress.
+  - 2026-04-27 02:43-44 (Delta+Charlie+Alpha panic within 2 min).
+    Pure repro after a broker blip with no operator activity.
+
+FIX SHIPPED v0.4.11-dev (2026-04-27):
+  In include/mqtt_client.h::mqttPublish(), pre-check
+  `ESP.getMaxAllocHeap() >= MQTT_PUBLISH_HEAP_MIN` (4096) before
+  calling _mqttClient.publish(). On under-threshold, log a rate-
+  limited WARN and drop the publish. Next publish (after queue
+  drains and heap defragments) succeeds. Drop is acceptable
+  because all our publishes are either retained (Node-RED replays)
+  or cosmetic ranging telemetry where one missed message is
+  harmless.
+
+UPDATED FAILURE-MODE LANDSCAPE:
+  (a) Network-stress bad_alloc panic — FIXED in v0.4.11-dev by the
+      heap-guard above. Affects all devices regardless of BLE state.
+  (b) BLE silent deadlock — separate failure; with-BLE devices hang
+      ~70 min after reconnect events. WORKAROUND: BLE disabled.
+      Real fix needs NimBLE/ESP-NOW/WiFi coexistence audit.
+  (c) Charlie chronic flake — likely cable/port (brownout 11:50).
+      Hardware-side, not firmware.
+
+DEEPER FIX OPPORTUNITY (future):
+  AsyncMqttClient could be replaced with PubSubClient or a static-
+  buffer-based MQTT client that doesn't `new` per publish. Larger
+  refactor; defer until v0.5.x.
+
+61. Misleading "boot" event on every MQTT reconnect
+    OBSERVATION (2026-04-27 02:34 cascade):  When MQTT reconnects
+    after a transient disconnect, onMqttConnect() calls
+    mqttPublishStatus(FwEvent::BOOT) which republishes the retained
+    boot announcement. Payload has event="boot" but uptime_s=current
+    (not 2) and boot_reason=original first-boot reason. Operators /
+    dashboards seeing event=boot expect a fresh reboot — have to
+    look at uptime_s to disambiguate.
+
+    PROPOSED FIX (Option 1, cleanest):  Replace reconnect re-announce
+    with event="reconnect" or event="online". Retained still goes
+    out; event field is honest. Search-replace at the single
+    onMqttConnect call site. ~10 lines + dashboard tile update.
+
+    PRIORITY: Low. Misleading but not buggy. Bundle with next
+              mqtt_client.h refactor.
+
+# ── #51 SOAK RESULT 2026-04-27 morning ───────────────────────────
+8-hour overnight soak after the heap-guard fix was flashed to 3 of 5
+active devices (Charlie / Echo / Foxtrot via USB, with v0.4.11-dev +
+mqttPublish heap-guard). Alpha + Delta remained on the older
+v0.4.11-dev WITHOUT the guard.
+
+Results:
+   * 3 FIXED devices: zero panics, zero abnormal boots in 8 h.
+   * 1 UNFIXED device (Alpha): panic at 01:49:14 (isolated, no
+     cascade), watchdog auto-recovered.
+   * 1 UNFIXED device (Delta): zero panics — got lucky with heap
+     fragmentation profile.
+
+Conclusions:
+   1. Heap-guard fix WORKS. Devices with the fix did not panic
+      under normal operation despite Alpha proving the bug is
+      still firing on the network.
+   2. The bug fires stochastically. Not every blip → not every
+      device crashes. Heap fragmentation has to be in just the
+      right state at the moment of the publish.
+   3. No cascade in 8 h — the dangerous mass-failure mode from
+      the morning of 04-26 didn't recur. That's the most
+      important behavioural change.
+
+Next steps (operator decision):
+   - Cut v0.4.11 release tag — fix + NDEF + visibility + heap
+     heartbeat + BLE-off all bundled.
+   - Flash Alpha + Delta with the fix (OTA after release, or
+     USB swap).
+   - Plan v0.4.12 to address (b) BLE silent deadlock — out of
+     scope for this fix.
+

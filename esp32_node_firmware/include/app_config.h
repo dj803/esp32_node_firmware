@@ -243,6 +243,18 @@ public:
 
         if (opened) prefs.end();
 
+        // (#49) WARN if the loaded OTA URL is still the config.h placeholder.
+        // The placeholder ("myorg.github.io/...") is never a valid deployed
+        // URL — if a device boots with this it has either never been provisioned
+        // OR its NVS was wiped without re-bootstrap. The OTA_FALLBACK_URLS list
+        // saves us today, but changing the manifest URL would silently brick
+        // OTA for any such device.
+        if (strcmp(gAppConfig.ota_json_url, OTA_JSON_URL) == 0) {
+            Serial.printf("[W][AppConfig] OTA URL is the config.h placeholder — "
+                          "device may have been re-bootstrapped without OTA URL "
+                          "in the credential bundle (see #49)\n");
+        }
+
         // Log the active values so the serial monitor confirms what is in use
         Serial.printf("[AppConfig] OTA JSON URL: %s\n", gAppConfig.ota_json_url);
         Serial.printf("[AppConfig] Topic:  %s/%s/%s/%s/%s/%s/<uuid>/...\n",

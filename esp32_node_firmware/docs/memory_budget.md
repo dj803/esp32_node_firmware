@@ -1,6 +1,7 @@
 # Firmware Memory Budget
 
-Last updated: v0.3.20 (commit 75f14e8, 2026-04-22)
+Last updated: v0.3.20 (commit 75f14e8, 2026-04-22).  
+**2026-04-26 update appended below** — BLE-disabled build numbers + historical IRAM context.
 
 ---
 
@@ -210,3 +211,59 @@ grep -E "iram0_0_seg|dram0_0_seg|drom0_0_seg" \
 # Per-component breakdown (regenerates tables above)
 python docs/map_parse.py
 ```
+
+---
+
+## 2026-04-26 update — BLE-disabled build (v0.4.11-dev no-BLE)
+
+Per #51 diagnostic, BLE was disabled (`// #define BLE_ENABLED` in config.h).
+Build deltas measured against pre-disable v0.4.11-dev:
+
+| Resource | With BLE (v0.4.10) | No BLE (v0.4.11-dev) | Delta |
+|---|---|---|---|
+| Flash (`.flash.text` + `.flash.rodata`) | 93.3 % (1835312 / 1966080) | **82.1 %** (1614620 / 1966080) | **~220 KB freed** |
+| IRAM (`.iram0.text` + `.iram0.vectors`) | ~98 % (~128 KB / 130 KB) | **~73 %** (~98 KB / 130 KB) | **~30 KB freed** |
+| DRAM (`.dram0.data` + `.dram0.bss`) | 24.9 % (~81 KB / 320 KB) | **21.5 %** (~70 KB / 320 KB) | **~11 KB freed** |
+
+The 2 KB SRAM1 extension added in v0.3.20 is no longer load-bearing while BLE
+is disabled — could be removed in a v0.5.0 cleanup pass if BLE stays off
+long-term. Kept in place for now to avoid linker churn during #51 diagnosis.
+
+## Historical IRAM events
+
+IRAM has been a recurring bottleneck. Two notable past events:
+
+1. **Bluedroid → NimBLE migration (commit `a23bb05`, 2026-04-16, v0.0.15).**
+   Bluedroid BLE stack pushed firmware >1.97 MB OTA partition limit; switched
+   to NimBLE-Arduino. Saved ~630 KB **flash**. (Flash, not IRAM, but worth
+   knowing — BLE has put pressure on multiple resources at different times.)
+
+2. **Sleep driver IRAM_ATTR overflow (v0.3.20, commit 75f14e8, 2026-04-22).**
+   `esp_sleep.c` IRAM_ATTR functions wouldn't fit in stock 128 KB IRAM.
+   Extended `iram0_0_seg` by 2 KB into SRAM1 dual-port memory at 0x400A0000
+   via `ld/memory.ld` + `modify_link_path.py` linker override. Heap shrinks
+   proportionally (`_sram1_iram_len` calc). The technique can be repeated
+   in 2-4 KB increments up to ~32 KB max safe extension before runtime heap
+   becomes critical with all subsystems active.
+
+3. **Heap fragmentation during OTA (v0.3.26, commit `8e0a6f1`, 2026-04-22).**
+   *Heap pressure, not IRAM* — included here because the two are often
+   confused. `Update.begin()` needs a contiguous 4 KB; mbedTLS + NimBLE
+   fragmented the heap. Fix: `NimBLEDevice::deinit(true)` after MQTT
+   teardown, before flash write. With BLE disabled this code path is dormant
+   under `#ifdef BLE_ENABLED`.
+
+## Pattern
+
+Each major feature integration risks an IRAM overflow. Strategy that has
+worked:
+- Disable optional features that aren't load-bearing (e.g. BLE if
+  beacon-tracking is proof-of-concept only — see #51 diagnostic).
+- Extend `iram0_0_seg` into SRAM1 in 2–4 KB increments. Cost is heap.
+- Migrate to lighter-weight stacks (Bluedroid → NimBLE precedent).
+- Future option: per-device firmware variants compiled with subsets of
+  features (#58 — defer until v0.5.0+ when fleet has truly different roles).
+
+Track future drift via `grep -E "iram0_0_seg" .pio/build/esp32dev/firmware.map`
+in CI or as a release-time check. Add to daily-health if drift becomes a
+recurring theme.

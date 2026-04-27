@@ -36,7 +36,7 @@
 #ifdef FIRMWARE_VERSION_OVERRIDE
 #define FIRMWARE_VERSION           FIRMWARE_VERSION_OVERRIDE
 #else
-#define FIRMWARE_VERSION           "0.4.10-dev"
+#define FIRMWARE_VERSION           "0.4.12-dev"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1745628300ULL   // 2026-04-26 00:45:00 UTC
 
@@ -316,10 +316,13 @@ static const char* const OTA_FALLBACK_URLS[OTA_FALLBACK_URL_COUNT] = {
 #define RFID_PROGRAM_TIMEOUT_MS 15000   // Default idle timeout after arming (ms).
                                         // If no tag is presented within this window
                                         // the request auto-cancels with status="timeout".
-#define RFID_MAX_WRITE_BLOCKS      8    // Upper bound on writes[] in a single
-                                        // cmd/rfid/program payload — sized so the
-                                        // response JSON fits comfortably in the
-                                        // mqtt_client.h stack buffers.
+#define RFID_MAX_WRITE_BLOCKS     32    // Upper bound on writes[] in a single
+                                        // cmd/rfid/program payload. Bumped from 8
+                                        // in v0.4.11 to fit a complete NDEF URI
+                                        // image (~30 4-byte pages on NTAG21x for
+                                        // a typical URL). The response JSON only
+                                        // echoes block indices, so the larger
+                                        // array does not blow the stack buffer.
 
 
 // -----------------------------------------------------------------------------
@@ -513,7 +516,7 @@ static const char* const OTA_FALLBACK_URLS[OTA_FALLBACK_URL_COUNT] = {
 // via RSSI + log-distance path loss model. No BLE peripheral/advertising.
 // Controlled entirely via MQTT; Node-RED provides the UI.
 // -----------------------------------------------------------------------------
-#define BLE_ENABLED
+// #define BLE_ENABLED   // (#51 diagnostic 2026-04-26) BLE temporarily disabled — proof-of-concept only, not actively used. Frees ~30-50 KB flash + ~6-8 KB heap, eliminates NimBLE/WiFi/ESP-NOW coexistence as a variable. Re-enable when needed; see SUGGESTED_IMPROVEMENTS #51.
 #define BLE_SCAN_DURATION_S        5      // Seconds per on-demand full scan (cmd/ble/scan)
 #define BLE_TRACK_SCAN_DURATION_S  2      // Seconds per repeated tracking scan
 #define BLE_MAX_BEACONS           32      // Max beacon entries in discovered list

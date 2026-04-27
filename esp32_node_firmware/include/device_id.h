@@ -74,7 +74,12 @@ public:
 
         // No valid UUID in NVS — generate a new one
         _uuid = _generate();
-        Serial.printf("[DeviceId] Generated new UUID: %s\n", _uuid.c_str());
+        // (#48) WARN-level so this stands out in fleet logs. A "Generated new"
+        // message after first-boot provisioning is the smoking gun for UUID
+        // drift on subsequent boots — see SUGGESTED_IMPROVEMENTS.txt #48.
+        Serial.printf("[W][DeviceId] Generated new UUID: %s "
+                      "(if not first boot, NVS lost / regenerate-bug — see #48)\n",
+                      _uuid.c_str());
 
         // Persist it so the same UUID is used on all future boots
         if (prefs.begin(DEVICE_ID_NVS_NAMESPACE, false)) {   // false = read-write
