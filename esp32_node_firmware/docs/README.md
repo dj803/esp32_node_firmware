@@ -30,6 +30,11 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 
 - [AUTONOMOUS_PROMPT_TEMPLATE.md](AUTONOMOUS_PROMPT_TEMPLATE.md) — how
   to write a multi-hour AFK prompt for the agent.
+- [CANARY_OTA.md](CANARY_OTA.md) — canary-then-fleet OTA pattern. Codifies
+  the "Charlie soaks v0.4.20.0" practice. Tracks #35.
+- [MONITORING_PRACTICE.md](MONITORING_PRACTICE.md) — heartbeat / boot-reason
+  monitoring practice (daily, live, active layers + `#84`
+  verify-after-action cadence). Tracks #36.
 - [CHAOS_TESTING.md](CHAOS_TESTING.md) — M1-M4, EN1, O2, I1 chaos test
   procedures + framework proposal.
 - [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md) — Tier 1

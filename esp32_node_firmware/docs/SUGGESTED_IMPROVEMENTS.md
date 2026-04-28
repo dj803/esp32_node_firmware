@@ -57,15 +57,13 @@ session-planning; reorder within a group freely.
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session; first cut shipped, CI matrix added 2026-04-28 — closure pending first green run on minimal + relay_hall)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
 
-### G. Docs / process / long-tail closure (6) — mostly validation-pending, not coding
+### G. Docs / process / long-tail closure (4) — mostly validation-pending, not coding
   #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
-  #35   Operational practice: canary OTA pattern
-  #36   Operational practice: heartbeat / boot-reason monitoring
   #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 27  (A6 + B6 + C2 + D3 + E2 + F2 + G6)
+  Total open: 25  (A6 + B6 + C2 + D3 + E2 + F2 + G4)
 
 ────────────────────────────────────────────────────────────
 
@@ -128,10 +126,12 @@ session-planning; reorder within a group freely.
   #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen, no shim needed)
   #75   Chaos-testing framework — promote tools/chaos/                (resolved 2026-04-28 — release-smoke.sh wrapper shipped + GH-Actions infeasibility documented)
   #27   Library-API regression test in CI                             (resolved 2026-04-23 in v0.4.02 — recorded retroactively 2026-04-28; lib_api_assert.h static_asserts run on every esp32dev CI build)
+  #35   Operational practice: canary OTA pattern                      (resolved 2026-04-28 — codified in docs/CANARY_OTA.md; Charlie has been the dedicated canary since 2026-04-27)
+  #36   Operational practice: heartbeat / boot-reason monitoring      (resolved 2026-04-28 — codified in docs/MONITORING_PRACTICE.md)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
   #80   -dev suffix breaks OTA upgrade path                           (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 49
+  Total resolved: 51

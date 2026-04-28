@@ -518,7 +518,13 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     Charlie. The v0.3.33-v0.3.35 rollout's Bravo/Charlie panic on
     v0.3.33→v0.3.35 OTA would have been caught earlier with this
     discipline. Not a code change — operational practice.
-    STATUS:   Adopted as habit going forward.
+    STATUS:   RESOLVED 2026-04-28 — codified in docs/CANARY_OTA.md.
+              Charlie has been the dedicated canary on
+              [env:esp32dev_canary] (v0.4.20.0 sticky) since 2026-04-27.
+              OTA_DISABLE in the canary build keeps it from auto-pulling
+              up to release. Soak-window decision rules + checklist now
+              part of the operational guides. Original "adopted as
+              habit" entry is now a written practice.
 
     ──── Empirical case for canary, captured 2026-04-25 (v0.4.06 release) ────
     The v0.4.06 release (peer_tracker EMA-reseed-on-step-change) was
@@ -897,6 +903,14 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     Build a Node-RED dashboard tile that surfaces non-poweron
     boot_reason values across the fleet.
     PRIORITY: Medium — easy Node-RED change, high diagnostic value.
+    STATUS:   RESOLVED 2026-04-28 — codified in
+              docs/MONITORING_PRACTICE.md. The signal taxonomy
+              (boot_reason, restart_cause, /diag/coredump) +
+              three-layer monitoring (daily/live/active) +
+              verify-after-action (#84) cadence are now a written
+              practice. Node-RED dashboard tile component shipped
+              earlier as boot_history_grp + Recent Abnormal Reboots
+              card; operator routine documented here.
 
 37. ESP-NOW ranging — A↔B asymmetry causes and mitigations
     OBSERVATION (2026-04-25):  In the dashboard's per-direction chart,
