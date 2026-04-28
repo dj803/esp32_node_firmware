@@ -3151,6 +3151,28 @@ Next steps (operator decision):
     in place, the safety net is robust enough to allow shorter
     stagger.
 
+    STATUS: RESOLVED 2026-04-28 — sub-A/B/C all shipped under #79
+    (`tools/dev/ota-rollout.sh`). Re-audit in the 2026-04-28 afternoon
+    session confirmed:
+    - A. Default stagger is no longer fixed — `SAFETY_GAP_S=15` is
+         the only between-device sleep, plus the per-device wait for
+         a healthy heartbeat (lines 22-24 of ota-rollout.sh).
+    - B. Ack-driven via `event=heartbeat AND firmware_version=<target>
+         AND uptime_s >= HEALTHY_UPTIME_S (30)` per line 83 of
+         ota-rollout.sh. Per-device timeout 180s caps silent-fail
+         (line 23).
+    - C. Backoff on observed failure — abnormal boot_reasons
+         (panic/task_wdt/int_wdt/other_wdt/brownout) trigger
+         `device_abnormal` event + script exits 2 with operator
+         instructions to investigate + resume via FLEET_UUIDS
+         (lines 81-95).
+    - D. `tools/dev/ota-rollout.sh` is the shipped tool with the
+         adaptive logic. `tools/fleet_ota.sh` (older) remains as a
+         fallback batch tool but `ota-rollout.sh` is the recommended
+         path per the repo `tools/README.md`.
+    The original "fixed 2-minute gap" baseline is obsolete — kept in
+    archive for historical context only.
+
 
 ────────────────────────────────────────────────────────────
 78. AsyncTCP _error path race — replace stack or patch library

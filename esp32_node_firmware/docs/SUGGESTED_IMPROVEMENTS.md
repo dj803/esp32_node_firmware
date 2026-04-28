@@ -56,11 +56,10 @@ To resolve an entry:
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
   #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session; scripts + runner shipped 2026-04-28, CI hook still open)
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24 cut + fleet-validation)
-  #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 38
+  Total open: 37
 
 ────────────────────────────────────────────────────────────
 
@@ -110,6 +109,7 @@ To resolve an entry:
   #66   .claude/commands/ — operational shortcuts                     (resolved 2026-04-27)
   #67   Node-RED project package.json — declare custom node deps      (2026-04-26 audit)
   #69   Wakeup vs persistent-monitor preemption                       (resolved 2026-04-28 — sub-E shipped via tools/dev/ota-rollout.sh + ota-monitor.sh; cadence rule via #84)
+  #77   Adaptive OTA stagger interval                                 (resolved 2026-04-28 — A/B/C all shipped under #79 via tools/dev/ota-rollout.sh; fixed-gap baseline obsolete)
   #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
   #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen, no shim needed)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
@@ -118,4 +118,4 @@ To resolve an entry:
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 38
+  Total resolved: 39
