@@ -53,13 +53,10 @@ To resolve an entry:
   #40   Operator install guide — ESP32-WROOM antenna orientation
   #41   Hardware finding — breakout board + RFID-RC522 distort the WROOM antenna
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
-  #45   Fleet-control buttons (OTA/Restart/Firmware) need stagger
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
   #48   Device UUID drift — Delta and Echo had unexpected UUIDs on 2026-04-25
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
-  #52   Node-RED file logging not configured (observability gap)
-  #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
   #55   AsyncMqttClient malformed-packet counter
   #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
@@ -67,14 +64,13 @@ To resolve an entry:
   #69   Wakeup vs persistent-monitor preemption
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
-  #74   IPv6Address.h support — unblock newer AsyncTCP forks         (was #63 cascade-session)
   #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session)
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A+E shipped, B/C/D/F/G/H/I open)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (discovered 2026-04-27; medium)
 
-  Total open: 52
+  Total open: 48
 
 ────────────────────────────────────────────────────────────
 
@@ -114,6 +110,10 @@ To resolve an entry:
   #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
   #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
+  #45   Fleet-control buttons (OTA/Restart/Firmware) need stagger    (addressed v0.4.10 — Node-RED hb_cmd_fn/hb_restart_fn patched)
+  #52   Node-RED file logging configured                              (resolved Tier-1 T1.1 2026-04-27)
+  #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance       (firmware part shipped v0.4.11; dashboard tile downstream)
+  #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen instead, no shim needed)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
 
-  Total resolved: 26
+  Total resolved: 30

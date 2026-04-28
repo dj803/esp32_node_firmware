@@ -1483,6 +1483,8 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
         of ~30-90 s; 1 min was too tight on Bravo).
     flow.hb_ota_chain_started_ms / _total / _done are exposed for any
     future status-banner UI (#45 final paragraph).
+    STATUS: RESOLVED v0.4.10 (2026-04-25). The ADDRESSED block above
+    is the implementation. Index moved to RESOLVED 2026-04-28.
 
 46. Recent Abnormal Reboots — fleet-wide WDT / panic investigation
     OBSERVATION (2026-04-25, post-OTA-chaos):  All 5 devices in the
@@ -2133,6 +2135,9 @@ with an empty buffer. CRITICAL fix path:
     new log path so future sessions know to check it.
 
     PRIORITY: Low — operational quality-of-life. Action when convenient.
+    STATUS: RESOLVED 2026-04-27 (Tier-1 T1.1 per ROADMAP). Node-RED
+    file logging configured + log rotation via PowerShell scheduled
+    task. Index moved to RESOLVED 2026-04-28.
 
 53. Per-heartbeat LOG_HEAP for fleet-wide leak surveillance
     OBSERVATION (2026-04-26 audit):  Existing LOG_HEAP markers fire
@@ -2163,6 +2168,11 @@ with an empty buffer. CRITICAL fix path:
               included in every /status heartbeat payload. Node-RED
               dashboard tile (DOWNSTREAM above) still pending; planned
               for v0.4.15.
+    STATUS: RESOLVED 2026-04-28 — primary firmware mechanism shipped
+    months ago and used productively throughout the v0.4.13-v0.4.20
+    cascade-fix marathon (heap_free trajectory observed per device).
+    The Node-RED dashboard tile is a UI-polish followup, tracked
+    separately if desired. Index moved to RESOLVED 2026-04-28.
 
 54. Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
     OBSERVATION (2026-04-26 audit):  arduino-esp32 default has stack
@@ -2867,6 +2877,13 @@ Next steps (operator decision):
 
     SEVERITY: LOW. v2.0.1 is sufficient for the v0.4.14 fix and
     the LAN is IPv4-only today.
+    STATUS: RESOLVED 2026-04-28 — moot. The v0.4.14 cascade-fix
+    settled on mathieucarbou/AsyncTCP v3.3.2, which conditionally
+    skips IPv6Address.h when ESP_IDF_VERSION_MAJOR >= 5 (arduino-esp32
+    3.3.8 is on IDF 5.x). No shim ever needed. esphome v2.1.4 was
+    rejected for unrelated tcp_alloc lock-assert behaviour. Re-open
+    only if a future fork explicitly requires IPv6Address.h on IDF
+    pre-5.x. Index moved to RESOLVED.
 
 ────────────────────────────────────────────────────────────
 75. Chaos-testing framework — promote tools/chaos/ + site_acceptance.sh
