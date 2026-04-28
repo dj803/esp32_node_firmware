@@ -1763,6 +1763,44 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     remain visible on retained `/diag/coredump` topic for all 5
     devices — those are #78, not #46.
 
+    SOAK OBSERVATION 2026-04-28 14:44:58 — ALPHA BROWNOUT:
+    silent_watcher.sh (armed at 14:42 SAST) caught a single
+    `boot_reason: brownout` event from ESP32-Alpha on v0.4.26.
+    Recovery clean: boot announcement at uptime=2s, heartbeats at
+    60s and 120s with heap_free=119360 / heap_largest=81908,
+    mqtt_disconnects=0, last_restart_reasons ring buffer shows
+    8× "operational" (no prior brownout — first one tracked).
+
+    Likely cause: hardware / bench power, NOT firmware. Alpha is
+    on COM4 with the 8-LED WS2812 strip. Full-white WS2812 draws
+    ~480 mA + ESP32 ~150 mA baseline = right at the edge of
+    typical USB-hub delivery. A LED-test or solid-white scene
+    plus a transient hub power-saving event would drop Vcc below
+    the brownout threshold (~2.43 V).
+
+    Significance for #46: brownout is a TAXONOMY entry alongside
+    panic / *_wdt — needs to be tracked but is not the bad_alloc
+    cascade we were closing on. Single isolated event under
+    plausible hardware cause does NOT reset the soak window. If
+    a SECOND brownout fires during the soak (especially without
+    correlated LED activity), promote to a hardware-investigation
+    sub-item.
+
+    HEAP-FRAGMENTATION OBSERVATION (same baseline):
+    All 4 v0.4.26 devices that had been up >60 min show
+    heap_largest settling at 40-43 KB while heap_free stays flat
+    at 119-120 KB. Charlie (canary v0.4.20.0, 16.5 h uptime) holds
+    heap_largest at 86 KB with the OTA_DISABLE + LOG_LEVEL_DEBUG
+    + STACKOVERFLOW_CHECK build flags — different binary so not
+    a clean comparison, but the v0.4.26 fragmentation steady-
+    state is well above the v0.4.22 publish-path threshold (8 KB)
+    so the heap-guard wouldn't fire. Trajectory will be tracked
+    by the hourly snapshot monitor over the soak window. If
+    heap_largest keeps dropping over the next 2-3 h, that's a
+    leak signal; if it holds at ~42 KB, it's a stable steady-
+    state that just looks worse than Charlie because of the
+    different build config.
+
 47. Hardware verification of #39 multi-point + #41.7 per-peer calibration
     STATUS: Firmware shipped in v0.4.07 (#39 linreg) and v0.4.09 (#41.7
     per-peer constants). Dashboard UI shipped on 2026-04-25 with
