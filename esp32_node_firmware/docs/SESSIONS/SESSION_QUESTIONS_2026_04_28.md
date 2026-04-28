@@ -37,7 +37,7 @@ the count-based trigger which can take much longer.
 
 ## Pending answers (please respond when you check in)
 
-### Q1. Charlie canary — re-trip on #78
+### Q1. Charlie canary — re-trip on #78  **[ANSWERED 2026-04-28: continue canary test, leave Charlie undisturbed]**
 Charlie's retained `/diag/coredump` shows another async_tcp `InstructionFetchError`
 (PC=0x3f409271 — in DRAM, vtable-corruption shape consistent with #78).
 Last heartbeat uptime was ~12.4 h, then LWT offline. So the long sticky soak
@@ -53,7 +53,7 @@ stack overflow as a cause for THIS family of crash.
 inspect on serial when you're back? Or want me to attempt a soft restart
 (no-DTR) via mosquitto if it has WiFi+broker reach?
 
-### Q2. Foxtrot UUID drift (informational)
+### Q2. Foxtrot UUID drift (informational)  **[ACK 2026-04-28]**
 Live retained boot announce shows Foxtrot's UUID is now
 `c1278367-21af-478d-8a8b-0b84a4de60df` (MAC `28:05:A5:32:50:44`),
 not the `3b3b7342-80e7-43dd-afc7-78d0470861e2` listed in CLAUDE.md.
@@ -64,7 +64,7 @@ NVS-wiped at some point.
 in the end-of-session sweep, and add a note that Foxtrot UUID has rotated.
 The legacy UUID stays usable for retained lookups.
 
-### Q3. v0.4.24 release scope
+### Q3. v0.4.24 release scope  **[ANSWERED 2026-04-28: bundle is good — proceed with full sub-C/D/I + chaos framework + #24/#28 cleanup as v0.4.24 once fleet is back]**
 I plan to bundle this batch into a v0.4.24 patch release after validation:
 - #76 sub-C (time-based MQTT_RESTART_THRESHOLD)
 - #76 sub-D (restart-loop cool-off → AP fallback mode)
@@ -78,7 +78,7 @@ I plan to bundle this batch into a v0.4.24 patch release after validation:
 prefer I park sub-D (the AP-fallback) as a separate release because it's
 the most behaviour-changing item?
 
-### Q4. Chaos framework promotion (#75) — scope check
+### Q4. Chaos framework promotion (#75) — scope check  **[ANSWERED 2026-04-28: future relay-controller ESP32 (post-v0.5.0) will switch power to the AP and to other bench devices via cmd/relay. wifi_cycle.ps1 stays a stub until then; updated header to document the planned hook.]**
 Plan: create `tools/chaos/` with:
 - `blip_short.ps1` (5s), `blip_long.ps1` (30s), `blip_burst.ps1` (3×10s)
 - `wifi_cycle.ps1` (toggle the AP for 60s — needs your AP control script)

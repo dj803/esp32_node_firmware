@@ -12,7 +12,7 @@ Tracking entry: SUGGESTED_IMPROVEMENTS #75.
 | `blip_short.ps1`   | M1 — 5 s broker outage. |
 | `blip_long.ps1`    | M2 (30 s default) / M3 (180 s) — long broker outage. |
 | `blip_burst.ps1`   | M4 — 3 × short blips with brief recovery between. Stresses half-open-cleanup race. |
-| `wifi_cycle.ps1`   | W2 — STUB until an AP-control hook is wired. |
+| `wifi_cycle.ps1`   | W2 — STUB. Planned hook: a v0.5.0 relay-equipped ESP32 controls power to the AP (and other bench devices) via `cmd/relay`. Wires up once relay hardware ships. |
 
 The PowerShell scripts must be run **elevated** (they use `net stop/start`).
 The runner itself does not need elevation, but invokes the scripts in a

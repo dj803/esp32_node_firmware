@@ -2,18 +2,25 @@
 #
 # W2 (AP reboot) is the realistic fleet-wide outage scenario but requires
 # operator-side AP control that this repo does not yet have a hook for.
-# Options to wire this up:
-#   1. Tasmota smart-plug controlling the AP — call its HTTP /cm?cmnd=Power0
-#      twice with a sleep between. Operator: provide the plug's IP+token.
-#   2. Manual — operator power-cycles the AP, presses ENTER when ready.
-#   3. ATEM-style scriptable PDU — same shape as Tasmota.
 #
-# Until one is wired, this script just notes the limitation. A "host
+# PLANNED HOOK (operator confirmed 2026-04-28): once v0.5.0 relay hardware
+# ships, a dedicated ESP32 fitted with the BDD 2CH relay board will
+# control power to other bench devices (and to the AP). At that point this
+# script becomes a thin MQTT publisher:
+#
+#     mosquitto_pub -h <broker> -t '<...>/<relay-ctrl>/cmd/relay' \
+#                   -m '{"ch":1,"state":false}'
+#     Start-Sleep -Seconds $DownSeconds
+#     mosquitto_pub -h <broker> -t '<...>/<relay-ctrl>/cmd/relay' \
+#                   -m '{"ch":1,"state":true}'
+#
+# Same pattern extends to per-device power cycling (B-tier chaos: kill
+# one device mid-OTA, kill the broker host, etc.) — each gets its own
+# relay channel mapping baked into the runner config.
+#
+# Until v0.5.0 ships, this script just notes the limitation. A "host
 # Wi-Fi adapter cycle" (W1 from CHAOS_TESTING.md) is NOT a substitute —
 # that drops the host's Wi-Fi, not the devices'.
-#
-# When a hook is ready, replace the body with the actual cycle and
-# reference it from runner.sh as a registered scenario.
 
 param(
     [int]$DownSeconds = 60
