@@ -35,6 +35,9 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 - [MONITORING_PRACTICE.md](MONITORING_PRACTICE.md) — heartbeat / boot-reason
   monitoring practice (daily, live, active layers + `#84`
   verify-after-action cadence). Tracks #36.
+- [COREDUMP_DECODE.md](COREDUMP_DECODE.md) — runbook for decoding
+  `/diag/coredump` backtraces with `xtensa-esp32-elf-addr2line`
+  (worked examples: #46, #78).
 - [CHAOS_TESTING.md](CHAOS_TESTING.md) — M1-M4, EN1, O2, I1 chaos test
   procedures + framework proposal.
 - [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md) — Tier 1
