@@ -13,6 +13,13 @@
 # Discovers fleet UUIDs from a 10 s passive subscription so you don't need to
 # hardcode them. Override via FLEET_UUIDS env var (space-separated):
 #   FLEET_UUIDS="uuid1 uuid2" tools/dev/ota-rollout.sh 0.4.16
+#
+# Skip specific devices via EXCLUDE_UUIDS (mirror semantic — useful for
+# canary builds, devices under investigation, etc.):
+#   EXCLUDE_UUIDS="2ff9ddcf-bf7e-4b51-ba6c-fa4bfcd80cdd" tools/dev/ota-rollout.sh 0.4.24
+#
+# EXCLUDE_UUIDS applies on top of either FLEET_UUIDS or auto-discovered
+# fleet — it's always a subtractive filter.
 
 set -euo pipefail
 
@@ -46,6 +53,28 @@ else
     # still authoritative for the "no broker / no fleet" case.
     UUIDS=( $(timeout 10 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/+/status" -F '%t' \
               | awk -F/ '{print $(NF-1)}' | sort -u || true) )
+fi
+
+# (Q6 follow-up, 2026-04-28) EXCLUDE_UUIDS env lets the operator skip
+# specific devices that should not receive the OTA — typically a canary
+# build (e.g. Charlie on v0.4.20.0 with OTA_DISABLE) or a device under
+# active investigation. Space-separated UUIDs, mirror semantic of
+# FLEET_UUIDS. Without this, the rollout fires cmd/ota_check on the
+# excluded device anyway (which is benign for OTA_DISABLE devices) but
+# then spins for the full TIMEOUT_PER_DEVICE_S waiting for a
+# target-version heartbeat that will never arrive.
+if [ -n "${EXCLUDE_UUIDS:-}" ]; then
+    declare -A _EXCLUDE_MAP
+    for u in $EXCLUDE_UUIDS; do _EXCLUDE_MAP[$u]=1; done
+    FILTERED=()
+    for u in "${UUIDS[@]}"; do
+        if [ -n "${_EXCLUDE_MAP[$u]:-}" ]; then
+            echo "  excluding ${u:0:8} (in EXCLUDE_UUIDS)"
+        else
+            FILTERED+=( "$u" )
+        fi
+    done
+    UUIDS=( "${FILTERED[@]}" )
 fi
 
 if [ ${#UUIDS[@]} -eq 0 ]; then
