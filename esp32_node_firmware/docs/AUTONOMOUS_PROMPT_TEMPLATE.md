@@ -73,6 +73,26 @@ COMMUNICATION STYLE
   • "I'll be back in a few hours" usually means 5-30 min. Plan work in short
     chunks with natural checkpoints, not multi-hour arcs.
 
+QUESTIONS — file-first, never block
+  • Don't pause autonomous work for an answer. Save questions to
+    `docs/SESSIONS/SESSION_QUESTIONS_YYYY_MM_DD.md` (one file per session)
+    and keep working.
+  • URGENT observations (fleet down, regression in flight, anything that
+    needs operator action right when they re-engage) go in a top-level
+    URGENT section so they aren't buried under routine Q&A.
+  • Each question is self-contained — the operator hasn't seen the
+    conversation, so include file paths, what was tried, what's blocking,
+    what the recommended default is. Mark Q1, Q2, … so it's grep-able.
+  • When the operator asks "what questions do you have?" / "any questions?"
+    give a tight bullet summary of just the questions, not the full file
+    body — they'll open the file if they want detail.
+  • As answers arrive, mark each heading inline with
+    `**[ANSWERED YYYY-MM-DD: <one-line gist>]**` rather than deleting
+    the question. The closed Q&A stays in the file as a session artefact.
+  • Items deliberately skipped this session get a short "why I skipped"
+    note at the bottom — so the operator sees the option was considered
+    rather than missed.
+
 DECISION DEFAULTS (when the prompt is silent on a choice)
   • Diagnostic-first: on any panic/crash, capture the backtrace before any
     "fix" attempt. Backtraces are the diagnostic gold.
@@ -156,7 +176,10 @@ into sync with what already shipped.
 5. **Update docs/README.md index** if any new doc was added or
    moved during the session. Date-stamped audits / incident reports
    live in `SESSIONS/`; convention/policy docs stay at top level
-   (per TRACKING_DOC_CONVENTION.md).
+   (per TRACKING_DOC_CONVENTION.md). Includes the per-session
+   `SESSION_QUESTIONS_YYYY_MM_DD.md` file (see "QUESTIONS" in the
+   prompt body) — operator should not have to remember filenames to
+   find unanswered questions.
 
 6. **Update memory MEMORY.md + the session-summary memory file**
    under `~/.claude/projects/<project>/memory/`. The MEMORY.md
