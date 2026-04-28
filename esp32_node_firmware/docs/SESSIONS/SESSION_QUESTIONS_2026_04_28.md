@@ -2,6 +2,42 @@
 
 Session goal: chip away at OPEN items while waiting for relay hardware.
 
+## Q6 — `tools/dev/ota-rollout.sh` has two bugs worth fixing
+
+Hit during the v0.4.24 fleet rollout. Both are silent — the script
+exits 0 even when nothing useful happened, which masks the issue.
+
+### Bug A — discovery phase silently fails
+First invocation with the default fleet-discovery path
+(`timeout 10 mosquitto_sub | awk | sort -u`) exited 0 with output
+"Discovering fleet..." and nothing else. Likely the `set -euo pipefail`
++ `timeout 124` exit interaction kills the subshell mid-array-assignment
+without the `if [ ${#UUIDS[@]} -eq 0 ]` guard ever firing. Workaround:
+explicit `FLEET_UUIDS=...` env. Fix candidate: capture mosquitto_sub
+output to a temp file, then parse — pipefail can't bite a non-pipe.
+
+### Bug B — stale retained boot announcement poisons the abnormal-boot guard
+On the second invocation (with explicit UUIDs), the script triggered
+`cmd/ota_check` on Alpha and immediately bailed with
+`✗ ABNORMAL int_wdt v0.4.23` — but Alpha's int_wdt boot was from
+THIS MORNING (the AP outage), hours before the OTA was triggered. The
+script's pass/fail loop checks the FIRST status payload it sees; with
+retained delivery that's the cached boot, not the post-OTA heartbeat.
+Workaround: re-publish a clean retained heartbeat to overwrite the
+stale boot, OR exclude affected devices and re-run.
+Fix candidate: the loop should ignore status payloads with `uptime_s`
+larger than ~60 (clearly not a fresh boot) AND ignore boot announcements
+on a firmware version older than the target.
+
+Today's workaround for both: triggered ota_check via raw
+`mosquitto_pub` for the remaining devices with a manual 60 s sleep
+between them. Got the job done but the rollout-script's safety net
+didn't get a chance to fire.
+
+Tag: not adding a new SUGGESTED_IMPROVEMENTS entry yet — wait for
+operator confirmation that this is in scope. Fix is a half-day at
+most.
+
 ## Q5 — v0.4.24 scope expanded slightly while you were away — OK to tag?
 
 After your "Q3 bundle is good" approval I added two tightly-thematic
