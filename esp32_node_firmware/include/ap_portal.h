@@ -307,6 +307,23 @@ static bool loadOrGenerateTlsCreds() {
         return true;
     }
     LOG_I("AP Portal", "No TLS creds in NVS — generating (first boot)");
+    // (#32, v0.4.25) Heap-gate the keygen. RSA-2048 + DER serialiser + mbedTLS
+    // bignum scratch needs ~50 KB of largest-block during the ~10 s key
+    // generation. If the heap is fragmented (e.g. device just landed in AP
+    // mode after a long uptime), skip keygen and fall back to plain HTTP —
+    // operator still has the portal, just over an unencrypted channel on
+    // the AP-only network. A power-cycle yields a clean heap and a TLS
+    // upgrade on the next attempt.
+    {
+        uint32_t hFree  = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        uint32_t hBlock = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        if (hFree < TLS_KEYGEN_HEAP_FREE_MIN || hBlock < TLS_KEYGEN_HEAP_BLOCK_MIN) {
+            LOG_W("AP Portal", "Heap gate skip TLS keygen: free=%u (need >=%u) block=%u (need >=%u) — falling back to HTTP",
+                  (unsigned)hFree,  (unsigned)TLS_KEYGEN_HEAP_FREE_MIN,
+                  (unsigned)hBlock, (unsigned)TLS_KEYGEN_HEAP_BLOCK_MIN);
+            return false;
+        }
+    }
     if (!_generateTlsCreds()) {
         LOG_E("AP Portal", "TLS credential generation failed — portal will start on HTTP");
         return false;

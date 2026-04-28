@@ -247,6 +247,36 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 #define OTA_PREFLIGHT_HEAP_FREE_MIN  80000  // bytes — total free heap (MALLOC_CAP_8BIT)
 #define OTA_PREFLIGHT_HEAP_BLOCK_MIN 32000  // bytes — largest contiguous free block
 
+// (#32, v0.4.25) Per-subsystem heap-headroom gates at boot. Mirrors the
+// OTA preflight gate above but applied at subsystem-init time. Prevents
+// a subsystem from booting into a degraded heap state where its first
+// allocation would crash. Subsystems that skip the gate stay DISABLED
+// for the rest of this boot — operator can power-cycle to retry on a
+// fresher heap. The numbers below are conservative defaults; tighten
+// once telemetry exists to validate per-subsystem real-world need.
+//
+// BLE init: NimBLE controller buffers + GATT tables + advertising state.
+// Heaviest single-shot subsystem allocation (~50 KB observed). Only
+// meaningful on variants that compile in BLE_ENABLED — esp32dev
+// production has BLE disabled at compile time so the gate is a no-op.
+#define BLE_INIT_HEAP_FREE_MIN     60000
+#define BLE_INIT_HEAP_BLOCK_MIN    32000
+
+// TLS keygen (RSA-2048, first boot only): mbedTLS scratch + intermediate
+// big-num buffers + DER serialiser. Once cached in NVS the subsequent
+// boots load the PEM and skip keygen entirely, so the gate matters only
+// on a freshly-flashed device or after AP portal NVS is wiped.
+#define TLS_KEYGEN_HEAP_FREE_MIN   50000
+#define TLS_KEYGEN_HEAP_BLOCK_MIN  30000
+
+// MQTT init: AsyncMqttClient + AsyncTCP socket + initial CONNECT framing.
+// Modest (~12 KB observed) but the gate guards against post-restart
+// boots into a fragmented heap (a hung mqtt_unrecoverable cycle could
+// land here with the heap not yet recovered). Threshold sized to leave
+// margin for the publish heap-guard's own MQTT_PUBLISH_HEAP_MIN (8192).
+#define MQTT_INIT_HEAP_FREE_MIN    24000
+#define MQTT_INIT_HEAP_BLOCK_MIN   12000
+
 // ── Hardcoded fallback OTA manifest URLs (v0.3.33) ───────────────────────────
 // Tried in order if gAppConfig.ota_json_url (NVS) returns a non-2xx HTTP code.
 // Last-resort safety net so a misconfigured portal entry, a Pages outage, or

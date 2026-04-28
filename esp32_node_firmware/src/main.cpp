@@ -119,6 +119,33 @@
           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
 
 
+// (#32, v0.4.25) Heap-headroom gate at subsystem-init time.
+// Returns true when both the total-free and largest-contiguous-block
+// thresholds are met for the named subsystem. Returns false (and logs
+// a WARN with the actual heap state) otherwise — caller skips that
+// subsystem's init for this boot. The gate is intentionally
+// "subsystem-disabled-this-boot" not "deferred-retry": deferred retries
+// add re-entrancy complexity to the boot sequence, and a true OOM at
+// boot is recoverable by power-cycle which yields a clean heap. Operator
+// reads the LOG_W to know what's missing.
+//
+// Mirrors the v0.3.33 OTA preflight gate (OTA_PREFLIGHT_HEAP_*) but
+// applied per-subsystem at the OPERATIONAL one-time-startup boundary.
+// Numbers live in config.h next to the OTA preflight gate.
+static inline bool heapGateOk(uint32_t freeMin, uint32_t blockMin, const char* tag) {
+    uint32_t hFree  = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t hBlock = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    if (hFree >= freeMin && hBlock >= blockMin) return true;
+    // The tag is a runtime parameter so it goes inside the format string —
+    // LOG_W's tag arg is preprocessor-concatenated and must be a literal.
+    LOG_W("HeapGate", "%s skip: free=%u (need >=%u) block=%u (need >=%u)",
+          tag,
+          (unsigned)hFree,  (unsigned)freeMin,
+          (unsigned)hBlock, (unsigned)blockMin);
+    return false;
+}
+
+
 // ── State machine definition ──────────────────────────────────────────────────
 // The firmware progresses through these states once during setup().
 // After reaching OPERATIONAL, the loop() function handles ongoing work.
@@ -582,15 +609,36 @@ void loop() {
 
             { LedEvent e{}; e.type = LedEventType::RESET; ws2812PostEvent(e); }
 
-            mqttBegin(activeBundle, broker);
-            LOG_HEAP("after-mqtt");
+            // (#32, v0.4.25) Heap-gate MQTT init. Threshold is modest (24K
+            // free, 12K largest) — this guards against post-restart boots
+            // into a fragmented heap (e.g. coming back from an
+            // mqtt_unrecoverable cycle). If skipped, MQTT stays disabled for
+            // this boot; dashboard sees the device as LWT-offline and the
+            // operator can power-cycle for a fresh heap.
+            if (heapGateOk(MQTT_INIT_HEAP_FREE_MIN, MQTT_INIT_HEAP_BLOCK_MIN, "MQTT")) {
+                mqttBegin(activeBundle, broker);
+                LOG_HEAP("after-mqtt");
+            } else {
+                LOG_W("BOOT", "MQTT init skipped this boot — power-cycle for clean heap");
+            }
 
 #ifdef RFID_ENABLED
             rfidInit();   // SPI free now that ESP-NOW channel scan is complete
 #endif
 #ifdef BLE_ENABLED
-            bleInit();    // BLE + WiFi share 2.4 GHz; ESP-IDF handles coexistence
-            LOG_HEAP("after-ble");
+            // (#32, v0.4.25) BLE is the heaviest single-shot init in the
+            // bring-up sequence (~50 KB for NimBLE controller + GATT). Gate
+            // at 60K/32K to leave NimBLE its working set without starving
+            // MQTT/AsyncTCP downstream. No-op for the production esp32dev
+            // build (BLE_ENABLED only on variant builds like
+            // esp32dev_ble_bench), but defensive-correct under variant or
+            // future combined-subsystem builds.
+            if (heapGateOk(BLE_INIT_HEAP_FREE_MIN, BLE_INIT_HEAP_BLOCK_MIN, "BLE")) {
+                bleInit();    // BLE + WiFi share 2.4 GHz; ESP-IDF handles coexistence
+                LOG_HEAP("after-ble");
+            } else {
+                LOG_W("BOOT", "BLE init skipped this boot — power-cycle for clean heap");
+            }
 #endif
 #ifdef RELAY_ENABLED
             relayInit();   // (v0.5.0) BDD 2CH relay — drives HIGH before OUTPUT to prevent boot-click

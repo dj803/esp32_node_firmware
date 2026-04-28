@@ -434,6 +434,18 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     PRIORITY: Low — would help WiFi/BLE jitter under heavy LED render.
 
 32. Heap-headroom gate at boot for each subsystem
+    STATUS: RESOLVED 2026-04-28 — `heapGateOk(freeMin, blockMin, tag)`
+    helper in main.cpp + per-subsystem thresholds in config.h
+    (BLE_INIT_HEAP_*, TLS_KEYGEN_HEAP_*, MQTT_INIT_HEAP_*) wrap MQTT
+    init, BLE init (when compiled), and TLS keygen with skip-on-low-heap
+    paths. Logs `[W][HeapGate] <subsystem> skip: free=N (need >=M)
+    block=N (need >=M)` on skip; subsystem stays disabled for the rest
+    of the boot (operator power-cycles for fresh heap). Numbers are
+    conservative defaults — tighten via telemetry once production runs
+    long enough to surface real-world per-subsystem heap floors.
+    Adds ~936 bytes flash. Mirrors v0.3.33's OTA preflight gate.
+    Original spec retained for context:
+
     Mirrors v0.3.33's OTA preflight gate. Before bringing each
     subsystem up (BLE init, MQTT connect, etc.), check
     esp_get_free_internal_heap_size() against a per-subsystem
