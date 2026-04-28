@@ -53,6 +53,9 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 - [SUGGESTED_IMPROVEMENTS_ARCHIVE.md](SUGGESTED_IMPROVEMENTS_ARCHIVE.md)
   — every entry's full body, append-only.
 - [WONT_DO.md](WONT_DO.md) — intentional non-actions with rationale.
+- [OPERATOR_INSTALL_GUIDE.md](OPERATOR_INSTALL_GUIDE.md) — antenna +
+  power layout rules of thumb derived from the 10-config RF sweep.
+  Tracks #40; supersedes ad-hoc notes once field-validated.
 
 ## `SESSIONS/` — point-in-time reports
 
