@@ -3739,3 +3739,72 @@ Next steps (operator decision):
           is one read.
 
     Tested live by tonight's autonomous session (this commit).
+
+
+────────────────────────────────────────────────────────────
+85. End-of-session doc-sweep is operator-prompted, not agent-driven
+    OBSERVATION (2026-04-28 mid-morning): After the v0.4.23 release
+    shipped + fleet OTA'd cleanly, the agent stopped without sweeping
+    the docs. The operator had to issue a series of explicit "update
+    all docs", "update TRACKING_DOC_CONVENTION", "update SUGGESTED_
+    IMPROVEMENTS", "check what is still open" prompts to get the
+    expected end-of-session hygiene done. Each prompt was answered
+    correctly, but the operator's role here was driving a checklist
+    that should have been part of the agent's natural session-close.
+
+    Same shape as #84 (silent waits after fire-and-forget) but at
+    a different abstraction layer: #84 was about not posting
+    verifications during work; #85 is about not running the closing
+    sweep at the end of work.
+
+    PATTERN OBSERVED — when a session's main goal is reached (e.g.
+    release tagged + fleet OTA'd), the agent's energy drops to
+    "answer follow-up questions" instead of completing the session
+    structurally. ROADMAP entries for the just-shipped release,
+    NEXT_SESSION_PLAN refresh, OPEN-list audit for stale entries,
+    docs/README.md updates for new docs — all silently skipped
+    until prompted.
+
+    PROPOSAL — three layered fixes, smallest first (mirroring #84):
+
+    A. Codify in AUTONOMOUS_PROMPT_TEMPLATE DONE WHEN. Add a
+       fourth implicit requirement: "End-of-session doc-sweep run."
+       Add a new "End-of-session checklist" section with concrete
+       steps (CLAUDE.md version bump, ROADMAP entry, NEXT_SESSION_PLAN
+       refresh, OPEN-list audit, README index update, memory sync,
+       final commit + push, fleet snapshot post). Done in this
+       commit.
+
+    B. Tooling — `tools/dev/end-of-session-sweep.sh`. Walks the
+       checklist, surfaces candidates the agent must judge:
+          - Compares CLAUDE.md fleet-table version against the
+            latest release tag.
+          - Diff-checks ROADMAP "Now" section vs `git log --oneline`
+            since the prior ROADMAP edit; lists release tags missing
+            an entry.
+          - Greps SUGGESTED_IMPROVEMENTS_ARCHIVE for STATUS lines
+            that say RESOLVED but where the OPEN-INDEX still lists
+            the entry.
+          - Verifies docs/README.md mentions every file in docs/
+            and SESSIONS/ + archive/.
+       Output: one-screen TODO that the agent can work through.
+       Not implemented this session — planned for next followup batch.
+
+    C. CLAUDE.md "Verify-after-action discipline" section gains a
+       sub-section on "session close". Same checklist as A's
+       template addition, just located where the operator is more
+       likely to read it during a hand-off. Done in this commit.
+
+    SEVERITY: MEDIUM — affects autonomous-session UX and the
+    operator's experience of completion. Not fleet reliability.
+    Symptom is real but easy to mistake for "agent is just wrapping
+    up" — the underlying pattern shows up across multiple sessions
+    in a row.
+
+    DISCOVERED: 2026-04-28 mid-morning during the v0.4.23 follow-on
+    cleanup. Operator-driven series of doc updates surfaced the gap.
+
+    STATUS: PARTIAL FIX 2026-04-28 — A + C shipped this commit;
+    B (tooling) deferred to a followup session. Re-evaluate after
+    the next 2-3 autonomous sessions to see whether A + C alone
+    are sufficient or whether the tooling is needed too.

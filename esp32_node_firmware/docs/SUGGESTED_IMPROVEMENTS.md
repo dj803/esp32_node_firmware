@@ -60,8 +60,9 @@ To resolve an entry:
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A/B/E/F/G/H shipped, C/D/I open)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
+  #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 39
+  Total open: 40
 
 ────────────────────────────────────────────────────────────
 

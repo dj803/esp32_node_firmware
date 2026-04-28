@@ -75,6 +75,26 @@ everything's clean. Quiet success and quiet failure must look different.
 Pattern was the root cause of #84 — silent waits after fire-and-forget OTAs
 made the operator have to ask "what are we waiting for?". Don't repeat.
 
+### Session close (#85)
+
+When an autonomous-mode session reaches its goal, run the end-of-session
+checklist before stopping (see AUTONOMOUS_PROMPT_TEMPLATE.md "End-of-
+session checklist"):
+
+1. CLAUDE.md fleet-table version bump if a release shipped.
+2. ROADMAP.md `### vX.Y.Z — DONE` entry under "Now".
+3. NEXT_SESSION_PLAN.md refresh — what's next given what just shipped.
+4. SUGGESTED_IMPROVEMENTS.md OPEN-list audit for stale entries (move
+   silently-resolved → RESOLVED, REJECTED → WONT_DO).
+5. docs/README.md index for any new doc.
+6. Memory MEMORY.md + per-session memory file under
+   `~/.claude/projects/<project>/memory/`.
+7. Final commit + push.
+8. One-paragraph summary to operator with fleet snapshot.
+
+Operator should never have to ask "did you update X" after a session
+closes. The checklist is the contract.
+
 ## Monitoring sessions — always run the silent watcher
 For any session where stability is a concern (post-flash soak, post-OTA,
 overnight runs, Phase B-style diagnostics), arm both watchers:

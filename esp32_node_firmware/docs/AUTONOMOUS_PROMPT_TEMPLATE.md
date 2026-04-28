@@ -111,7 +111,68 @@ DONE WHEN
      binaries on test devices must be upgraded to release before stopping.
   3. Watchers + monitors back to a stable steady state — no devices
      in panic loops or mid-OTA at the time of stop.
+  4. End-of-session doc-sweep run — see "End-of-session checklist"
+     below. Operator should never have to ask "did you update X" or
+     "is the index still accurate". If the agent stops before the
+     checklist runs, it's not done.
 ```
+
+## End-of-session checklist
+
+Before ending an autonomous-mode session (whether done-naturally or
+on operator command), the agent runs through this list. Each item
+takes ≤5 minutes; the whole sweep is under 30. **No new code, no
+release, no scope expansion** during the sweep — just bring the docs
+into sync with what already shipped.
+
+1. **Bump version in CLAUDE.md** if a release was cut. The
+   `## Device Fleet (firmware vX.Y.Z)` heading is the canonical
+   "fleet on" version; update it to the release that just shipped
+   (or "vX.Y.Z — except <device> on <variant>" if a device is
+   intentionally off-release).
+
+2. **Update ROADMAP.md** with the just-shipped release(s):
+   - Add a `### vX.Y.Z — DONE (shipped <date>)` entry under
+     "Now (just shipped or in flight)" with a 3-5 bullet summary.
+   - Bump the "Last updated" line at the top.
+
+3. **Refresh NEXT_SESSION_PLAN.md** to reflect what's done + what's
+   the new recommended next session. If the previous A/B/C menu's
+   A is now done, promote B and C, add a new C if appropriate.
+
+4. **Audit SUGGESTED_IMPROVEMENTS.md OPEN list** for stale entries.
+   For each entry, ask: "is this still actionable, or did the work
+   silently land elsewhere?" Common cases:
+   - REJECTED design alternatives still in OPEN → move to WONT_DO
+     with rationale + add STATUS line in archive.
+   - Audits / hardware findings that produced a doc → move to
+     RESOLVED with a pointer to the doc.
+   - Sub-items of a tracking entry that have all shipped → move
+     parent to RESOLVED or update parent's "(sub-A/B/C shipped,
+     D/E open)" annotation.
+   Verify total counts match the actual line counts. Bump the
+   "Last index sweep" date.
+
+5. **Update docs/README.md index** if any new doc was added or
+   moved during the session. Date-stamped audits / incident reports
+   live in `SESSIONS/`; convention/policy docs stay at top level
+   (per TRACKING_DOC_CONVENTION.md).
+
+6. **Update memory MEMORY.md + the session-summary memory file**
+   under `~/.claude/projects/<project>/memory/`. The MEMORY.md
+   index is the cross-session bridge; the per-session file is the
+   detailed pickup point.
+
+7. **Final commit** of all the above as `docs: end-of-session sweep
+   post-vX.Y.Z`. Push.
+
+8. **Final fleet snapshot** (mosquitto_sub for ~60 s) confirming all
+   devices on intended versions, heaps healthy, no panic loops.
+   Post a one-paragraph summary to the operator.
+
+This list is itself a tracking-doc — updates to it should reference
+the post-mortem in archive entry #85 (which captures the gap that
+prompted formalising this).
 
 ---
 
