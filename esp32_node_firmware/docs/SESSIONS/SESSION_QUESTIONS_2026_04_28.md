@@ -2,6 +2,37 @@
 
 Session goal: chip away at OPEN items while waiting for relay hardware.
 
+## Q5 — v0.4.24 scope expanded slightly while you were away — OK to tag?
+
+After your "Q3 bundle is good" approval I added two tightly-thematic
+items to the v0.4.24 scope:
+
+- **#34 Phase 1 captive-portal DNS hijack** — small (~8 KB flash,
+  53 lines), gated by `AP_CAPTIVE_DNS_ENABLED`, makes sub-D's AP-mode
+  fallback usable from a phone without typing `192.168.4.1`. Phase 2
+  (port-80 redirector for the captive sheet) deferred. Commit
+  `256fc91`.
+- **#77 closure** — re-audit confirmed sub-A/B/C all already shipped
+  under #79's `tools/dev/ota-rollout.sh`. Doc-only move from OPEN to
+  RESOLVED. Commit `d986a32`.
+
+If both are OK, v0.4.24 is ready to tag once you confirm — fleet is
+5/6 back (see UPDATE below). If you'd rather drop one, easy revert.
+
+## UPDATE — Fleet 5/6 recovered (~12:25 SAST)
+
+5/6 production devices back: Alpha rebooted (int_wdt) and is healthy
+again (uptime 23 min, heap 122912); Bravo / Delta / Echo / Foxtrot
+all survived the outage with `mqtt_disconnects=1` and no reboot (uptime
+~76 min preserved). Charlie stays offline per your Q1 decision.
+
+Heap fragmentation worth noting — Bravo / Delta / Echo all show
+heap_largest ~40-43 KB out of ~122 KB free (~33% fragmentation).
+That's the surviving-reconnect tax. Will recover over time as the
+allocator coalesces; no firmware action needed today.
+
+Detailed log: [SESSIONS/AP_OUTAGE_2026_04_28.md](AP_OUTAGE_2026_04_28.md).
+
 ## URGENT — Fleet went offline mid-session (~10:50 SAST)
 
 At session start (~09:30 SAST) the live retained showed every device with
