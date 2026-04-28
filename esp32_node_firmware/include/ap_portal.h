@@ -19,6 +19,9 @@
 #include "device_id.h"
 #include "wifi_recovery.h"   // apStaScanShouldRun() — background STA scan gate
 #include "prefs_quiet.h"     // (v0.4.03) prefsTryBegin — silent on missing namespace
+#if AP_CAPTIVE_DNS_ENABLED
+#include <DNSServer.h>                 // (#34) captive-portal DNS hijack — must come after config.h
+#endif
 
 // =============================================================================
 // ap_portal.h  —  Configuration portals (HTTPS)
@@ -95,6 +98,16 @@ static volatile uint32_t _lastAdminActivityMs = 0;
 static bool              _apShouldExit        = false;
 static uint32_t          _apExitAtMs          = 0;
 static CredentialBundle  _apStaBundle         = {};   // copy taken by apPortalStart()
+
+#if AP_CAPTIVE_DNS_ENABLED
+// (#34, v0.4.24) DNS server runs in async-UDP context (handled by AsyncUDP
+// in the ESP-IDF lwIP task), so apPortalStart()'s main loop doesn't need
+// to poll. Module-static so it outlives the function — `apPortalStart()`
+// blocks forever, but mathieucarbou's DNSServer holds the AsyncUDP socket
+// internally and tearing it down is only relevant if AP mode were ever
+// exited without ESP.restart() (which it isn't).
+static DNSServer _apDnsServer;
+#endif
 
 // Called from every admin HTTPS handler on entry. Bumping this timestamp
 // suppresses the background STA scan for AP_ADMIN_IDLE_MS so that an admin
@@ -822,6 +835,27 @@ void apPortalStart(const CredentialBundle* staBundle = nullptr) {
 #endif
     WiFi.softAP(ssid.c_str(), AP_PASSWORD);
     LOG_I("AP Portal", "SSID: %s  IP: %s", ssid.c_str(), AP_LOCAL_IP);
+
+#if AP_CAPTIVE_DNS_ENABLED
+    // (#34 Phase 1) Start the DNS hijack so iOS / Android captive-portal
+    // detection probes resolve to us. Empty domain string = catch-all
+    // (every A-query gets the AP IP). DNSServer.start() returns false on
+    // socket bind failure (port 53 already in use) — log and continue;
+    // the portal still works, just without the captive sheet UX.
+    //
+    // Phase 2 (port-80 redirector) is required before iOS/Android will
+    // actually display the portal page in the captive sheet. With Phase 1
+    // alone, Android still flags the network as captive but the user lands
+    // on a "this site can't be reached" until they manually navigate.
+    // Tracked under #34 in SUGGESTED_IMPROVEMENTS.
+    IPAddress apIp = WiFi.softAPIP();
+    if (_apDnsServer.start(53, "", apIp)) {
+        LOG_I("AP Portal", "Captive DNS hijack active — all queries → %s",
+              apIp.toString().c_str());
+    } else {
+        LOG_W("AP Portal", "Captive DNS hijack failed to start (port 53 bind)");
+    }
+#endif
 
     // Load or generate TLS credentials
     bool tlsOk = loadOrGenerateTlsCreds();

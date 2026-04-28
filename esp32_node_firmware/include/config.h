@@ -325,6 +325,25 @@ static const char* const OTA_FALLBACK_URLS[OTA_FALLBACK_URL_COUNT] = {
                                                     // (informational only — no HTTP auth)
 #define AP_LOCAL_IP                "192.168.4.1"    // Default IP assigned by ESP32 AP mode
 
+// (#34, v0.4.24) Captive portal DNS hijack. When set to 1, the AP portal
+// runs a UDP DNS server on port 53 that resolves every query to the AP's
+// own IP. iOS / Android probe well-known captive-detection URLs on
+// connect; with the hijack in place those URLs resolve to us, the OS
+// flags the network as captive, and the user sees a "Sign in to network"
+// sheet instead of having to manually browse to 192.168.4.1.
+//
+// Phase 1 (this gate) ships the DNS hijack only. Phase 2 — a plain HTTP
+// listener on port 80 that 302-redirects to https://192.168.4.1/ — is
+// needed for full UX (without it the captive sheet shows a broken page
+// because the OS probes http://, not https://, and our HTTPS server
+// doesn't bind 80). Tracked under #34 in SUGGESTED_IMPROVEMENTS.
+//
+// Adds ~12 KB of flash (DNSServer + AsyncUDP). Set to 0 if AP mode is
+// never expected (operator-only deployments) and the flash budget is
+// tight. v0.5.0+ relay variant is closer to the 1.875 MB ota slot
+// limit; revisit then.
+#define AP_CAPTIVE_DNS_ENABLED     1
+
 
 // -----------------------------------------------------------------------------
 // RFID reader (MFRC522v2 via SPI)
