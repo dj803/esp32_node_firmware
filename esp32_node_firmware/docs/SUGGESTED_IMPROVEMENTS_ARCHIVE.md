@@ -455,7 +455,25 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
 34. Captive portal DNS responder
     AP portal currently doesn't trigger iOS / Android captive sheets —
     admin must manually browse to 192.168.4.1. Optional UX win.
-    PRIORITY: Low.
+    PRIORITY: Low — promoted to Medium 2026-04-28 because v0.4.24's
+    sub-D restart-loop fallback now routes devices to AP_MODE on its
+    own (operator no longer has to be physically at the device for it
+    to enter AP); auto-popping captive sheet on phone connect halves
+    the operator workflow.
+    STATUS:   PHASE 1 SHIPPED 2026-04-28 (commit 256fc91, gated for
+              v0.4.24). DNSServer.h (AsyncUDP-backed) starts on UDP:53
+              with empty domain (catch-all captive mode), resolving every
+              A-query to the AP IP. Adds ~8 KB flash + ~96 B RAM,
+              gated behind AP_CAPTIVE_DNS_ENABLED (default 1).
+    PHASE 2:  Plain HTTP listener on port 80 that 302-redirects to
+              https://192.168.4.1/. Required for full captive-sheet UX —
+              without it, the captive sheet shows "this site can't be
+              reached" until the user manually navigates. Non-trivial
+              because esp_https_server holds a single httpd instance;
+              port 80 needs either a second instance (RAM cost) or a
+              raw lwIP socket listener (code complexity). Defer until
+              operator confirms phase 1 behaviour on iOS/Android in the
+              field.
 
 35. Operational practice: canary OTA pattern
     Even at 3 devices: OTA Alpha first, soak ~1 h, then OTA Bravo +

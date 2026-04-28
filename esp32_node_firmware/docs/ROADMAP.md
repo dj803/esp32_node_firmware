@@ -37,6 +37,13 @@ What's on master awaiting validation:
   triggers (M1/M2/M3/M4) + bash `runner.sh` orchestrator that
   snapshots pre-state, fires the trigger, observes events for a window,
   and writes JSON pass/fail report under `~/daily-health/`.
+- **#34 Phase 1 — captive-portal DNS hijack.** Promoted from "low
+  priority UX" to v0.4.24 scope because sub-D's AP-mode fallback now
+  drops devices into AP without operator intervention; auto-popping the
+  captive sheet on phone connect halves the recovery workflow. Bundled
+  DNSServer.h listens on UDP:53 with empty-domain catch-all, resolving
+  every A-query to the AP IP. Phase 2 (port-80 redirector) deferred —
+  defer until operator confirms Phase 1 behaviour in the field.
 - **Index hygiene** — #24 (already addressed v0.3.33 era) + #28
   (resolved v0.4.02 in STRING_LIFETIME.md) moved from OPEN to RESOLVED.
   Open count 40 → 38; Resolved 36 → 38.

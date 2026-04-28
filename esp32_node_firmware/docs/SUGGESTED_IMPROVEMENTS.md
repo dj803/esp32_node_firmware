@@ -38,7 +38,7 @@ To resolve an entry:
   #31   Pin LED + RFID tasks to Core 1
   #32   Heap-headroom gate at boot for each subsystem
   #33   Versioned MQTT topic prefixes
-  #34   Captive portal DNS responder
+  #34   Captive portal DNS responder                                  (Phase 1 DNS hijack code-shipped 2026-04-28; Phase 2 port-80 redirector still open)
   #35   Operational practice: canary OTA pattern
   #36   Operational practice: heartbeat / boot-reason monitoring
   #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations
