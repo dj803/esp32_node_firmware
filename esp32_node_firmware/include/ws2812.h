@@ -61,14 +61,21 @@ enum class LedEventType : uint8_t {
     OTA_START,       // OTA download beginning → orange chasing
     OTA_DONE,        // OTA failed or no update → restore _previousState
     MQTT_HEALTHY,    // WiFi + MQTT connected → slow green breathing (operational heartbeat)
+    MQTT_OVERRIDE_TIMED, // (#23) Timed override: color+anim for duration_ms then auto-revert
+    MQTT_PIXEL_SET,  // (#19) Set single pixel {index, r, g, b}
+    MQTT_PIXEL_COMMIT, // (#19) Switch to MQTT_PIXELS state and freeze _leds[] for direct render
+    SCENE_SAVE,      // (#20) Persist current _leds[] + brightness to NVS under animName
+    SCENE_LOAD,      // (#20) Load scene by name from NVS and apply as MQTT_PIXELS
+    SCENE_DELETE,    // (#20) Remove a saved scene from NVS
 };
 
 struct LedEvent {
     LedEventType type;
     uint8_t      r, g, b;        // for MQTT_COLOR
     uint8_t      brightness;     // for MQTT_BRIGHTNESS (0–255)
-    uint8_t      count;          // for MQTT_COUNT
-    char         animName[16];   // for MQTT_ANIMATION / BOOT_STATE
+    uint8_t      count;          // for MQTT_COUNT / pixel index
+    char         animName[16];   // for MQTT_ANIMATION / BOOT_STATE / MQTT_OVERRIDE_TIMED
+    uint32_t     duration_ms;    // (#23) for MQTT_OVERRIDE_TIMED: ms before auto-revert
 };
 
 
@@ -81,6 +88,7 @@ enum class LedState : uint8_t {
     RFID_OK,
     RFID_FAIL,
     MQTT_OVERRIDE,
+    MQTT_PIXELS,     // (#19) per-pixel mode: renderer skips fill_solid; _leds[] is the source of truth
     OTA,
     OFF,
 };
@@ -116,6 +124,11 @@ static LedState      _ledPreviousState = LedState::IDLE;  // restored after RFID
 // RFID timed-override
 static uint32_t      _ledRfidEndMs     = 0;          // millis() when RFID anim ends
 
+// (#23, v0.4.26) MQTT-commanded timed override end-time. Set by
+// MQTT_OVERRIDE_TIMED handler; checked by renderer in MQTT_OVERRIDE state.
+// 0 = no expiry (untimed override from MQTT_COLOR / MQTT_ANIMATION).
+static uint32_t      _ledOverrideEndMs = 0;
+
 // Saved MQTT_OVERRIDE parameters (restored after RFID/OTA)
 static CRGB          _ledMqttColor     = CRGB::Black;
 static char          _ledMqttAnimName[16] = "solid";
@@ -136,6 +149,172 @@ static volatile uint8_t _ledStateR = 0, _ledStateG = 0, _ledStateB = 0;
 static void mqttPublishLedState(const char* state,
                                 uint8_t r, uint8_t g, uint8_t b,
                                 uint8_t brightness, uint8_t count);
+
+
+// ── Scene persistence (#20, v0.4.26) ──────────────────────────────────────────
+// Saved scenes live in their own NVS namespace `led_scenes`. Each scene is
+// stored under key `s_<name>` (where name is a 1-12 char alphanumeric tag —
+// chosen short so the NVS key length stays < 15 chars). Payload format:
+//
+//   bytes 0:    brightness (uint8)
+//   bytes 1..3*N: N pixel triples (r, g, b)
+//   bytes 1+3*N: pixel count (uint8)  -- last byte for forward compat
+//
+// Bounded to LED_MAX_NUM_LEDS pixels = ~25 bytes per scene. Conservative
+// limit of 8 scene slots (so the NVS partition isn't dominated by LED data).
+// The list of saved scene names lives under key `_names` as a
+// comma-separated string for simple enumeration via cmd/led scene_list.
+
+#define LED_SCENES_NS         "led_scenes"
+#define LED_SCENE_NAMES_KEY   "_names"
+#define LED_MAX_SCENES        8
+#define LED_SCENE_NAME_MAX    12
+
+// Sanitise a scene name to alphanumeric + underscore, max 12 chars.
+// Returns true if the name is non-empty after sanitising.
+static bool _ledSceneNameOk(const char* name) {
+    if (!name || !*name) return false;
+    size_t len = strlen(name);
+    if (len > LED_SCENE_NAME_MAX) return false;
+    for (size_t i = 0; i < len; i++) {
+        char c = name[i];
+        if (!isalnum((unsigned char)c) && c != '_') return false;
+    }
+    return true;
+}
+
+// Serialise current _leds[] + brightness into a byte buffer.
+// Caller-owned buffer must be at least 1 + 3 * LED_MAX_NUM_LEDS + 1 bytes.
+// Returns the actual byte count written.
+static size_t _ledSceneSerialise(uint8_t* out) {
+    out[0] = (uint8_t)_ledActiveBrightness;
+    uint8_t n = _ledActiveCount;
+    if (n > LED_MAX_NUM_LEDS) n = LED_MAX_NUM_LEDS;
+    for (uint8_t i = 0; i < n; i++) {
+        out[1 + i*3 + 0] = _leds[i].r;
+        out[1 + i*3 + 1] = _leds[i].g;
+        out[1 + i*3 + 2] = _leds[i].b;
+    }
+    out[1 + n*3] = n;   // pixel count footer
+    return 1 + n*3 + 1;
+}
+
+// Deserialise into _leds[] + adjust brightness. Returns true on a
+// well-formed payload (size + count match).
+static bool _ledSceneDeserialise(const uint8_t* in, size_t len) {
+    if (len < 2) return false;
+    uint8_t br = in[0];
+    uint8_t n  = in[len - 1];
+    if (n > LED_MAX_NUM_LEDS) return false;
+    if (len != (size_t)(1 + n*3 + 1)) return false;
+    if (br == 0 || br > LED_MAX_BRIGHTNESS) br = LED_MAX_BRIGHTNESS;
+    _ledActiveBrightness = br;
+    FastLED.setBrightness(br);
+    fill_solid(_leds, LED_MAX_NUM_LEDS, CRGB::Black);
+    for (uint8_t i = 0; i < n; i++) {
+        _leds[i] = CRGB(in[1 + i*3 + 0], in[1 + i*3 + 1], in[1 + i*3 + 2]);
+    }
+    return true;
+}
+
+// Read+update the comma-separated names index. `op` is +1 to add, -1 to
+// remove. Idempotent — adding an existing name is a no-op; removing a
+// missing name is a no-op. Returns true on a successful NVS write.
+static bool _ledSceneNamesUpdate(const char* name, int op) {
+    Preferences p;
+    if (!p.begin(LED_SCENES_NS, false)) return false;
+    String names = p.getString(LED_SCENE_NAMES_KEY, "");
+    String tok   = String(name);
+    String wrapped = String(",") + names + ",";
+    bool present = (wrapped.indexOf("," + tok + ",") >= 0);
+    bool changed = false;
+    if (op > 0 && !present) {
+        if (names.length() > 0) names += ",";
+        names += tok;
+        changed = true;
+    } else if (op < 0 && present) {
+        wrapped.replace("," + tok + ",", ",");
+        if (wrapped.length() >= 2) names = wrapped.substring(1, wrapped.length() - 1);
+        else names = "";
+        changed = true;
+    }
+    if (changed) p.putString(LED_SCENE_NAMES_KEY, names);
+    p.end();
+    return changed;
+}
+
+// Save current _leds[] + brightness as a named scene. Enforces the
+// LED_MAX_SCENES quota by refusing the save when the names index is full
+// (operator must scene_delete first).
+static bool _ledSceneSave(const char* name) {
+    if (!_ledSceneNameOk(name)) return false;
+    Preferences p;
+    if (!p.begin(LED_SCENES_NS, true)) {
+        // Namespace empty — first scene. Re-open for write below.
+    } else {
+        String names = p.getString(LED_SCENE_NAMES_KEY, "");
+        // Count comma-separated entries.
+        int slots = names.length() == 0 ? 0 : 1;
+        for (int i = 0; i < (int)names.length(); i++) if (names[i] == ',') slots++;
+        // If saving a NEW name and we're already at the cap, refuse.
+        String wrapped = "," + names + ",";
+        bool exists = wrapped.indexOf("," + String(name) + ",") >= 0;
+        p.end();
+        if (!exists && slots >= LED_MAX_SCENES) {
+            LOG_W("ws2812", "scene_save '%s' refused — quota %d full", name, LED_MAX_SCENES);
+            return false;
+        }
+    }
+    uint8_t buf[1 + 3 * LED_MAX_NUM_LEDS + 1];
+    size_t n = _ledSceneSerialise(buf);
+    if (!p.begin(LED_SCENES_NS, false)) return false;
+    char key[20]; snprintf(key, sizeof(key), "s_%s", name);  // 20 = 2 prefix + LED_SCENE_NAME_MAX (12) + room
+    p.putBytes(key, buf, n);
+    p.end();
+    _ledSceneNamesUpdate(name, +1);
+    return true;
+}
+
+// Load a saved scene into _leds[] + brightness. Caller transitions the
+// state machine to MQTT_PIXELS afterward.
+static bool _ledSceneLoad(const char* name) {
+    if (!_ledSceneNameOk(name)) return false;
+    Preferences p;
+    if (!p.begin(LED_SCENES_NS, true)) return false;
+    char key[20]; snprintf(key, sizeof(key), "s_%s", name);  // 20 = 2 prefix + LED_SCENE_NAME_MAX (12) + room
+    size_t len = p.getBytesLength(key);
+    if (len == 0 || len > 1 + 3 * LED_MAX_NUM_LEDS + 1) {
+        p.end();
+        LOG_W("ws2812", "scene_load '%s' missing or malformed", name);
+        return false;
+    }
+    uint8_t buf[1 + 3 * LED_MAX_NUM_LEDS + 1];
+    p.getBytes(key, buf, len);
+    p.end();
+    return _ledSceneDeserialise(buf, len);
+}
+
+// Remove a saved scene from NVS.
+static bool _ledSceneDelete(const char* name) {
+    if (!_ledSceneNameOk(name)) return false;
+    Preferences p;
+    if (!p.begin(LED_SCENES_NS, false)) return false;
+    char key[20]; snprintf(key, sizeof(key), "s_%s", name);  // 20 = 2 prefix + LED_SCENE_NAME_MAX (12) + room
+    bool ok = p.remove(key);
+    p.end();
+    if (ok) _ledSceneNamesUpdate(name, -1);
+    return ok;
+}
+
+// Read the comma-separated scene-names index. Public so cmd/led scene_list
+// can publish the result. Caller-owned buffer.
+static String ledSceneList() {
+    Preferences p;
+    if (!p.begin(LED_SCENES_NS, true)) return String("");
+    String names = p.getString(LED_SCENE_NAMES_KEY, "");
+    p.end();
+    return names;
+}
 
 
 // ── NVS helpers ───────────────────────────────────────────────────────────────
@@ -253,18 +432,43 @@ static void _ws2812RenderFrame() {
             break;
 
         case LedState::MQTT_OVERRIDE: {
+            // (#23, v0.4.26) Timed-override auto-revert. _ledOverrideEndMs is
+            // 0 for untimed overrides (MQTT_COLOR / MQTT_ANIMATION) and
+            // millis()+duration for MQTT_OVERRIDE_TIMED. When it expires,
+            // restore the previous state — same shape as RFID_OK / LOCATE.
+            if (_ledOverrideEndMs && (int32_t)(millis() - _ledOverrideEndMs) >= 0) {
+                _ledState         = _ledPreviousState;
+                _ledOverrideEndMs = 0;
+                break;
+            }
             if (strcmp(_ledMqttAnimName, "breathing") == 0) {
                 fill_solid(_leds, _ledActiveCount,
                            _breathe(4000, _ledMqttColor));
             } else if (strcmp(_ledMqttAnimName, "rainbow") == 0) {
                 uint8_t hue = (millis() / 10) & 0xFF;
                 fill_rainbow(_leds, _ledActiveCount, hue, 255 / _ledActiveCount);
+            } else if (strcmp(_ledMqttAnimName, "alarm") == 0) {
+                // (#23) Fast red/black flash for alarm-class app events.
+                bool on = (millis() % 400) < 200;
+                fill_solid(_leds, _ledActiveCount, on ? CRGB::Red : CRGB::Black);
+            } else if (strcmp(_ledMqttAnimName, "warn") == 0) {
+                // (#23) Slow amber breathing for warn-class app events.
+                fill_solid(_leds, _ledActiveCount,
+                           _breathe(2000, CRGB(255, 180, 0)));
             } else {
                 // Default: "solid" or any unrecognised name
                 fill_solid(_leds, _ledActiveCount, _ledMqttColor);
             }
             break;
         }
+
+        case LedState::MQTT_PIXELS:
+            // (#19, v0.4.26) Per-pixel mode: _leds[] holds the operator-supplied
+            // pixel buffer (set via MQTT_PIXEL_SET events). Renderer just
+            // forwards what's there to FastLED. We still zero out beyond
+            // _ledActiveCount above (top of function), so a strip narrower
+            // than LED_MAX_NUM_LEDS won't accidentally light unused pixels.
+            break;
 
         case LedState::OTA:
             _chase(CRGB(255, 80, 0));   // Orange chasing
@@ -296,10 +500,16 @@ static void _ws2812HandleEvent(const LedEvent& evt) {
             break;
 
         case LedEventType::MQTT_COLOR:
-            _ledPreviousState = _ledState;
+            // Don't clobber _ledPreviousState if an override is already active
+            // (operator might be tweaking color mid-override; revert target
+            // should still be the pre-override state).
+            if (_ledState != LedState::MQTT_OVERRIDE && _ledState != LedState::MQTT_PIXELS) {
+                _ledPreviousState = _ledState;
+            }
             _ledMqttColor     = CRGB(evt.r, evt.g, evt.b);
             strlcpy(_ledMqttAnimName, "solid", sizeof(_ledMqttAnimName));
             _ledState         = LedState::MQTT_OVERRIDE;
+            _ledOverrideEndMs = 0;   // (#23) untimed — no auto-revert
             _ledStateR = evt.r; _ledStateG = evt.g; _ledStateB = evt.b;
             break;
 
@@ -310,9 +520,80 @@ static void _ws2812HandleEvent(const LedEvent& evt) {
             break;
 
         case LedEventType::MQTT_ANIMATION:
-            _ledPreviousState = _ledState;
+            if (_ledState != LedState::MQTT_OVERRIDE && _ledState != LedState::MQTT_PIXELS) {
+                _ledPreviousState = _ledState;
+            }
             strlcpy(_ledMqttAnimName, evt.animName, sizeof(_ledMqttAnimName));
-            _ledState = LedState::MQTT_OVERRIDE;
+            _ledState         = LedState::MQTT_OVERRIDE;
+            _ledOverrideEndMs = 0;   // (#23) untimed — no auto-revert
+            break;
+
+        case LedEventType::MQTT_OVERRIDE_TIMED: {
+            // (#23, v0.4.26) Apply color + animation for duration_ms then
+            // auto-revert to whatever was showing before. Mirrors the
+            // RFID_OK / LOCATE auto-revert pattern but operator-controllable
+            // via MQTT for app-level events (door left open, sensor fault,
+            // OTA-in-progress overlay, etc.).
+            if (_ledState != LedState::MQTT_OVERRIDE && _ledState != LedState::MQTT_PIXELS) {
+                _ledPreviousState = _ledState;
+            }
+            _ledMqttColor = CRGB(evt.r, evt.g, evt.b);
+            strlcpy(_ledMqttAnimName, evt.animName, sizeof(_ledMqttAnimName));
+            _ledState         = LedState::MQTT_OVERRIDE;
+            _ledOverrideEndMs = evt.duration_ms ? millis() + evt.duration_ms : 0;
+            _ledStateR = evt.r; _ledStateG = evt.g; _ledStateB = evt.b;
+            break;
+        }
+
+        case LedEventType::MQTT_PIXEL_SET:
+            // (#19, v0.4.26) Single-pixel write into the FastLED buffer. Index
+            // bounds-checked against _ledActiveCount. Multiple of these are
+            // typically queued back-to-back from the cmd/led "pixels" handler;
+            // the trailing MQTT_PIXEL_COMMIT switches state to MQTT_PIXELS so
+            // the renderer stops overwriting the buffer.
+            if (evt.count < _ledActiveCount && evt.count < LED_MAX_NUM_LEDS) {
+                _leds[evt.count] = CRGB(evt.r, evt.g, evt.b);
+            }
+            break;
+
+        case LedEventType::MQTT_PIXEL_COMMIT:
+            // (#19) Switch to per-pixel mode. _leds[] is now the source of
+            // truth — renderer skips fill_solid in MQTT_PIXELS state. Operator
+            // returns to a normal state via cmd/led {"cmd":"reset"} or any
+            // other state-changing event.
+            if (_ledState != LedState::MQTT_PIXELS && _ledState != LedState::MQTT_OVERRIDE) {
+                _ledPreviousState = _ledState;
+            }
+            _ledState         = LedState::MQTT_PIXELS;
+            _ledOverrideEndMs = 0;
+            // No _ledStateR/G/B update — the buffer is heterogeneous.
+            break;
+
+        case LedEventType::SCENE_SAVE:
+            // (#20, v0.4.26) Persist current _leds[] + brightness to NVS.
+            // Capture-as-snapshot; doesn't change visible state.
+            if (_ledSceneSave(evt.animName)) {
+                LOG_I("ws2812", "scene saved '%s'", evt.animName);
+            }
+            break;
+
+        case LedEventType::SCENE_LOAD:
+            // (#20) Load saved pixel buffer + brightness, switch to MQTT_PIXELS.
+            if (_ledSceneLoad(evt.animName)) {
+                if (_ledState != LedState::MQTT_PIXELS && _ledState != LedState::MQTT_OVERRIDE) {
+                    _ledPreviousState = _ledState;
+                }
+                _ledState         = LedState::MQTT_PIXELS;
+                _ledOverrideEndMs = 0;
+                LOG_I("ws2812", "scene loaded '%s'", evt.animName);
+            }
+            break;
+
+        case LedEventType::SCENE_DELETE:
+            // (#20) Remove a saved scene. No state change.
+            if (_ledSceneDelete(evt.animName)) {
+                LOG_I("ws2812", "scene deleted '%s'", evt.animName);
+            }
             break;
 
         case LedEventType::MQTT_COUNT:
@@ -420,6 +701,7 @@ inline void ws2812PublishState() {
         case LedState::RFID_OK:        stateStr = "rfid_ok";       break;
         case LedState::RFID_FAIL:      stateStr = "rfid_fail";     break;
         case LedState::MQTT_OVERRIDE:  stateStr = "mqtt_override"; break;
+        case LedState::MQTT_PIXELS:    stateStr = "mqtt_pixels";   break;
         case LedState::OTA:            stateStr = "ota";           break;
         case LedState::OFF:            stateStr = "off";           break;
         default:                       stateStr = "idle";          break;

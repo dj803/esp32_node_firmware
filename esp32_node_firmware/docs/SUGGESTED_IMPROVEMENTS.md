@@ -27,15 +27,9 @@ To resolve an entry:
   #15   NDEF encoding / decoding helpers
   #16   Preset "program this kind of tag" forms
   #17   LF 125 kHz support (HID, EM4100, T5577)
-  #19   Per-LED addressing
-  #20   Scene / preset save-to-device
-  #21   Group / broadcast LED commands
-  #22   Scheduled / time-of-day LED automation
-  #23   OTA / heartbeat LED override from Node-RED
   #25   Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
   #26   Recovery partition app
   #27   Library-API regression test in CI
-  #31   Pin LED + RFID tasks to Core 1
   #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
   #35   Operational practice: canary OTA pattern
   #36   Operational practice: heartbeat / boot-reason monitoring
@@ -57,7 +51,7 @@ To resolve an entry:
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 35
+  Total open: 29
 
 ────────────────────────────────────────────────────────────
 
@@ -85,6 +79,12 @@ To resolve an entry:
   #28   NVS / static-string lifetime audit + naming convention        (resolved 2026-04-23 in v0.4.02 — docs/STRING_LIFETIME.md + lib_api_assert.h shipped; re-audit 2026-04-28 confirmed no new dangerous .c_str() callsites)
   #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
   #32   Heap-headroom gate at boot for each subsystem                 (resolved 2026-04-28 — heapGateOk() helper + per-subsystem thresholds gating MQTT init, BLE init, TLS keygen)
+  #19   Per-LED addressing                                            (resolved 2026-04-28 — cmd/led pixel + pixels handlers + LedState::MQTT_PIXELS where renderer skips fill_solid; _leds[] is the source of truth. Auto-commit on cmd/led pixel for one-shot UX.)
+  #20   Scene / preset save-to-device                                  (resolved 2026-04-28 — NVS namespace led_scenes with up to 8 named slots; cmd/led scene_save/load/delete/list. Captures _leds[]+brightness, restores on demand.)
+  #21   Group / broadcast LED commands                                 (resolved 2026-04-28 — Enterprise/Site/broadcast/led topic mirrors cmd/led semantics. Subscribed in onMqttConnect, routed through handleLedCommand.)
+  #22   Scheduled / time-of-day LED automation                         (resolved 2026-04-28 — led_schedule.h with NTP-synced minute-poll, 8 NVS-persisted slots, action-as-cmd/led-JSON re-fed at fire time. cmd/led sched_add/remove/list/clear.)
+  #23   OTA / heartbeat LED override from Node-RED                    (resolved 2026-04-28 — cmd/led override with auto-revert via _ledOverrideEndMs. New "alarm" + "warn" anim names. duration_ms 0 = untimed.)
+  #31   Pin LED + RFID tasks to Core 1                                (resolved 2026-04-28 — verified arduino-esp32 v3.x puts loopTask + RFID on Core 1 via CONFIG_ARDUINO_RUNNING_CORE=1, ws2812Task explicitly pinned Core 1; WiFi/AsyncTCP stay Core 0. Original concern was a v2.x default that no longer applies.)
   #34   Captive portal DNS responder                                  (resolved 2026-04-28 — Phase 1 DNS hijack + Phase 2 port-80 redirector both shipped; second httpd instance on :80 with wildcard 302 → https://192.168.4.1/)
   #30   AsyncTCP fork swap (marvinroger → mathieucarbou)              (resolved 2026-04-27 in v0.4.14)
   #41   Hardware finding — breakout + RFID-RC522 antenna distortion   (resolved as documented finding 2026-04-25; informs #37/#40)
@@ -118,4 +118,4 @@ To resolve an entry:
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 41
+  Total resolved: 47

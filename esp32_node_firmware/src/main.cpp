@@ -90,6 +90,11 @@
 #include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
 #include "relay.h"         // (v0.5.0) BDD 2CH relay — before mqtt_client.h (publishers go in mqtt_client.h)
 #include "hall.h"          // (v0.5.0) BMT 49E Hall — before mqtt_client.h
+#include "led_schedule.h"  // (#22) time-of-day LED schedule — must come BEFORE mqtt_client.h
+                           // because mqtt_client.h's cmd/led handler uses
+                           // LED_SCHEDULE_ACTION_MAX + ledScheduleAdd/Remove/etc.
+                           // led_schedule.h forward-declares handleLedCommand
+                           // (defined in mqtt_client.h) for its tick path.
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
 #include "ota_validation.h"  // Phase 2 / v0.3.34 — post-OTA self-test + rollback
@@ -622,6 +627,13 @@ void loop() {
                 LOG_W("BOOT", "MQTT init skipped this boot — power-cycle for clean heap");
             }
 
+            // (#22, v0.4.26) LED schedule — load NVS slots + start NTP
+            // sync. NTP needs WiFi which is up by this point. Schedule
+            // tick runs in loop() below; safe even before NTP completes
+            // (tick checks getLocalTime() success).
+            ledScheduleBegin();
+            ledScheduleNtpInit();
+
 #ifdef RFID_ENABLED
             rfidInit();   // SPI free now that ESP-NOW channel scan is complete
 #endif
@@ -755,6 +767,11 @@ void loop() {
     // push an "operational" marker to RestartHistory so any pre-existing
     // mqtt_unrecoverable streak gets broken. Idempotent.
     mqttMarkHealthyIfDue();
+
+    // (#22, v0.4.26) Time-of-day LED schedule. Cheap when nothing matches:
+    // single getLocalTime() + minute-change check. Fires stored cmd/led
+    // actions when the wall-clock minute matches a saved slot.
+    ledScheduleTick();
 
     // ── Core-dump publish (#65, v0.4.17) ──────────────────────────────────────
     // Once per boot, after MQTT is up, drain any stored core dump by publishing

@@ -210,6 +210,16 @@ static String mqttBroadcastRotateTopic() {
            mqttSanitizeSegment(gAppConfig.mqtt_site) + "/broadcast/cred_rotate";
 }
 
+// (#21, v0.4.26) Build the site-wide broadcast LED topic. Same JSON schema
+// as cmd/led — every device that receives the publish applies the command
+// locally. Use case: alarm flash / shift-change scene / synchronized
+// progress display across a group of devices, without operator-side
+// fan-out logic in Node-RED.
+static String mqttBroadcastLedTopic() {
+    return mqttSanitizeSegment(gAppConfig.mqtt_enterprise) + "/" +
+           mqttSanitizeSegment(gAppConfig.mqtt_site) + "/broadcast/led";
+}
+
 
 // ── Publish helpers ────────────────────────────────────────────────────────────
 
@@ -631,6 +641,152 @@ static void handleLedCommand(const char* payload, size_t len) {
         LedEvent e{};
         e.type = LedEventType::RESET;
         ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "override") == 0) {
+        // (#23, v0.4.26) Timed override: color + animation for N ms, then
+        // auto-revert. Useful for app-level events from Node-RED — door
+        // left open, sensor fault, OTA-in-progress overlay, etc.
+        // Schema:
+        //   {"cmd":"override","r":255,"g":0,"b":0,
+        //    "anim":"alarm","duration_ms":5000}
+        // anim: "solid" (default) | "breathing" | "rainbow" | "alarm" | "warn"
+        // duration_ms: 0 = no auto-revert (same as untimed override)
+        LedEvent e{};
+        e.type        = LedEventType::MQTT_OVERRIDE_TIMED;
+        e.r           = (uint8_t)constrain(doc["r"] | 255, 0, 255);
+        e.g           = (uint8_t)constrain(doc["g"] | 0,   0, 255);
+        e.b           = (uint8_t)constrain(doc["b"] | 0,   0, 255);
+        strlcpy(e.animName, doc["anim"] | "solid", sizeof(e.animName));
+        e.duration_ms = (uint32_t)constrain((long)(doc["duration_ms"] | 5000), 0L, 3600000L);
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "pixel") == 0) {
+        // (#19, v0.4.26) Single-pixel write. Fast-path for one-LED tweaks
+        // (e.g. an N-pixel progress bar where only one cell changes).
+        // Schema: {"cmd":"pixel","i":2,"r":0,"g":255,"b":0}
+        LedEvent e{};
+        e.type = LedEventType::MQTT_PIXEL_SET;
+        e.count = (uint8_t)constrain((int)(doc["i"] | 0), 0, (int)LED_MAX_NUM_LEDS - 1);
+        e.r    = (uint8_t)constrain(doc["r"] | 0, 0, 255);
+        e.g    = (uint8_t)constrain(doc["g"] | 0, 0, 255);
+        e.b    = (uint8_t)constrain(doc["b"] | 0, 0, 255);
+        ws2812PostEvent(e);
+        // Single-pixel update doesn't switch state — caller must follow
+        // with {"cmd":"pixels_commit"} OR the implicit commit below.
+        // For convenience, auto-commit single-pixel writes so a one-shot
+        // {"cmd":"pixel"} just works.
+        LedEvent commit{};
+        commit.type = LedEventType::MQTT_PIXEL_COMMIT;
+        ws2812PostEvent(commit);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "sched_add") == 0) {
+        // (#22, v0.4.26) Add or replace a time-of-day schedule slot.
+        // Schema:
+        //   {"cmd":"sched_add","id":"morning","hour":7,"minute":0,
+        //    "action":{"cmd":"override","r":255,"g":150,"b":0,
+        //              "anim":"breathing","duration_ms":3600000}}
+        // The `action` object is serialised back to JSON and stored in
+        // NVS; at trigger time it's re-fed through this same handler.
+        const char* id     = doc["id"]     | "";
+        int hour           = doc["hour"]   | -1;
+        int minute         = doc["minute"] | -1;
+        JsonVariantConst action = doc["action"];
+        if (action.isNull() || hour < 0 || minute < 0) {
+            LOG_W("MQTT", "cmd/led sched_add: missing/invalid fields");
+            return;
+        }
+        char actionBuf[LED_SCHEDULE_ACTION_MAX];
+        size_t n = serializeJson(action, actionBuf, sizeof(actionBuf));
+        if (n == 0 || n >= sizeof(actionBuf)) {
+            LOG_W("MQTT", "cmd/led sched_add: action JSON too large");
+            return;
+        }
+        if (!ledScheduleAdd(id, (uint8_t)hour, (uint8_t)minute, actionBuf)) {
+            LOG_W("MQTT", "cmd/led sched_add: refused (id/quota/format)");
+        }
+
+    } else if (strcmp(cmd, "sched_remove") == 0) {
+        const char* id = doc["id"] | "";
+        ledScheduleRemove(id);
+
+    } else if (strcmp(cmd, "sched_clear") == 0) {
+        ledScheduleClear();
+
+    } else if (strcmp(cmd, "sched_list") == 0) {
+        // Publish snapshot of all slots to .../status/led_schedule (retained).
+        mqttPublish("status/led_schedule", ledScheduleListJson(), 1, true);
+
+    } else if (strcmp(cmd, "scene_save") == 0) {
+        // (#20, v0.4.26) Persist the current pixel buffer + brightness as a
+        // named scene in NVS. Up to LED_MAX_SCENES (8) slots; names are
+        // alphanumeric+underscore, max 12 chars. Schema:
+        //   {"cmd":"scene_save","name":"alarm"}
+        // Tip: send cmd/led pixels FIRST to set up the buffer, then this
+        // command captures it. Saving from MQTT_OVERRIDE state captures
+        // whatever color/anim was rendered into the buffer last frame —
+        // animations like "rainbow" don't snapshot well (single moment).
+        const char* name = doc["name"] | "";
+        LedEvent e{};
+        e.type = LedEventType::SCENE_SAVE;
+        strlcpy(e.animName, name, sizeof(e.animName));
+        ws2812PostEvent(e);
+
+    } else if (strcmp(cmd, "scene_load") == 0) {
+        // (#20) Load a saved scene into the buffer + apply.
+        // Schema: {"cmd":"scene_load","name":"alarm"}
+        const char* name = doc["name"] | "";
+        LedEvent e{};
+        e.type = LedEventType::SCENE_LOAD;
+        strlcpy(e.animName, name, sizeof(e.animName));
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
+    } else if (strcmp(cmd, "scene_delete") == 0) {
+        // (#20) Remove a saved scene from NVS.
+        // Schema: {"cmd":"scene_delete","name":"alarm"}
+        const char* name = doc["name"] | "";
+        LedEvent e{};
+        e.type = LedEventType::SCENE_DELETE;
+        strlcpy(e.animName, name, sizeof(e.animName));
+        ws2812PostEvent(e);
+
+    } else if (strcmp(cmd, "scene_list") == 0) {
+        // (#20) Publish the comma-separated list of saved scene names to
+        // .../status/led_scenes (retained, QoS 1). Operator UI can render
+        // this as a dropdown.
+        String names = ledSceneList();
+        String payload = String("{\"scenes\":\"") + names + "\"}";
+        mqttPublish("status/led_scenes", payload, 1, true);
+
+    } else if (strcmp(cmd, "pixels") == 0) {
+        // (#19, v0.4.26) Bulk pixel write. Schema:
+        //   {"cmd":"pixels","data":[[r,g,b],[r,g,b],...]}
+        // Each inner array is a single pixel; pixels beyond the array
+        // length keep their current value (use {"cmd":"off"} first to
+        // start from a known black state).
+        JsonArrayConst data = doc["data"];
+        if (data.isNull()) {
+            LOG_W("MQTT", "cmd/led pixels: no 'data' array");
+            return;
+        }
+        uint8_t i = 0;
+        for (JsonVariantConst px : data) {
+            if (i >= LED_MAX_NUM_LEDS) break;
+            LedEvent e{};
+            e.type  = LedEventType::MQTT_PIXEL_SET;
+            e.count = i;
+            e.r     = (uint8_t)constrain((int)(px[0] | 0), 0, 255);
+            e.g     = (uint8_t)constrain((int)(px[1] | 0), 0, 255);
+            e.b     = (uint8_t)constrain((int)(px[2] | 0), 0, 255);
+            ws2812PostEvent(e);
+            i++;
+        }
+        LedEvent commit{};
+        commit.type = LedEventType::MQTT_PIXEL_COMMIT;
+        ws2812PostEvent(commit);
         ws2812PublishState();
 
     } else {
@@ -1073,6 +1229,15 @@ static void onMqttMessage(char* topic, char* payload,
         mqttPublishStatus(FwEvent::CONFIG_MODE_ACTIVE,
             (String("\"settings_url\":\"https://") + WiFi.localIP().toString() + "/settings\"").c_str());
         settingsServerStart();
+    } else if (t == mqttBroadcastLedTopic()) {
+        // (#21) Site-wide broadcast LED command — same handler as the
+        // device-specific cmd/led. Note we don't deduplicate broadcast
+        // payloads against per-device cmd/led publishes; if both arrive
+        // for the same device the second wins (state machine is
+        // last-write).
+        LOG_I("MQTT", "broadcast/led received");
+        handleLedCommand(payload, len);
+
     } else if (t == mqttTopic("cmd/led")) {
         // WS2812B LED strip control
         handleLedCommand(payload, len);
@@ -1388,6 +1553,7 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/ota_check").c_str(),     0);   // QoS 0 — OTA reboots before PUBACK; re-delivery would trigger redundant check
     _mqttClient.subscribe(mqttTopic("cmd/config_mode").c_str(),   1);   // Start HTTP settings portal on LAN IP
     _mqttClient.subscribe(mqttBroadcastRotateTopic().c_str(),     2);   // Site-wide rotation
+    _mqttClient.subscribe(mqttBroadcastLedTopic().c_str(),        1);   // (#21) Site-wide LED broadcast
     _mqttClient.subscribe(mqttTopic("cmd/led").c_str(),           1);   // WS2812B LED strip control
     _mqttClient.subscribe(mqttTopic("cmd/locate").c_str(),        1);   // Status LED locate flash
     _mqttClient.subscribe(mqttTopic("cmd/rfid/whitelist").c_str(), 1);  // RFID whitelist management
