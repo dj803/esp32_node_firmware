@@ -2,6 +2,39 @@
 
 Session goal: chip away at OPEN items while waiting for relay hardware.
 
+## URGENT — Fleet went offline mid-session (~10:50 SAST)
+
+At session start (~09:30 SAST) the live retained showed every device with
+fresh boot announcements + a healthy 30 min heartbeat (heap 118-123 KB).
+By ~10:50 SAST every device's retained `/status` is the LWT
+`{"online":false,"event":"offline"}`.
+
+What I verified:
+- Broker is healthy: `mosquitto` service Running, `mosquitto.log`
+  mtime is current (10:50:30), publishing works.
+- This is fleet-side, not broker-side. Most likely Wi-Fi AP issue —
+  fleet-wide loss of association would LWT every device simultaneously.
+- Charlie's pre-existing `/diag/coredump` (Q1 above) is unrelated; that
+  was retained from earlier and shows on top of the offline LWT.
+
+What I did NOT do:
+- Did NOT run any chaos scenario (would have made it worse).
+- Did NOT trigger any blip / restart command.
+- The new firmware code (sub-C/D/I) is committed but not yet flashed,
+  so this outage is independent of any code I wrote.
+
+Recommended operator action:
+1. Check the AP — is it associated with anything? Power-cycle if uncertain.
+2. Once devices reassociate, run `/daily-health` to see how they recovered.
+3. After fleet is back, OTA to v0.4.24 (code is committed but not tagged
+   yet — see Q3 below).
+
+If devices DO NOT come back after AP recovery, that's a more serious
+issue that the new sub-C 10-minute time-based unrecoverable trigger
+would catch and surface via `restart_cause:"mqtt_unrecoverable"` in
+boot announcements. Without v0.4.24 deployed, the existing fleet uses
+the count-based trigger which can take much longer.
+
 ## Pending answers (please respond when you check in)
 
 ### Q1. Charlie canary — re-trip on #78
