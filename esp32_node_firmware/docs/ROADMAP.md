@@ -2,11 +2,44 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 (post-v0.4.23 fleet rollout; Charlie canary sticky at 12+ h).
+Last updated: 2026-04-28 afternoon (autonomous followups session — #76 sub-C/D/I + #75 chaos framework code-shipped on master, awaits v0.4.24 cut + fleet recovery).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.24 — PENDING TAG (code on master 2026-04-28 afternoon)
+
+Bundle of #76 long-tail closure + #75 chaos framework promotion. Code
+on master compiles clean (esp32dev: 1622428 bytes flash, 70600 RAM) and
+105/105 native tests pass. **Tag deferred** because the fleet went LWT-
+offline mid-session (likely AP issue) — cannot validate the new restart-
+policy paths until fleet returns. See
+[SESSIONS/SESSION_QUESTIONS_2026_04_28.md](SESSIONS/SESSION_QUESTIONS_2026_04_28.md)
+for the operator decision points.
+
+What's on master awaiting validation:
+- **#76 sub-C — time-based MQTT_RESTART_THRESHOLD.** New
+  `MQTT_UNRECOVERABLE_TIMEOUT_MS` (10 min default) is the primary
+  Tier-2 escalation trigger. Count-based threshold bumped 10 → 30 as a
+  defensive backstop. `_mqttFirstFailMs` stamps the first disconnect of
+  an outage; `mqttDisconnectedDurationMs()` returns elapsed.
+- **#76 sub-D — restart-loop AP-mode fallback.** New
+  `RestartHistory::countTrailingCause()` walks the ring buffer
+  backwards. When the most recent ≥3 entries are all `mqtt_unrecoverable`,
+  setup() routes to AP_MODE instead of repeating the doomed cycle.
+  Streak is broken automatically by `mqttMarkHealthyIfDue()` after
+  `MQTT_LOOP_HEALTHY_UPTIME_MS` (5 min) of stable connectivity.
+- **#76 sub-I — WDT vs SW_CPU_RESET in /daily-health.** Categorises
+  boot_reason: WDT-class (RED), SW-restart (YELLOW for self-heal),
+  poweron (GREEN). Fleet rollup row makes day-over-day comparison easy.
+- **#75 chaos framework — `tools/chaos/`.** Per-scenario PowerShell
+  triggers (M1/M2/M3/M4) + bash `runner.sh` orchestrator that
+  snapshots pre-state, fires the trigger, observes events for a window,
+  and writes JSON pass/fail report under `~/daily-health/`.
+- **Index hygiene** — #24 (already addressed v0.3.33 era) + #28
+  (resolved v0.4.02 in STRING_LIFETIME.md) moved from OPEN to RESOLVED.
+  Open count 40 → 38; Resolved 36 → 38.
 
 ### v0.4.23 — DONE (shipped 2026-04-28 mid-morning)
 

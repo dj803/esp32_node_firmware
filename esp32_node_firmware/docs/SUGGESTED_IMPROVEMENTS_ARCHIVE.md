@@ -389,6 +389,16 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               for any string passed-by-pointer that must have static
               lifetime. Document in a new docs/STRING_LIFETIME.md.
     PRIORITY: Medium — pattern recurs roughly every major feature cycle.
+    STATUS:   RESOLVED 2026-04-23 in v0.4.02. docs/STRING_LIFETIME.md
+              codifies the convention; module-static `_mqttClientId`,
+              `_mqttHost`, `_mqttWillTopic`, `_mqttBundle` are now
+              labelled with `// LIFETIME: <api>` annotations in
+              include/mqtt_client.h. Compile-time guard at
+              include/lib_api_assert.h static_asserts the AsyncMqttClient
+              setter signatures so a silent ABI drift fails the build.
+              Re-audit 2026-04-28: every `.c_str()` callsite either uses
+              a module-static String (safe) or a copy-style API like
+              snprintf / publish / strncpy (also safe). No regressions.
 
 29. WDT-heartbeat audit for all blocking I/O
     GAP:      v0.3.27/0.3.32 fixed OTA. Same risk shape lives in: broker

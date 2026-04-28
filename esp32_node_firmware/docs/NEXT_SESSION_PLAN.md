@@ -1,164 +1,107 @@
 # Next session plan
 
-Drafted 2026-04-28 (multiple sessions through the morning):
-- STABILITY DEEP-DIVE → v0.4.22 (heap-guard hardening)
-- v0.5.0 Phase 1 code-only ship (relay.h + hall.h scaffolding)
-- "Followups while waiting for hardware" → v0.4.23 (#55 + #76 sub-B/F/H
-  + #29/#48 audits)
+Drafted 2026-04-28 afternoon (autonomous followups while waiting for relay
+hardware). Goal of session was to chip away at OPEN items; outcome:
 
-Fleet now on **v0.4.23** (5 release devices + Charlie sticky canary at
-12+ h). The `mqtt_disconnects` cumulative counter + `last_restart_reasons`
-NVS ring buffer + 12 s task-WDT + jittered backoff + audit docs all
-shipped. Charlie's canary continues to be the only undisturbed
-diagnostic surface.
+- **#76 sub-C/D/I** code-shipped to master (firmware: time-based MQTT
+  unrecoverable trigger + restart-loop AP fallback + /daily-health
+  WDT/SW categorisation).
+- **#75 chaos framework** code-shipped to `tools/chaos/` (scripts +
+  runner.sh + README + JSON reports under `~/daily-health/`).
+- **#24, #28 — audit-stale** entries moved to RESOLVED.
+- **v0.4.24 NOT TAGGED** — fleet went LWT-offline mid-session; cannot
+  validate new restart-policy paths until fleet returns.
 
-## State at last sweep (2026-04-28 ~09:30 SAST)
+Open: 47 → 38. Resolved: 36 → 38. WONT_DO unchanged at 8.
+
+## State at end of session (2026-04-28 afternoon)
 
 | | |
 |---|---|
-| Fleet | 5/6 on **v0.4.22 release** (Alpha, Bravo, Delta, Echo, Foxtrot); Charlie still on **v0.4.20.0 canary** sticky via OTA_DISABLE |
-| Charlie soak | 10.7+ h continuous, heap pinned at 130776, no panic, no canary trip |
-| Backlog | OPEN 47, RESOLVED 32, WONT_DO 5 |
-| Open coredump | None unresolved — Alpha's loopTask v0.4.20 panic fully decoded as the same bad_alloc shape from #51, fixed in v0.4.22 |
+| Master HEAD | `firmware(#76): time-based MQTT escalation + restart-loop AP fallback` (8031d0b) → `tools(#75): promote chaos scenarios to tools/chaos/ + runner.sh` (e0b6cb3) plus end-of-session doc sweep |
+| Fleet | **OFFLINE** — every device LWT-offline. Broker healthy. Operator-side issue (AP suspected). See SESSION_QUESTIONS_2026_04_28 |
+| Charlie soak | Pre-session: ~12.4 h sticky on v0.4.20.0 canary. Tripped silently — `/diag/coredump` shows another #78 async_tcp InstructionFetchError. Cleanly **ruled out stack overflow** for this crash family — canary build would have halted at violation. |
+| Backlog | OPEN 38, RESOLVED 38, WONT_DO 8 |
+| Pending releases | **v0.4.24** code-only on master, awaits fleet + tag |
 
-## Recommended next session — v0.5.0 Phase 2: HARDWARE BRING-UP
+## Recommended next session — fleet recovery + v0.4.24 cut + relay hardware
 
-Phase 1 (code-only scaffolding) shipped this session in commit cc0a074:
-- `include/relay.h` driver with active-LOW logic + boot-click guard +
-  NVS state persistence at namespace "esp32relay".
-- `include/hall.h` driver with ADC1 11 dB read + 8-sample average +
-  Gauss conversion via the 2× divider + per-unit offset calibration
-  via cmd/hall/zero.
-- `cmd/relay`, `cmd/hall/config`, `cmd/hall/zero` MQTT handlers in
-  `mqtt_client.h`, each `#ifdef`-gated.
-- `relay_enabled` + `hall_enabled` heartbeat fields.
-- `[env:esp32dev_relay_hall]` PIO env enabling both flags via
-  `-DRELAY_ENABLED -DHALL_ENABLED`.
-- Both `esp32dev` (default paths) and `esp32dev_relay_hall` (full
-  paths) compile clean.
+Three menu items in priority order:
 
-Phase 2 needs HARDWARE on the bench — that's the operator action that
-gates this session.
+### A. Fleet recovery + v0.4.24 release (~30 min — critical path)
 
-### Pre-session prep (operator hands-on, ~30 min)
+1. **Operator triage** the fleet outage. Most likely path:
+   - Power-cycle the AP if uncertain.
+   - Run `/daily-health` to confirm devices reassociated.
+   - Check `mosquitto.log` for any unusual disconnect pattern around
+     ~10:50 SAST 2026-04-28.
 
-Wire the BDD 2CH relay + BMT 49E Hall sensor to Bravo per the table
-in PLAN_RELAY_HALL_v0.5.0.md "Hardware summary" + "GPIO inventory":
+2. Once 5/6 fleet (or all 6 if Charlie's been swapped to release) shows
+   healthy heartbeats, **cut v0.4.24** via the existing release pipeline:
+   - bump version → tag → push → CI builds → OTA manifest update →
+     fleet OTA stagger → validation.
+   - Validation = M1 + M2 chaos via the new `tools/chaos/runner.sh`.
+   - Specifically watch for `restart_cause=mqtt_unrecoverable` in any
+     boot announcement during M2 — that confirms sub-C is firing on
+     time rather than count.
 
-| Module | ESP32 GPIO | ESP32 power | Notes |
-|---|---|---|---|
-| Relay VCC | — | 5V | signal-side opto supply |
-| Relay GND | — | GND | common |
-| Relay IN1 | **GPIO 25** | — | active-LOW |
-| Relay IN2 | **GPIO 26** | — | active-LOW |
-| Relay JD-VCC | — | **separate 5V supply** | ~150 mA inrush; ESP32 5V will brownout |
-| Hall VIN/VCC | — | 5V | SS49E spec 4.5–10.5 V; 3.3 V is OUT OF SPEC |
-| Hall GND | — | GND | common |
-| Hall AO | **GPIO 32** | — | via 2×10 kΩ divider (5 V → 2.5 V; ADC max 3.3 V) |
-| Hall DO | **GPIO 33** *(optional)* | — | LM393 threshold output |
+3. If sub-D fires unexpectedly (a device enters AP_MODE on first boot),
+   that's a regression — clear the RestartHistory ring via the dev
+   path, document the trigger, and roll back v0.4.24.
 
-Verify no boot-brownout with both modules attached.
+### B. v0.5.0 Phase 2 hardware bring-up (relay + Hall on Bravo) — ~2 h
 
-### Session scope (~2 h)
+Plan unchanged from previous session (PLAN_RELAY_HALL_v0.5.0.md). Bravo
+is already wired per the GPIO inventory. Steps:
 
-1. **Capture Bravo's pre-flash state** (firmware version, uptime,
-   last boot reason) per the verify-after-action / pre-reflash
-   discipline (#84). Stop any watcher holding COM4.
+1. Capture Bravo's pre-flash state (firmware, uptime, boot_reason).
+2. USB-flash `esp32dev_relay_hall` to Bravo on COM4.
+3. Validate `cmd/relay` end-to-end (click + retained state + NVS
+   restore on restart).
+4. Validate `cmd/hall/zero` + `cmd/hall/config` + `telemetry/hall` +
+   `telemetry/hall/edge`.
+5. M1 + M2 chaos to confirm no new failure surface.
+6. Tag v0.5.0 if validation lands clean.
 
-2. **USB-flash `esp32dev_relay_hall` to Bravo:**
-   ```
-   pio run -e esp32dev_relay_hall -t upload --upload-port COM4
-   ```
-   Bravo will report `firmware_version="0.4.22.0"` (local-build dev
-   variant of v0.4.22 with the gates flipped on). Heartbeat will
-   advertise `relay_enabled:true,hall_enabled:true`.
+This depends on (A) being done — releasing v0.4.24's restart-policy
+changes BEFORE introducing new hardware paths gives a cleaner blast
+radius if the new hardware tickles a regression.
 
-3. **Validate relay end-to-end:**
-   ```
-   mosquitto_pub -t '<bravo>/cmd/relay' -m '{"ch":1,"state":true}'
-   ```
-   Expect: relay 1 clicks closed, MQTT `status/relay` retained
-   `{"ch1":true,"ch2":false}`, log line `Relay ch1 → ON (pin 25)`.
+### C. #78 AsyncTCP race deep dive — ~3 h diagnostic + design
 
-   Then `cmd/restart` Bravo. After reboot, relay state should
-   self-restore from NVS without a boot-click.
+Charlie's canary trip ruled out stack overflow as the cause for the
+async_tcp `InstructionFetchError` family. The remaining hypotheses
+are use-after-free in `_error` path or task-priority race between
+async_tcp service task and lwIP TCP timer. Next-step options:
 
-4. **Validate Hall end-to-end:**
-   - `mosquitto_sub -t '<bravo>/telemetry/hall'` — confirm periodic
-     `{"voltage_v":..,"gauss":..,"above_threshold":..}` at the
-     default 1 s cadence.
-   - `cmd/hall/zero` with no magnet near — captures the current
-     reading as offset, persists to NVS.
-   - Sweep a magnet past the sensor — `gauss` value moves; on
-     threshold cross, `telemetry/hall/edge` fires with
-     `{"edge":"rising"|"falling",...}`.
-   - `cmd/hall/config '{"interval_ms":500,"threshold_gauss":30}'` —
-     confirm cadence + threshold change.
+1. **Patch AsyncTCP locally** — wrap `tcp_arg` / `tcp_recv` / `tcp_sent`
+   / `tcp_err` in `tcpip_api_call` so all lwIP calls happen in TCPIP
+   task context. Risk: maintenance burden against upstream.
+2. **Replace AsyncMqttClient + AsyncTCP** with PubSubClient
+   (synchronous). No async-task race surface. Larger refactor.
+3. **Capture + decode another panic** with the v0.4.24 build's
+   improved restart-policy diagnostics. May reveal whether it's a
+   service-task or timer race.
 
-5. **M1 + M2 chaos** to confirm the relay/hall paths don't add new
-   failure surface (per Test-after-change discipline). Skip M3
-   unless the M2 outcome warrants tightening.
+Premature without more data. Recommend deferring until v0.4.24 +
+v0.5.0 ship and we have another month of fleet uptime context.
 
-6. **Document** what shipped + what's deferred (Node-RED dashboard
-   tile is operator-visible per DO NOT; defer to a manual operator
-   session).
-
-7. **Cut v0.5.0 release** if the bench validation lands clean. Bravo
-   is on the variant binary; the release manifest stays at v0.4.22
-   for the rest of the fleet OR we update PLAN_RELAY_HALL with a
-   per-device variant-aware OTA story (the per-variant manifest from
-   #71).
-
-## Alternative single-session paths if v0.5.0 isn't ready
-
-### #76 long-tail batch (sub-B/C/D/F/H/I) — ~3 h
-
-Now that v0.4.22 has the heap-guard fix, the original sub-B (NVS ring
-buffer of last-N restart contexts) is the natural next builder on top
-of sub-G's `restart_cause`. Bundle with sub-F (WDT timeout 5s → 12s)
-into a single v0.4.23 patch.
-
-### #78 deep dive — needs more diagnostic data
-
-The async_tcp _error race is now the only known latent stability bug.
-Charlie's canary at 10+ h with no trip suggests it's NOT stack overflow.
-Continue waiting for Charlie's canary to either trip or hit a 7-day
-clean mark before deciding the next move.
-
-## Long-tail observations to keep watching
-
-- **Alpha v0.4.22**: tonight's panic was on v0.4.20. v0.4.22 has the
-  hardened guards. If Alpha re-panics on v0.4.22 with the same
-  bad_alloc backtrace, the guard threshold needs further raising or
-  PubSubClient swap is on the table.
-- **Charlie canary**: still sticky thanks to OTA_DISABLE. Any canary
-  halt would be silent on MQTT (visible only on serial); LWT-only
-  state is the only MQTT-side signal.
-- **#46 Recent abnormal reboots**: with coredump-to-flash + restart_cause
-  + heap-guard fix, the next /diag/coredump appearance has clean
-  diagnostic context built in.
-- **mosquitto.log**: now writing again. Confirm operator registers the
-  daily MosquittoLogRotate scheduled task per #83 archive entry.
-
-## Followups not on the critical path (≤1 h each)
+## Other followups (≤1 h each)
 
 - **#27** Library-API regression test in CI — promote `lib_api_assert.h`
-  from compile-only to a CI gate.
-- **#29** WDT-heartbeat audit — formal sweep across blocking I/O sites.
+  to a CI gate (DO-NOT for autonomous since it touches workflows).
 - **#36** Heartbeat / boot-reason monitoring tile in Node-RED Dashboard
-  2.0 (firmware-side data exists since v0.4.11).
-- **#48** UUID drift root cause — Bravo's NVS-wipe rotation tonight is
-  benign + expected; Delta/Echo's earlier drift may also have been
-  erase-flash.
-- **#55** AsyncMqttClient malformed-packet counter — heartbeat payload
-  addition.
-- **#69** Wakeup vs persistent-monitor preemption — apply A+C+E from
-  the archive entry.
+  2.0 — operator session, DO-NOT for autonomous.
+- **#46** Recent abnormal reboots — Charlie canary trip + Foxtrot UUID
+  drift (+ today's fleet outage if it produces new boot reasons) all
+  feed this. Audit at the next quiet point.
+- **#71 second cut** — full variant infrastructure beyond
+  `esp32dev_minimal` and `esp32dev_relay_hall`. Combined with the
+  ota.json `Variant` schema. v0.5.x territory.
 
 ## Won't do this session
 
-- **v0.5.0 hardware Phase 2** (Node-RED dashboard) — DO NOT for autonomous
-  per template.
-- **#78 fix attempt** — premature without more diagnostic data.
-- **#61 / #68** (mosquitto auth, Node-RED adminAuth) — explicitly
-  deferred until end of dev phase.
+- v0.4.24 tag without fleet recovery (validation discipline).
+- v0.5.0 hardware before v0.4.24 is shipped (clean blast radius).
+- #78 fix attempt without more diagnostic data.
+- Anything DO-NOT (CI workflows, dashboard tiles, mosquitto auth, etc.).

@@ -34,7 +34,7 @@
   Cross-check the printed MAC against the fleet table before pulling the trigger on `pio run -t upload --upload-port COMx`.
 - ESP32-Delta   — UUID `2b89f43c-2fd8-4ed6-ac9d-fb0d8f97c282`
 - ESP32-Echo    — UUID `2fdd4112-9255-42a8-a099-ada0075a677b`
-- ESP32-Foxtrot — UUID `3b3b7342-80e7-43dd-afc7-78d0470861e2`, MAC `28:05:A5:32:50:44` (RFID reader; bootstrap-bypass anomaly noted in #50)
+- ESP32-Foxtrot — UUID `c1278367-21af-478d-8a8b-0b84a4de60df` (live as of 2026-04-28; legacy `3b3b7342-80e7-43dd-afc7-78d0470861e2` retained-only — UUID drifted per #48 RNG-pre-WiFi root cause), MAC `28:05:A5:32:50:44` (RFID reader; bootstrap-bypass anomaly noted in #50)
 - Always resolve UUIDs from live MQTT before scripting fleet ops — don't hardcode from memory; cross-check against `tail -n 200 C:/ProgramData/mosquitto/mosquitto.log`.
 - MQTT broker: `192.168.10.30:1883` (Mosquitto on this host, service name `mosquitto`)
 - Status topic: `Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/status`

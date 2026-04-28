@@ -5,7 +5,7 @@ one-line title and (where relevant) an ETA / link to the relevant version.
 RESOLVED items are listed at the bottom for context but the full text is
 in SUGGESTED_IMPROVEMENTS_ARCHIVE.md.
 
-Last index sweep: 2026-04-28 (post-v0.4.23 release; RESOLVED list sorted numerically).
+Last index sweep: 2026-04-28 afternoon (autonomous followups session — #76 sub-C/D/I + #75 chaos framework code-shipped on master, awaits v0.4.24 cut + fleet recovery before validation; #24 + #28 audit-stale entries moved to RESOLVED).
 
 To add a new entry:
   - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.md with a new
@@ -32,11 +32,9 @@ To resolve an entry:
   #21   Group / broadcast LED commands
   #22   Scheduled / time-of-day LED automation
   #23   OTA / heartbeat LED override from Node-RED
-  #24   OTA transient freeze — add watchdog-safe progress timeout   (observed v0.3.28)
   #25   Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
   #26   Recovery partition app
   #27   Library-API regression test in CI
-  #28   NVS / static-string lifetime audit + naming convention
   #31   Pin LED + RFID tasks to Core 1
   #32   Heap-headroom gate at boot for each subsystem
   #33   Versioned MQTT topic prefixes
@@ -56,13 +54,13 @@ To resolve an entry:
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
-  #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session)
-  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A/B/E/F/G/H shipped, C/D/I open)
+  #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session; scripts + runner shipped 2026-04-28, CI hook still open)
+  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24 cut + fleet-validation)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 40
+  Total open: 38
 
 ────────────────────────────────────────────────────────────
 
@@ -86,6 +84,8 @@ To resolve an entry:
   #3    Reproducible builds                                           (was audit item 21)
   #4    Dependency SBOM + supply-chain scan                           (was audit item 22)
   #5    Local PlatformIO validation                                   (addressed 2026-04-22)
+  #24   OTA transient freeze — watchdog-safe progress timeout         (addressed 2026-04-22 in v0.3.33-era; OTA_PROGRESS_TIMEOUT_MS + trigger-time heap snapshot; index audit cleanup 2026-04-28)
+  #28   NVS / static-string lifetime audit + naming convention        (resolved 2026-04-23 in v0.4.02 — docs/STRING_LIFETIME.md + lib_api_assert.h shipped; re-audit 2026-04-28 confirmed no new dangerous .c_str() callsites)
   #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
   #30   AsyncTCP fork swap (marvinroger → mathieucarbou)              (resolved 2026-04-27 in v0.4.14)
   #41   Hardware finding — breakout + RFID-RC522 antenna distortion   (resolved as documented finding 2026-04-25; informs #37/#40)
@@ -118,4 +118,4 @@ To resolve an entry:
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 36
+  Total resolved: 38
