@@ -2,51 +2,57 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 afternoon (autonomous followups session — #76 sub-C/D/I + #75 chaos framework code-shipped on master, awaits v0.4.24 cut + fleet recovery).
+Last updated: 2026-04-28 afternoon (post-v0.4.24 fleet rollout: 5/6 on v0.4.24 — Charlie stays on v0.4.20.0 canary per Q1 decision).
 
 ---
 
 ## Now (just shipped or in flight)
 
-### v0.4.24 — PENDING TAG (code on master 2026-04-28 afternoon)
+### v0.4.24 — DONE (shipped 2026-04-28 afternoon)
 
-Bundle of #76 long-tail closure + #75 chaos framework promotion. Code
-on master compiles clean (esp32dev: 1622428 bytes flash, 70600 RAM) and
-105/105 native tests pass. **Tag deferred** because the fleet went LWT-
-offline mid-session (likely AP issue) — cannot validate the new restart-
-policy paths until fleet returns. See
-[SESSIONS/SESSION_QUESTIONS_2026_04_28.md](SESSIONS/SESSION_QUESTIONS_2026_04_28.md)
-for the operator decision points.
+Restart-policy hardening + operator-recovery UX bundle. Closes the
+#76 sub-A through sub-I long-tail and promotes the chaos framework to
+a CI-ready tool surface.
 
-What's on master awaiting validation:
-- **#76 sub-C — time-based MQTT_RESTART_THRESHOLD.** New
-  `MQTT_UNRECOVERABLE_TIMEOUT_MS` (10 min default) is the primary
-  Tier-2 escalation trigger. Count-based threshold bumped 10 → 30 as a
-  defensive backstop. `_mqttFirstFailMs` stamps the first disconnect of
-  an outage; `mqttDisconnectedDurationMs()` returns elapsed.
-- **#76 sub-D — restart-loop AP-mode fallback.** New
-  `RestartHistory::countTrailingCause()` walks the ring buffer
-  backwards. When the most recent ≥3 entries are all `mqtt_unrecoverable`,
-  setup() routes to AP_MODE instead of repeating the doomed cycle.
-  Streak is broken automatically by `mqttMarkHealthyIfDue()` after
-  `MQTT_LOOP_HEALTHY_UPTIME_MS` (5 min) of stable connectivity.
-- **#76 sub-I — WDT vs SW_CPU_RESET in /daily-health.** Categorises
-  boot_reason: WDT-class (RED), SW-restart (YELLOW for self-heal),
-  poweron (GREEN). Fleet rollup row makes day-over-day comparison easy.
-- **#75 chaos framework — `tools/chaos/`.** Per-scenario PowerShell
-  triggers (M1/M2/M3/M4) + bash `runner.sh` orchestrator that
-  snapshots pre-state, fires the trigger, observes events for a window,
-  and writes JSON pass/fail report under `~/daily-health/`.
-- **#34 Phase 1 — captive-portal DNS hijack.** Promoted from "low
-  priority UX" to v0.4.24 scope because sub-D's AP-mode fallback now
-  drops devices into AP without operator intervention; auto-popping the
-  captive sheet on phone connect halves the recovery workflow. Bundled
-  DNSServer.h listens on UDP:53 with empty-domain catch-all, resolving
-  every A-query to the AP IP. Phase 2 (port-80 redirector) deferred —
-  defer until operator confirms Phase 1 behaviour in the field.
-- **Index hygiene** — #24 (already addressed v0.3.33 era) + #28
-  (resolved v0.4.02 in STRING_LIFETIME.md) moved from OPEN to RESOLVED.
-  Open count 40 → 38; Resolved 36 → 38.
+- **#76 sub-C — time-based MQTT_RESTART_THRESHOLD.** Primary Tier-2
+  escalation is now `MQTT_UNRECOVERABLE_TIMEOUT_MS` (10 min default);
+  count-based threshold becomes a backstop bumped 10 → 30. Survives
+  backoff-cadence weirdness — a 10 min outage triggers regardless of
+  how many reconnect attempts the backoff schedule slotted in.
+- **#76 sub-D — restart-loop AP-mode fallback.** ≥3 consecutive
+  `mqtt_unrecoverable` entries in `RestartHistory` route setup() to
+  AP_MODE on next boot. Streak is broken automatically by
+  `mqttMarkHealthyIfDue()` after 5 min of stable MQTT.
+- **#76 sub-I — /daily-health WDT vs SW categorisation.** Fleet-rollup
+  row + per-device tagging distinguishes WDT-class (RED, hardware
+  fault) from SW-restart (operator/OTA = neutral; self-heal = YELLOW)
+  from poweron (GREEN).
+- **#34 Phase 1 — captive-portal DNS hijack.** AsyncUDP-backed
+  DNSServer on UDP:53 with empty-domain catch-all. Auto-pops captive
+  sheet when sub-D drops a device to AP_MODE. Phase 2 (port-80
+  redirector) deferred to a future release.
+- **#75 chaos framework promoted** to `tools/chaos/` with
+  M1/M2/M3/M4 PowerShell triggers + bash `runner.sh` orchestrator
+  + JSON pass/fail reports under `~/daily-health/`.
+- **#40 operator install guide** shipped at
+  `docs/OPERATOR_INSTALL_GUIDE.md` distilling the #41 RF sweep findings
+  into actionable rules (RC522 ≥ 5 cm from WROOM, single power path
+  fleet-wide, USB cable routing, calibration discipline).
+- **Index hygiene** — #24 + #28 + #77 moved OPEN → RESOLVED
+  (audit-stale; all three already shipped in earlier releases). Open
+  37 → see SUGGESTED_IMPROVEMENTS for current count.
+
+Validated: esp32dev clean build (1630440 bytes flash, 70696 RAM);
+105/105 native tests pass; fleet OTA rollout 2026-04-28 afternoon
+took 5/6 production devices to v0.4.24 (Charlie excluded — sticky on
+v0.4.20.0 canary per operator Q1 decision). Boot announcements
+include `restart_cause:"ota_reboot"` + `last_restart_reasons` ring
+buffer.
+
+Notable fleet-rollout finding: `tools/dev/ota-rollout.sh` has two
+bugs (silent discovery failure + stale-retained-boot poisoning the
+abnormal-boot guard). Logged in SESSION_QUESTIONS_2026_04_28 Q6
+for next-session fix.
 
 ### v0.4.23 — DONE (shipped 2026-04-28 mid-morning)
 
