@@ -11,10 +11,13 @@ Apply this pattern to any document that:
 - Has grown long enough that "what's still open?" requires scrolling past
   large resolved-entry narratives.
 
-Examples in this repo today: `SUGGESTED_IMPROVEMENTS.md`. Future
-candidates: `ESP32_FAILURE_MODES.md`, `ROADMAP.md` (already partially
-follows this with "Now / Next / Month / v0.5.0+" sections),
-`memory_budget.md` (audit history).
+Examples in this repo today: `SUGGESTED_IMPROVEMENTS.md` +
+`SUGGESTED_IMPROVEMENTS_ARCHIVE.md`. Future candidates: `ROADMAP.md`
+(already partially follows this with "Now / Next / Month / v0.5.0+"
+sections). Re-evaluated against this convention 2026-04-28:
+`ESP32_FAILURE_MODES.md` and `memory_budget.md` are reference
+catalogues without an open/resolved item lifecycle, so they do NOT
+fit (see #82 in the backlog archive).
 
 ---
 
@@ -22,17 +25,20 @@ follows this with "Now / Next / Month / v0.5.0+" sections),
 
 **Two files:**
 
-1. **`<NAME>.txt` — INDEX** (short, scan-friendly).
+1. **`<NAME>.md` — INDEX** (short, scan-friendly).
    - One line per entry: `#NN  <title>` plus optional date/version hint.
    - OPEN section at the top.
    - RESOLVED section at the bottom (last 30-50 entries; older still in archive).
+   - WONT_DO section between OPEN and RESOLVED for items intentionally
+     parked (cross-referenced to `docs/WONT_DO.md` which holds the rationale).
    - Header explains the convention so a new contributor doesn't need to
      read this convention file to understand the structure.
 
-2. **`<NAME>_ARCHIVE.txt` — ARCHIVE** (full text, append-only).
+2. **`<NAME>_ARCHIVE.md` — ARCHIVE** (full text, append-only).
    - Every entry's full body — observation, proposal, severity, status.
    - Stable entry numbers — never renumber, gaps are fine.
    - Resolved entries stay here with appended `STATUS: RESOLVED YYYY-MM-DD in vX.Y.Z`.
+   - WONT_DO entries get `STATUS: WONT_DO YYYY-MM-DD — moved to docs/WONT_DO.md entry N.`
 
 ---
 
@@ -110,9 +116,37 @@ Stable entry numbers are the lookup key. Treat them like primary keys:
 
 ---
 
+## Folder layout (after 2026-04-28 sweep)
+
+The `docs/` directory is organised by lifecycle, not by topic:
+
+```
+docs/
+├── README.md              — index of every doc, grouped by purpose
+├── *.md                   — active reference + active backlog (top level)
+├── SESSIONS/              — point-in-time session reports (ESPNOW review,
+│                            RF config test, BLE coexistence analysis,
+│                            cascade-fix daily logs, etc.)
+├── archive/               — pre-v0.4.x plans superseded by current docs
+│                            (DEFERRED_IMPROVEMENTS, IMPROVEMENT_PLAN,
+│                            FIXES_LOG). Search-only; no active maintenance.
+└── BusinessDocs/          — business-case writeups (separate concern)
+```
+
+When adding a doc, decide: is it ACTIVE (read for current decisions, top
+level), POINT-IN-TIME (a snapshot of one session's findings, `SESSIONS/`),
+or HISTORICAL (superseded reference, `archive/`)?
+
+Most docs start at top level. Move to `SESSIONS/` if the doc's relevance
+expires when the underlying session/incident closes. Move to `archive/`
+if the doc has been replaced by a different active doc and the original
+is kept only for grep/audit reasons.
+
 ## Reference implementation
 
 See:
 - `docs/SUGGESTED_IMPROVEMENTS.md` (INDEX after 2026-04-27 split)
-- `docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.txt` (ARCHIVE)
+- `docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md` (ARCHIVE)
 - Commit 81b70e1 (the split itself)
+- Commit c111f61 (`.txt` → `.md` rename for the three tracking docs)
+- Commit (this one) — the SESSIONS/ + archive/ subfolder reorg.

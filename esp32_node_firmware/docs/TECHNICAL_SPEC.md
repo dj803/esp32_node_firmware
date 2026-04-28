@@ -364,7 +364,7 @@ Send an empty list to disable filtering (publish all):
 > function node writes the mirror when the operator clicks "Track Selected"
 > in the Peer Table. On redeploy the mirror is lost and must be re-set by
 > the operator. A future Node-RED fix will auto-reload this from the
-> retained MQTT message on startup. See `docs/NODERED_ESPNOW_TAB_REBUILD_NOTES.md`.
+> retained MQTT message on startup. See `docs/SESSIONS/NODERED_ESPNOW_TAB_REBUILD_NOTES.md`.
 
 ## 6. Build + release
 
@@ -394,7 +394,7 @@ Dashboard 2.0 tabs (~200 nodes total, single `flows.json`):
   peer, Kalman-filtered). Node-RED flow context holds the selected MACs;
   operator must re-click "Track Selected" after a Node-RED redeploy
   (retained MQTT auto-reload is a planned fix — see
-  `docs/NODERED_ESPNOW_TAB_REBUILD_NOTES.md`).
+  `docs/SESSIONS/NODERED_ESPNOW_TAB_REBUILD_NOTES.md`).
 - **Pair Chart** — select any two nodes; shows bidirectional joined
   distance (mean of A→B and B→A), ± margin error bars from the
   asymmetry between the two measurements.

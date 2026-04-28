@@ -1003,7 +1003,7 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
        inspect for damaged components on both the RC522 and the breakout
        regulator before assuming a software / radio issue.
 
-    STATISTICAL SUMMARY (10-config sweep, see docs/RF_CONFIG_TEST_2026_04_25.md
+    STATISTICAL SUMMARY (10-config sweep, see docs/SESSIONS/RF_CONFIG_TEST_2026_04_25.md
     for the raw data and full analysis):
 
        Reproducibility (bare-bare measured twice):
@@ -1630,7 +1630,7 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
             unblock this. See #35 chicken-and-egg notes.
 
     PRIORITY: Medium. The asymmetry findings in
-              docs/RF_CONFIG_TEST_2026_04_25.md show this is the
+              docs/SESSIONS/RF_CONFIG_TEST_2026_04_25.md show this is the
               biggest remaining accuracy lever. Until the
               verification runs, the firmware/UI work is "shipped
               but unproven". Capture the resulting tx_power/n
