@@ -477,15 +477,22 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               with empty domain (catch-all captive mode), resolving every
               A-query to the AP IP. Adds ~8 KB flash + ~96 B RAM,
               gated behind AP_CAPTIVE_DNS_ENABLED (default 1).
-    PHASE 2:  Plain HTTP listener on port 80 that 302-redirects to
-              https://192.168.4.1/. Required for full captive-sheet UX —
-              without it, the captive sheet shows "this site can't be
-              reached" until the user manually navigates. Non-trivial
-              because esp_https_server holds a single httpd instance;
-              port 80 needs either a second instance (RAM cost) or a
-              raw lwIP socket listener (code complexity). Defer until
-              operator confirms phase 1 behaviour on iOS/Android in the
-              field.
+    PHASE 2:  SHIPPED 2026-04-28. Second httpd instance (httpd_start,
+              not httpd_ssl_start) bound to port 80 with
+              uri_match_fn = httpd_uri_match_wildcard. Catch-all `/*`
+              GET + HEAD handlers respond `302 Found` with
+              `Location: https://192.168.4.1/`. ctrl_port set to 32770
+              to avoid collision with the HTTPS server's 32769. The
+              redirector starts only when the HTTPS portal is up
+              (TLS keygen succeeded); when TLS fell back to plain HTTP
+              on :80, the existing portal handlers serve port 80
+              directly so a second :80 listener would conflict.
+              Adds ~880 bytes flash + a small httpd task stack.
+              Now together with Phase 1 the captive UX is end-to-end:
+              DNS hijack resolves probe URLs to AP IP → port-80 302
+              redirects to HTTPS portal → OS pops captive sheet
+              landing on the real portal page. Validation deferred
+              until next phone-on-AP test (operator-side).
 
 35. Operational practice: canary OTA pattern
     Even at 3 devices: OTA Alpha first, soak ~1 h, then OTA Bravo +

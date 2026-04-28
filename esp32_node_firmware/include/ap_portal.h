@@ -68,6 +68,19 @@
 // ── HTTPS server handle ────────────────────────────────────────────────────────
 static httpd_handle_t _httpsServer = nullptr;
 
+#if AP_CAPTIVE_DNS_ENABLED
+// (#34 Phase 2, v0.4.25) Plain HTTP server on port 80 serving a single
+// catch-all 302 → https://192.168.4.1/. Runs alongside the HTTPS portal
+// on :443 to complete the captive-portal UX: iOS/Android probe e.g.
+// http://captive.apple.com/hotspot-detect.html, DNS resolves to us
+// (Phase 1), this redirector responds 302 on :80, the OS flags the
+// network as captive and pops the sheet pointing to our HTTPS portal.
+// Without this, the captive sheet shows "this site can't be reached"
+// (DNS resolves but nothing answers on :80) and the operator still has
+// to manually navigate to 192.168.4.1.
+static httpd_handle_t _httpRedirectServer = nullptr;
+#endif
+
 
 // ── TLS credential storage ─────────────────────────────────────────────────────
 // Self-signed RSA-2048 certificate + private key in PEM format.
@@ -566,6 +579,26 @@ static const char PAGE_STYLE[] =
     ".locate{background:#E07B39}";
 
 
+#if AP_CAPTIVE_DNS_ENABLED
+// (#34 Phase 2) Catch-all HTTP-port-80 handler. Returns 302 to the HTTPS
+// portal regardless of which URL the OS captive-detector probed
+// (http://captive.apple.com/..., http://connectivitycheck.gstatic.com/...,
+// http://www.msftconnecttest.com/..., etc. — DNS hijack from Phase 1
+// resolves all of them to us). The 302 is a non-success response so the
+// OS flags the network as captive AND knows where to send the user when
+// they tap "Sign in".
+static esp_err_t apHandleHttpRedirect(httpd_req_t* req) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "https://192.168.4.1/");
+    // 302 with empty body is RFC-compliant; some clients prefer a small
+    // hint body. Keep it tiny — the OS won't render it, and a slow phone
+    // browser shouldn't waste bandwidth on captive-detection traffic.
+    httpd_resp_send(req, "Redirecting to portal", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+#endif
+
+
 // ── Locate — POST /locate: flash LED so the device can be found physically ──────
 static esp_err_t apHandleLocate(httpd_req_t* req) {
     apTouchAdminActivity();
@@ -910,6 +943,35 @@ void apPortalStart(const CredentialBundle* staBundle = nullptr) {
     httpd_register_uri_handler(_httpsServer, &uriSave);
     httpd_register_uri_handler(_httpsServer, &uriLocate);
     httpd_register_uri_handler(_httpsServer, &uriStatus);
+
+#if AP_CAPTIVE_DNS_ENABLED
+    // (#34 Phase 2, v0.4.25) Plain HTTP-on-:80 catch-all redirector.
+    // Only meaningful when the HTTPS portal is up (i.e. TLS keygen
+    // succeeded); when TLS failed, the existing HTTPD_SSL_TRANSPORT_INSECURE
+    // fallback already binds :80 with the real portal handlers, so a
+    // second :80 listener would conflict. Wildcard URI matcher catches
+    // every probe URL the OS captive-detector might use.
+    if (tlsOk) {
+        httpd_config_t plainConf = HTTPD_DEFAULT_CONFIG();
+        plainConf.server_port    = 80;
+        plainConf.ctrl_port      = 32770;   // httpd_ssl uses 32769 (DEF+1); httpd_default uses 32768; we pick 32770 to avoid both
+        plainConf.max_uri_handlers = 2;
+        plainConf.uri_match_fn   = httpd_uri_match_wildcard;
+        if (httpd_start(&_httpRedirectServer, &plainConf) == ESP_OK) {
+            static const httpd_uri_t uriCatchGet = {
+                "/*", HTTP_GET, apHandleHttpRedirect, nullptr
+            };
+            static const httpd_uri_t uriCatchHead = {
+                "/*", HTTP_HEAD, apHandleHttpRedirect, nullptr
+            };
+            httpd_register_uri_handler(_httpRedirectServer, &uriCatchGet);
+            httpd_register_uri_handler(_httpRedirectServer, &uriCatchHead);
+            LOG_I("AP Portal", "Captive HTTP redirector active on :80 → https://192.168.4.1/");
+        } else {
+            LOG_W("AP Portal", "Captive :80 redirector failed to start — captive sheet will show broken page");
+        }
+    }
+#endif
 
     const char* scheme = tlsOk ? "https" : "http";
     LOG_I("AP Portal", "Waiting for admin — browse to %s://192.168.4.1/", scheme);

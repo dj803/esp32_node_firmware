@@ -37,7 +37,6 @@ To resolve an entry:
   #27   Library-API regression test in CI
   #31   Pin LED + RFID tasks to Core 1
   #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
-  #34   Captive portal DNS responder                                  (Phase 1 DNS hijack code-shipped 2026-04-28; Phase 2 port-80 redirector still open)
   #35   Operational practice: canary OTA pattern
   #36   Operational practice: heartbeat / boot-reason monitoring
   #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations
@@ -59,7 +58,7 @@ To resolve an entry:
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 36
+  Total open: 35
 
 ────────────────────────────────────────────────────────────
 
@@ -87,6 +86,7 @@ To resolve an entry:
   #28   NVS / static-string lifetime audit + naming convention        (resolved 2026-04-23 in v0.4.02 — docs/STRING_LIFETIME.md + lib_api_assert.h shipped; re-audit 2026-04-28 confirmed no new dangerous .c_str() callsites)
   #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
   #32   Heap-headroom gate at boot for each subsystem                 (resolved 2026-04-28 — heapGateOk() helper + per-subsystem thresholds gating MQTT init, BLE init, TLS keygen)
+  #34   Captive portal DNS responder                                  (resolved 2026-04-28 — Phase 1 DNS hijack + Phase 2 port-80 redirector both shipped; second httpd instance on :80 with wildcard 302 → https://192.168.4.1/)
   #30   AsyncTCP fork swap (marvinroger → mathieucarbou)              (resolved 2026-04-27 in v0.4.14)
   #41   Hardware finding — breakout + RFID-RC522 antenna distortion   (resolved as documented finding 2026-04-25; informs #37/#40)
   #43   Local build leaves firmware_version field EMPTY               (addressed v0.4.10)
@@ -119,4 +119,4 @@ To resolve an entry:
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 40
+  Total resolved: 41
