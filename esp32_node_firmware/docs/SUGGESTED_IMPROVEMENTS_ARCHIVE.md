@@ -374,6 +374,25 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               comments with the version number they correspond to so a
               deliberate bump is intentional.
     PRIORITY: Medium — has bitten us once (NimBLE 1→2 in v0.2.10).
+    STATUS:   RESOLVED 2026-04-23 in v0.4.02 (recorded retroactively
+              2026-04-28). The chosen implementation puts the
+              static_asserts in include/lib_api_assert.h (included
+              from src/main.cpp exactly once), which means every CI
+              build of esp32dev exercises every assert. Covered:
+                - AsyncMqttClient::setClientId / setKeepAlive /
+                  setCredentials / setWill (signature + storage-by-
+                  pointer semantics for STRING_LIFETIME);
+                - NimBLE-Arduino — NIMBLE_CPP_VERSION_MAJOR ≥ 2
+                  guard (would have caught the v0.2.10 incident);
+                - ESP32OTAPull::CheckForOTAUpdate signature;
+                - MFRC522::PCD_Init signature.
+              CI runs `pio run -e esp32dev` on every push to master,
+              so a silent library-API drift now FAILS the build with
+              a static_assert message pointing at the drifted symbol
+              + the relevant docs. The originally-proposed
+              test/test_native/ location was advisory; the header-
+              based implementation is more economical (zero runtime
+              cost, no symbol emission) and achieves the same goal.
 
 28. NVS / static-string lifetime audit + naming convention
     GAP:      Cluster 3 has bitten v0.1.7 (setClientId .c_str() dangling),
@@ -1667,32 +1686,59 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
                                 coredumps which were async_tcp /
                                 lwIP raw.c)
        exc_pc:   0x4008ec14
-       exc_cause: IllegalInstruction (PC pointing at non-code
-                                     memory; classic memory corruption
-                                     symptom)
+       exc_cause: IllegalInstruction (originally interpreted as PC
+                                     pointing at non-code memory →
+                                     SUPERSEDED, see DECODE below)
        backtrace: 0x4008ec14 0x4008ebd9 0x400954ad 0x401ae04b
                   0x401ae080 0x401ae15f 0x401ae1f2 0x400e4b0d
                   0x400e2c81 0x400ee19e 0x400f8bc2 0x40100023
                   0x40107ce4 0x4008ff31
 
-    Cannot decode locally — Alpha's app_sha_prefix "a5bb3114" is the
-    CI v0.4.20 binary; local builds produce SHA prefix "dd877030".
-    Need either the CI artefact's ELF (may be in GitHub Actions
-    artefacts retention window) or a build-from-tag-v0.4.20-source-
-    SHA pio run to reproduce.
+    DECODE 2026-04-28 afternoon (worktree v0.4.20 ELF + addr2line):
+    The "IllegalInstruction" interpretation was wrong — PC 0x4008ec14
+    decodes to `panic_abort` (valid IDF code), and the full chain is
+    the bad_alloc cascade, NOT memory corruption:
 
-    Significance: this is a SEPARATE bug from #78 (which is async_tcp
-    context). It's in loopTask — our main loop, where MQTT publishes
-    + heartbeats + ESP-NOW ranging happen. IllegalInstruction
-    typically means a corrupted function pointer; combined with the
-    long-uptime trigger, fits a slow heap leak or stack overflow
-    that eventually overwrites a vtable.
+       panic_abort
+         esp_system_abort
+           abort
+             __cxxabiv1::__terminate
+               std::terminate
+                 __cxa_throw                            ← bad_alloc
+                   operator new(unsigned int)
+                     std::vector<uint8_t>::reserve     ← AsyncMqttClient
+                       PublishOutPacket ctor              buffer alloc
+                         AsyncMqttClient::publish (AsyncMqttClient.cpp:742)
+                           mqttPublish (mqtt_client.h:230)
+                             espnowRangingLoop (mqtt_client.h:396 /
+                                                espnow_ranging.h:650)
+                               loop (main.cpp:726)
+                                 loopTask
+                                   vPortTaskWrapper
 
-    ACTION: include this Alpha coredump in the next-session #78 /
-    #76 sub-G follow-up audit. Charlie's canary soak (continuous
-    via OTA_DISABLE) is now the fleet's primary stack-overflow
-    detector — if Charlie hits the canary halt with a similar
-    frame count, the corrupted-stack hypothesis gets confirmed.
+    This is the SAME backtrace shape as the v0.4.10 #51 root-cause
+    panic and the v0.4.20-pre Alpha decode that drove the v0.4.22 fix.
+    Alpha was on v0.4.20 at the time of the panic — i.e., BEFORE the
+    v0.4.22 heap-guard hardening shipped. v0.4.22's three-part fix
+    (post-String-build heap re-check, threshold 4096→8192, try/catch
+    around _mqttClient.publish()) is the right fix; Alpha received it
+    via OTA earlier on 2026-04-28 and has been clean since.
+
+    REVISED SIGNIFICANCE: NOT a separate loopTask bug. NOT memory
+    corruption. NOT a vtable / function-pointer corruption. NOT a
+    stack overflow. The "IllegalInstruction" exc_cause appears to be
+    the post-mortem state after panic_abort itself is invoked —
+    panic_abort intentionally crashes the system after its message,
+    and the captured PC/cause reflect that state, not the original
+    fault. The originating fault is bad_alloc inside
+    AsyncMqttClient publish, exactly as #51.
+
+    REMAINING #46 SCOPE: fleet-wide post-v0.4.22 abnormal-reboot
+    tally. As of 2026-04-28 ~14:00, fleet (5/5) is on v0.4.26 with
+    healthy heap and ~30-40 min uptime; needs ≥24 h soak to confirm
+    the bad_alloc cascade is fully eliminated. async_tcp coredumps
+    remain visible on retained `/diag/coredump` topic for all 5
+    devices — those are #78, not #46.
 
 47. Hardware verification of #39 multi-point + #41.7 per-peer calibration
     STATUS: Firmware shipped in v0.4.07 (#39 linreg) and v0.4.09 (#41.7
@@ -3021,6 +3067,24 @@ Next steps (operator decision):
 
     SEVERITY: MEDIUM. Manual today; risks regression of v0.4.13
     class bugs unless promoted to automated framework.
+
+    STATUS: RESOLVED 2026-04-28 in master.
+       - tools/chaos/{blip_short,blip_long,blip_burst}.ps1 +
+         runner.sh shipped in the v0.4.24 cycle. wifi_cycle.ps1 is
+         a documented stub awaiting v0.5.0 relay hardware.
+       - tools/dev/release-smoke.sh shipped as the pre-tag wrapper
+         (M1+M2+M4 sequence; --m3 and --quick variants). Exits
+         non-zero on any FAIL so callers can gate on it.
+       - GitHub Actions CI integration intentionally NOT done —
+         broker is on local LAN and triggers need an elevated
+         Windows shell. Documented in tools/chaos/README.md
+         "Why this is not a GitHub Actions job". Revisit if fleet
+         grows past ~20 devices or chaos becomes nightly.
+       - site_acceptance.sh is subsumed by release-smoke.sh; no
+         deployment-time-only subset is currently needed.
+       - espnow_toggle.sh / ble_toggle.sh deferred — neither
+         scenario has surfaced a real-world failure mode that
+         the M1-M4 broker scenarios miss.
 
 
 ────────────────────────────────────────────────────────────

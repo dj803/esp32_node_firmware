@@ -5,7 +5,7 @@ one-line title and (where relevant) an ETA / link to the relevant version.
 RESOLVED items are listed at the bottom for context but the full text is
 in SUGGESTED_IMPROVEMENTS_ARCHIVE.md.
 
-Last index sweep: 2026-04-28 afternoon (autonomous followups session — #76 sub-C/D/I + #75 chaos framework code-shipped on master, awaits v0.4.24 cut + fleet recovery before validation; #24 + #28 audit-stale entries moved to RESOLVED).
+Last index sweep: 2026-04-28 evening (post-v0.4.26 — regrouped 29 OPEN items into 7 thematic clusters; verified each is genuinely open).
 
 To add a new entry:
   - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.md with a new
@@ -21,37 +21,51 @@ To resolve an entry:
 
 ## OPEN
 
+Grouped by theme (numeric IDs preserved). Group letters are stable handles for
+session-planning; reorder within a group freely.
+
+### A. RFID / NFC capability (6) — hardware-blocked on Foxtrot bench
   #11   NTAG21x write support (NTAG213 / NTAG215 / NTAG216)
   #12   NTAG424 DNA secure messaging (AES)
   #14   Per-sector key rotation from Node-RED (cmd/rfid/set_key)
   #15   NDEF encoding / decoding helpers
   #16   Preset "program this kind of tag" forms
   #17   LF 125 kHz support (HID, EM4100, T5577)
-  #25   Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
-  #26   Recovery partition app
-  #27   Library-API regression test in CI
-  #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
-  #35   Operational practice: canary OTA pattern
-  #36   Operational practice: heartbeat / boot-reason monitoring
+
+### B. ESP-NOW ranging + bootstrap (6) — needs Bravo/Charlie pair on bench
   #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations
   #38   ESP-NOW ranging — runtime-tunable beacon / publish intervals
   #39   ESP-NOW calibration — multi-point + arbitrary-distance variants
-  #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
-  #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
-  #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
-  #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
+
+### C. Boot / OTA safety net (2) — pioarduino-blocked
+  #25   Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
+  #26   Recovery partition app
+
+### D. Open stability investigations (3) — surveillance running
+  #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure)
+  #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)         (Charlie canary soak running, sticky on v0.4.20.0)
+  #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
+
+### E. CI / security gates (2)
+  #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit; secrets-scan job added to build.yml 2026-04-28 — closure pending first green CI run)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
-  #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
+
+### F. Hardware bench / variants (2)
+  #71   Per-device feature-subset firmware variants                  (was #58 cascade-session; first cut shipped, CI matrix added 2026-04-28 — closure pending first green run on minimal + relay_hall)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
-  #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session; scripts + runner shipped 2026-04-28, CI hook still open)
-  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24 cut + fleet-validation)
-  #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
+
+### G. Docs / process / long-tail closure (6) — mostly validation-pending, not coding
+  #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
+  #35   Operational practice: canary OTA pattern
+  #36   Operational practice: heartbeat / boot-reason monitoring
+  #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
+  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 29
+  Total open: 27  (A6 + B6 + C2 + D3 + E2 + F2 + G6)
 
 ────────────────────────────────────────────────────────────
 
@@ -112,10 +126,12 @@ To resolve an entry:
   #77   Adaptive OTA stagger interval                                 (resolved 2026-04-28 — A/B/C all shipped under #79 via tools/dev/ota-rollout.sh; fixed-gap baseline obsolete)
   #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
   #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen, no shim needed)
+  #75   Chaos-testing framework — promote tools/chaos/                (resolved 2026-04-28 — release-smoke.sh wrapper shipped + GH-Actions infeasibility documented)
+  #27   Library-API regression test in CI                             (resolved 2026-04-23 in v0.4.02 — recorded retroactively 2026-04-28; lib_api_assert.h static_asserts run on every esp32dev CI build)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
   #80   -dev suffix breaks OTA upgrade path                           (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 47
+  Total resolved: 49

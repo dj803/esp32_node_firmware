@@ -41,6 +41,27 @@ defaults:
 
 jobs:
   # ============================================================================
+  # Secrets scan — trufflehog on every push (#63)
+  # Catches accidentally-committed credentials, API keys, MQTT passwords,
+  # gh-pages tokens. Runs against the diff (BASE..HEAD) for speed.
+  # ============================================================================
+  secrets-scan:
+    name: Trufflehog secrets scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Trufflehog scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified,unknown
+
+  # ============================================================================
   # PlatformIO build — canonical path from v0.3.04 onward
   # ============================================================================
   build:
@@ -113,6 +134,45 @@ jobs:
           name: firmware
           path: esp32_node_firmware/firmware.bin
           retention-days: 30
+
+  # ============================================================================
+  # Variant builds — compile each non-release env so a refactor that only
+  # exercises the default esp32dev path doesn't silently break minimal /
+  # relay_hall builds. No artifact upload — purely a compile gate.
+  # Tracking entry: SUGGESTED_IMPROVEMENTS #71.
+  # ============================================================================
+  build-variants:
+    name: Compile variant ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - esp32dev_minimal
+          - esp32dev_relay_hall
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO
+        run: pip install --upgrade "platformio" "click<8.2"
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            esp32_node_firmware/.pio/libdeps
+          key: pio-${{ runner.os }}-${{ hashFiles('esp32_node_firmware/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
 
   # ============================================================================
   # Release — tag builds only.

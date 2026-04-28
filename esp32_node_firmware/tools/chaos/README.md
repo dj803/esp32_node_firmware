@@ -99,3 +99,34 @@ tools/chaos/runner.sh M4 --window 90
 
 M3 (180 s) is the cascade-class stress test — run it for releases that
 touch MQTT path or library versions, not for every patch.
+
+### Wrapper: `tools/dev/release-smoke.sh`
+
+The recommended sequence above is bundled in
+[`tools/dev/release-smoke.sh`](../dev/release-smoke.sh) — invoke it from
+an elevated bash shell before tagging:
+
+```bash
+tools/dev/release-smoke.sh           # M1 + M2 + M4 (default)
+tools/dev/release-smoke.sh --m3      # also include M3 (cascade-class)
+tools/dev/release-smoke.sh --quick   # M1 only (~90 s)
+```
+
+Exits non-zero if any scenario FAILs, so the release skill / a
+shell-script pre-tag hook can gate on it.
+
+### Why this is not a GitHub Actions job
+
+The "CI hook" sub-item of #75 is intentionally NOT a GitHub Actions
+workflow. Two hard constraints:
+
+1. The mosquitto broker is on the operator's LAN
+   (`192.168.10.30:1883`), not reachable from a GitHub-hosted runner.
+2. The trigger scripts (`blip_*.ps1`) call `net stop/start mosquitto`,
+   which needs an **elevated Windows shell**. A Linux runner can't do
+   either part.
+
+A self-hosted Windows runner could close both gaps but is operationally
+heavier than the manual `release-smoke.sh` invocation for a 5-device
+fleet. Revisit this trade-off if/when the fleet grows past ~20 devices
+or chaos becomes nightly rather than per-release.
