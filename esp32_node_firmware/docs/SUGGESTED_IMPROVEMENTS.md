@@ -42,8 +42,7 @@ To resolve an entry:
   #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations
   #38   ESP-NOW ranging — runtime-tunable beacon / publish intervals
   #39   ESP-NOW calibration — multi-point + arbitrary-distance variants
-  #40   Operator install guide — antenna orientation                    (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
-  #40   Operator install guide — ESP32-WROOM antenna orientation
+  #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration

@@ -2,11 +2,38 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 afternoon (post-v0.4.24 fleet rollout: 5/6 on v0.4.24 — Charlie stays on v0.4.20.0 canary per Q1 decision).
+Last updated: 2026-04-28 afternoon (post-v0.4.25 fleet rollout: 5/6 on v0.4.25 — Charlie stays on v0.4.20.0 canary per Q1 decision).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.25 — DONE (shipped 2026-04-28 afternoon)
+
+Stability + UX patch on top of v0.4.24. Three thematic items:
+
+- **#32 heap-headroom gates at subsystem init** — `heapGateOk(freeMin, blockMin, tag)`
+  helper wraps MQTT init + BLE init (when compiled) + TLS keygen with
+  skip-on-low-heap paths. Per-subsystem thresholds in config.h. Mirror
+  of v0.3.33's OTA preflight gate. Subsystems that skip stay disabled
+  this boot — operator reads `[W][HeapGate]` log and power-cycles.
+- **#34 Phase 2 — captive-portal port-80 redirector.** Second httpd
+  instance bound to :80 with wildcard catch-all 302 → https://192.168.4.1/.
+  Combined with Phase 1's DNS hijack, the captive UX is now end-to-end:
+  phone connects → DNS resolves probe URLs to AP IP → :80 redirects →
+  OS pops the captive sheet on the real portal.
+- **`tools/dev/ota-rollout.sh` EXCLUDE_UUIDS env var.** Subtractive
+  filter for canary builds / devices under investigation; mirrors
+  FLEET_UUIDS semantic. Closes the Q6 follow-up from earlier today.
+
+Plus: **#33 versioned MQTT topic prefixes design doc** at
+`docs/TOPIC_VERSIONING_DESIGN.md` — forward-planning, no code yet.
+Implementation gated on fleet > 10 / first breaking schema / v1.0.
+
+Closes: #32, #34 (Phase 1 + Phase 2). Partial: #33 (design only).
+
+Build: esp32dev clean (1632256 bytes flash, +1816 vs v0.4.24).
+105/105 native tests pass.
 
 ### v0.4.24 — DONE (shipped 2026-04-28 afternoon)
 

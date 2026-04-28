@@ -27,7 +27,7 @@ TARGET_VERSION="${1:?usage: ota-rollout.sh <target_version>}"
 BROKER="${MQTT_BROKER:-192.168.10.30}"
 TOPIC_BASE='Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox'
 HEALTHY_UPTIME_S=30
-TIMEOUT_PER_DEVICE_S=180
+TIMEOUT_PER_DEVICE_S=300   # bumped 180→300 2026-04-28 — Echo timing-race during v0.4.25 rollout (OTA download + reboot + reconnect + heartbeat-cadence collision)
 SAFETY_GAP_S=15
 LOG="${LOG:-./ota-rollout-$(date +%Y%m%d-%H%M%S).jsonl}"
 
