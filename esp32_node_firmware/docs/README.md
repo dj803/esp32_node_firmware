@@ -78,6 +78,10 @@ retrospectives but not active reference.
 - [SESSIONS/WDT_AUDIT_2026_04_28.md](SESSIONS/WDT_AUDIT_2026_04_28.md)
   — read-only sweep of every blocking I/O site against the TWDT
   model (#29). Companion to TWDT_POLICY.md (top-level).
+- [SESSIONS/SESSION_QUESTIONS_2026_04_28.md](SESSIONS/SESSION_QUESTIONS_2026_04_28.md)
+  — open questions left for the operator from the 2026-04-28
+  afternoon autonomous session, plus the URGENT fleet-LWT-offline
+  observation from ~10:50 SAST that gated the v0.4.24 tag.
 
 ## `archive/` — superseded reference
 
