@@ -60,6 +60,11 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
   proposal for versioned MQTT topic prefixes (#33). Not yet
   implemented; ship trigger is fleet > 10 devices, first breaking
   schema change, or v1.0 firmware release.
+- [LED_COMMANDS.md](LED_COMMANDS.md) — single-source operator
+  reference for every cmd/led payload (color, override, pixels,
+  scenes, schedules, broadcasts). Captured 2026-04-28 against
+  v0.4.26 after the LED feature bundle (#19/#20/#21/#22/#23/#31)
+  shipped.
 
 ## `SESSIONS/` — point-in-time reports
 
