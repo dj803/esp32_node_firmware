@@ -15,6 +15,7 @@
 #include "broker_discovery.h"  // BrokerResult from mDNS / port scan / stored URL
 #include "led.h"
 #include "restart_cause.h"  // (#76 sub-G) NVS-persisted restart cause for boot announce
+#include "restart_history.h"  // (#76 sub-B) NVS ring buffer of last-N restart causes
 
 // Forward declarations collected into dedicated _fwd.h headers so include
 // order in esp32_firmware.ino no longer needs to be fragile.
@@ -88,6 +89,11 @@ static AsyncMqttClient  _mqttClient;                         // The MQTT client 
 static TimerHandle_t    _mqttReconnectTimer = nullptr;       // FreeRTOS timer for reconnect delay
 static uint32_t         _mqttReconnectDelay = 1000;          // Current reconnect delay (ms); grows on failure
 static int              _mqttReconnectCount = 0;             // Consecutive failure count; reset on connect
+// (#55) Cumulative since boot — never resets. Mosquitto records "malformed
+// packet" disconnects 1-2× per fleet-day; this counter surfaces the rate
+// to the dashboard so operators can spot a device drifting from "0" to "1+"
+// without log archaeology.
+static uint32_t         _mqttDisconnectTotal = 0;
 static volatile bool    _mqttNeedsRediscovery = false;       // Set in disconnect callback; cleared by loop()
 static uint32_t         _mqttConnectStartMs = 0;             // millis() when connect() was last called; 0 = idle
 // (v0.3.36) volatile — written from MQTT callback context (async_tcp task),
@@ -340,7 +346,11 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
     // to build the anchor registry for the 2-D map.
     // Boot-reason snippet (v0.3.33) — only emitted on the boot event so the
     // fleet manager can correlate the reset cause without bloating heartbeats.
-    char anchorSnip[160] = "";
+    // anchorSnip carries optional fields tacked onto the status JSON: anchor
+    // coordinates always; on boot events, also boot_reason, restart_cause
+    // (#76 sub-G), and last_restart_reasons (#76 sub-B). Sized 384 to fit
+    // an 8-deep history of 32-char reasons plus the anchor + reason fields.
+    char anchorSnip[384] = "";
     int anchorOff = 0;
     if (gAppConfig.anchor_role == 1) {
         anchorOff = snprintf(anchorSnip, sizeof(anchorSnip),
@@ -359,8 +369,22 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
         // ESP.restart(). Empty for poweron / panic / wdt boots.
         if (_firstBootRestartCause.length() > 0 &&
             anchorOff < (int)sizeof(anchorSnip) - 32) {
-            snprintf(anchorSnip + anchorOff, sizeof(anchorSnip) - anchorOff,
-                ",\"restart_cause\":\"%s\"", _firstBootRestartCause.c_str());
+            int w2 = snprintf(anchorSnip + anchorOff,
+                              sizeof(anchorSnip) - anchorOff,
+                              ",\"restart_cause\":\"%s\"",
+                              _firstBootRestartCause.c_str());
+            if (w2 > 0) anchorOff += w2;
+        }
+        // (#76 sub-B) Append the ring-buffer JSON array. Up to 8 reasons,
+        // oldest-first. Empty array if no software restarts have ever
+        // pushed (factory-fresh device or post-NVS-erase). Cheap NVS read,
+        // ~5-10 ms; runs once on boot via this branch only.
+        String hist = RestartHistory::readAsJsonArray();
+        if (hist.length() > 2 &&    // skip the empty "[]" case
+            anchorOff < (int)sizeof(anchorSnip) - (int)hist.length() - 32) {
+            snprintf(anchorSnip + anchorOff,
+                     sizeof(anchorSnip) - anchorOff,
+                     ",\"last_restart_reasons\":%s", hist.c_str());
         }
     }
 
@@ -384,6 +408,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"relay_enabled\":%s,"
             "\"hall_enabled\":%s,"
             "\"wifi_channel\":%u,"
+            "\"mqtt_disconnects\":%u,"
+            "\"mqtt_last_disconnect\":%u,"
             "\"heap_free\":%u,"
             "\"heap_largest\":%u,"
             "\"event\":\"%s\","
@@ -397,6 +423,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             relayEnabledStr,
             hallEnabledStr,
             (unsigned)wifiCh,
+            (unsigned)_mqttDisconnectTotal,
+            (unsigned)_mqttLastDisconnectReason,
             (unsigned)heapFree,
             (unsigned)heapLargest,
             event, extraJson, anchorSnip);
@@ -412,6 +440,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"relay_enabled\":%s,"
             "\"hall_enabled\":%s,"
             "\"wifi_channel\":%u,"
+            "\"mqtt_disconnects\":%u,"
+            "\"mqtt_last_disconnect\":%u,"
             "\"heap_free\":%u,"
             "\"heap_largest\":%u,"
             "\"event\":\"%s\"%s}",
@@ -424,6 +454,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             relayEnabledStr,
             hallEnabledStr,
             (unsigned)wifiCh,
+            (unsigned)_mqttDisconnectTotal,
+            (unsigned)_mqttLastDisconnectReason,
             (unsigned)heapFree,
             (unsigned)heapLargest,
             event, anchorSnip);
@@ -1418,6 +1450,7 @@ static const char* mqttDisconnectReasonStr(AsyncMqttClientDisconnectReason reaso
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
+    _mqttDisconnectTotal++;                        // (#55) cumulative for heartbeat surface
     _mqttLastDisconnectReason = (uint8_t)reason;   // (#65) cache for restart diag
 
     // Update sibling health advertisement — MQTT is no longer connected.
@@ -1431,15 +1464,32 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
         _mqttNeedsRediscovery = true;   // Signals loop() to re-run broker discovery
     }
 
-    LOG_W("MQTT", "Disconnected (%s) - retrying in %lu ms",
-          mqttDisconnectReasonStr(reason), _mqttReconnectDelay);
+    // (#76 sub-H) Add ±20% jitter to the backoff delay so a fleet that
+    // disconnects in lock-step (e.g. broker outage) doesn't all reconnect
+    // at the exact same moment, which used to overload the broker's
+    // accept queue and trigger a secondary disconnect cascade. esp_random
+    // is hardware-backed once Wi-Fi/BT is up; here we use millis() and
+    // _mqttReconnectCount as cheap entropy since the disconnect callback
+    // path can't safely block on anything heavier.
+    uint32_t jitter_window = _mqttReconnectDelay / 5;   // 20%
+    uint32_t jitter = jitter_window > 0
+        ? ((millis() ^ (uint32_t)_mqttReconnectCount) % (jitter_window * 2 + 1))
+        : 0;
+    uint32_t scheduled_delay = _mqttReconnectDelay + jitter
+                               - (jitter_window > 0 ? jitter_window : 0);
+
+    LOG_W("MQTT", "Disconnected (%s) - retrying in %lu ms (base %lu ± %lu)",
+          mqttDisconnectReasonStr(reason),
+          (unsigned long)scheduled_delay,
+          (unsigned long)_mqttReconnectDelay,
+          (unsigned long)jitter_window);
 
     // Only start the timer if it isn't already running and OTA isn't active.
     // During OTA, reconnect attempts race with the OTA teardown and corrupt
     // AsyncMqttClient's internal state, crashing the FreeRTOS context switch.
     if (!_mqttOtaActive && xTimerIsTimerActive(_mqttReconnectTimer) == pdFALSE) {
         xTimerChangePeriod(_mqttReconnectTimer,
-                           pdMS_TO_TICKS(_mqttReconnectDelay), 0);
+                           pdMS_TO_TICKS(scheduled_delay), 0);
         xTimerStart(_mqttReconnectTimer, 0);
     }
 
@@ -1647,6 +1697,10 @@ static void mqttScheduleRestart(const char* reason, uint32_t deferMs) {
     // surface it. NVS commit takes ~5 ms; well within the deferMs window
     // (typical 200-300 ms) before ESP.restart() actually fires.
     RestartCause::set(reason);
+    // (#76 sub-B) Also append to the ring buffer of last-N restart reasons.
+    // Boot announcement reads + replays this array so the dashboard sees
+    // pattern repetition (e.g. "3 of last 8 boots were mqtt_unrecoverable").
+    RestartHistory::push(reason);
     _mqttRestartAtMs = millis() + deferMs;
 }
 

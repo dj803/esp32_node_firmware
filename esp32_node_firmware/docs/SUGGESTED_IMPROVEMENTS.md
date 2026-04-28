@@ -40,7 +40,6 @@ To resolve an entry:
   #26   Recovery partition app
   #27   Library-API regression test in CI
   #28   NVS / static-string lifetime audit + naming convention
-  #29   WDT-heartbeat audit for all blocking I/O
   #31   Pin LED + RFID tasks to Core 1
   #32   Heap-headroom gate at boot for each subsystem
   #33   Versioned MQTT topic prefixes
@@ -55,21 +54,19 @@ To resolve an entry:
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
-  #48   Device UUID drift — Delta and Echo had unexpected UUIDs on 2026-04-25
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
-  #55   AsyncMqttClient malformed-packet counter
   #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
   #69   Wakeup vs persistent-monitor preemption
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
   #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session)
-  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A+E shipped, B/C/D/F/G/H/I open)
+  #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A/B/E/F/G/H shipped, C/D/I open)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
 
-  Total open: 47
+  Total open: 44
 
 ────────────────────────────────────────────────────────────
 
@@ -116,5 +113,8 @@ To resolve an entry:
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
+  #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/WDT_AUDIT_2026_04_28.md)
+  #48   Device UUID drift — Delta and Echo had unexpected UUIDs       (root cause 2026-04-28 — RNG-pre-WiFi pseudo-random; see docs/SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md; fix bundles with v0.5.0)
+  #55   AsyncMqttClient malformed-packet counter                       (resolved 2026-04-28 in v0.4.23 — mqtt_disconnects + mqtt_last_disconnect heartbeat fields)
 
-  Total resolved: 32
+  Total resolved: 35
