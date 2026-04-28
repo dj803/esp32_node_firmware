@@ -113,7 +113,7 @@ To resolve an entry:
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
-  #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/WDT_AUDIT_2026_04_28.md)
+  #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
   #48   Device UUID drift — Delta and Echo had unexpected UUIDs       (root cause 2026-04-28 — RNG-pre-WiFi pseudo-random; see docs/SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md; fix bundles with v0.5.0)
   #55   AsyncMqttClient malformed-packet counter                       (resolved 2026-04-28 in v0.4.23 — mqtt_disconnects + mqtt_last_disconnect heartbeat fields)
 

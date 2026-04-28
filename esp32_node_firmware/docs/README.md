@@ -4,7 +4,7 @@ Layout grouped by lifecycle (not by topic). See
 [TRACKING_DOC_CONVENTION.md](TRACKING_DOC_CONVENTION.md) for the
 underlying convention.
 
-Last sweep: 2026-04-28.
+Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 
 ## Active reference (foundational, read top-to-bottom)
 
@@ -72,6 +72,12 @@ retrospectives but not active reference.
   — Node-RED dashboard tab rebuild notes.
 - [SESSIONS/RF_CONFIG_TEST_2026_04_25.md](SESSIONS/RF_CONFIG_TEST_2026_04_25.md)
   — RF config sweep and per-peer asymmetry findings.
+- [SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md](SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md)
+  — root-cause audit of #48 Delta+Echo UUID drift (RNG-pre-WiFi
+  pseudo-random determinism).
+- [SESSIONS/WDT_AUDIT_2026_04_28.md](SESSIONS/WDT_AUDIT_2026_04_28.md)
+  — read-only sweep of every blocking I/O site against the TWDT
+  model (#29). Companion to TWDT_POLICY.md (top-level).
 
 ## `archive/` — superseded reference
 

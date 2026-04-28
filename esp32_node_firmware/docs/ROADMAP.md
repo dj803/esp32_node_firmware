@@ -2,13 +2,54 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 (cascade-fix marathon CLOSED at v0.4.20; restart_cause + minimal-variant infra prepared for v0.4.21; canary soak sticky on Charlie at 9+ h, no trip).
+Last updated: 2026-04-28 (post-v0.4.23 fleet rollout; Charlie canary sticky at 12+ h).
 
 ---
 
 ## Now (just shipped or in flight)
 
-### v0.4.21 — IN FLIGHT (2026-04-28 morning)
+### v0.4.23 — DONE (shipped 2026-04-28 mid-morning)
+
+Followups-while-waiting-for-hardware batch on top of v0.4.22:
+
+- **#55 — `mqtt_disconnects` cumulative counter** in heartbeat JSON.
+  Pairs with `mqtt_last_disconnect` (enum value, 0xFF until first
+  drop). Operators can spot a device drifting from 0 to 1+ over
+  uptime. Validated: Bravo cumulated 3 disconnects across M1+M2+M3.
+- **#76 sub-F — `CONFIG_ESP_TASK_WDT_TIMEOUT_S` 5 → 12 s.** 20×
+  margin against every blocking site per the new
+  [SESSIONS/WDT_AUDIT_2026_04_28.md](SESSIONS/WDT_AUDIT_2026_04_28.md).
+- **#76 sub-B — NVS ring buffer of last-N restart causes.** New
+  `include/restart_history.h` + boot announcement field
+  `last_restart_reasons:[...]`. Pattern detection across reboots.
+- **#76 sub-H — Jittered exponential backoff** in onMqttDisconnect.
+  ±20% jitter prevents lock-step fleet reconnect storms after a
+  broker outage.
+- **#29 — WDT-heartbeat audit RESOLVED.** Read-only sweep
+  documented in [SESSIONS/WDT_AUDIT_2026_04_28.md](SESSIONS/WDT_AUDIT_2026_04_28.md).
+- **#48 — UUID drift root cause IDENTIFIED.** Audit at
+  [SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md](SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md)
+  — RNG-pre-WiFi pseudo-random determinism. Fix
+  (`bootloader_random_enable` bookend) deferred to v0.5.0 alongside
+  Hall ADC integration.
+
+Validated: M1+M2+M3 chaos pass on Bravo before tag, fleet OTA-up
+clean post-tag. Open: 47 → 44; Resolved: 32 → 35.
+
+### v0.4.22 — DONE (shipped 2026-04-28 morning — #46/#51 root cause completion)
+
+mqttPublish heap-guard hardened. Alpha's loopTask v0.4.20 panic
+captured tonight via /diag/coredump decoded to the SAME bad_alloc
+shape from v0.4.10 #51. The v0.4.11 heap-guard at threshold 4096 had
+been load-bearing through the cascade-fix marathon but was undersized
+— the function builds `String topic = mqttTopic(prefix)` BETWEEN the
+guard check and the publish call, fragmenting the heap further.
+v0.4.22 fix: dual-guard (re-check after topic build) + threshold
+4096 → 8192 + try/catch on the publish call as defense-in-depth.
+
+Validated: M1+M2+M3 all PASS on Bravo before tag.
+
+### v0.4.21 — DONE (shipped 2026-04-28 morning)
 
 Diagnostic + tooling release. Pure additions over v0.4.20; no behaviour
 change for production fleet. Key entries:

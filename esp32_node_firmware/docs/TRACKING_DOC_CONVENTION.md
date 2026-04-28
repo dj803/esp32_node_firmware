@@ -142,6 +142,27 @@ expires when the underlying session/incident closes. Move to `archive/`
 if the doc has been replaced by a different active doc and the original
 is kept only for grep/audit reasons.
 
+### Date-stamped audits and incident reports go in `SESSIONS/`
+
+If the filename includes a date (e.g. `WDT_AUDIT_2026_04_28.md`,
+`RF_CONFIG_TEST_2026_04_25.md`, `BLE_COEXISTENCE_ANALYSIS.md`) it is
+almost certainly a point-in-time artefact. The findings are valid as
+of the audit date; future contributors will need a fresh audit to
+establish current state. Put it in `SESSIONS/` from the start.
+
+The opposite — convention docs, policy docs, subsystem reference,
+and architecture spec stay at top level and are amended in place.
+TWDT_POLICY.md is a pattern doc; WDT_AUDIT_2026_04_28.md is a snapshot
+that *uses* TWDT_POLICY's pattern.
+
+### When `*.md` at top level becomes a SESSIONS/ candidate
+
+If a top-level doc was originally written for the current state but
+is now historically dated — e.g. a "v0.4.10 stability investigation"
+that's been superseded by the closure of #51 — treat it the same as
+a stale-from-the-start session report. `git mv` to `SESSIONS/` and
+update the index in `docs/README.md` + any cross-references.
+
 ## Reference implementation
 
 See:
