@@ -3447,3 +3447,59 @@ Next steps (operator decision):
        breakdowns at known build versions. No item-lifecycle.
     Conclusion: the convention applies to backlog docs, not
     catalogues. Removing #82 from OPEN.
+
+
+────────────────────────────────────────────────────────────
+83. Mosquitto log frozen at 13:59 — file write stops after first
+    blip-watcher cycle
+    OBSERVATION (2026-04-27 22:47 SAST):  C:/ProgramData/mosquitto/
+    mosquitto.log is 236 MB, last write timestamp 13:59:47, current
+    wall-clock is 22:47 — 8+ hours without the file growing despite
+    the broker actively serving the fleet. Mosquitto service is up,
+    fleet is publishing/subscribing fine; only the LOG output to disk
+    has stopped.
+
+    The blip-watcher runs `net stop mosquitto; sleep N; net start
+    mosquitto` for every M1/M2/M3 chaos test (we've run several
+    today). Plausible causes:
+       (a) The service-restart loses the file handle that mosquitto
+           opens at startup, and on restart it cannot reacquire it
+           because the previous handle is still held by something
+           (defunct child? OS file-handle leak?).
+       (b) The log path gets rotated (size-based trigger?) but the
+           rotated-to file isn't created so writes silently no-op.
+       (c) `apply-logging-config.ps1` (per CLAUDE.md) isn't being
+           re-applied after the service restart, so the post-restart
+           mosquitto runs with default logging.
+
+    IMPACT: Mosquitto-log-based diagnostics (the FIRST step in the
+    "Diagnostic process" section of CLAUDE.md) become useless after
+    the first blip cycle. Daily-health's mosquitto-log-size warning
+    fires (we saw it tonight: "230872.7 KB, last write 403.8 min ago"
+    flagged as YELLOW).
+
+    INVESTIGATION:
+       1. Read mosquitto.conf and confirm `log_dest file <path>` is
+          set; check if `log_type all` is enabled.
+       2. After a known blip cycle, check `Get-Process mosquitto |
+          Select-Object Id, Path` to confirm the running service.
+          Compare to `Get-Process | Where-Object Id -eq <pid>` from
+          before the blip — if PID changed, restart succeeded.
+       3. Check whether `apply-logging-config.ps1` is hooked into the
+          service-start path (Windows scheduled task on service start?
+          NSSM wrapper?). If not, the logging config is one-shot.
+
+    PROPOSED FIX:
+       Either bake the logging config into mosquitto.conf permanently
+       (so it survives service restarts), OR wrap mosquitto in NSSM
+       which re-applies the config. The current "elevated apply once"
+       model loses state on every restart.
+
+    SEVERITY: MEDIUM. The diagnostic step isn't broken — just stale.
+    Live MQTT subscribe still works (we used it throughout the
+    autonomous window). But the historical-log step in
+    Diagnostic process is currently rotted.
+
+    DISCOVERED: 2026-04-27 evening autonomous window during the
+    Alpha-panic investigation (couldn't grep mosquitto.log for the
+    last-publish timestamp because the file was 9 h stale).
