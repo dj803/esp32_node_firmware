@@ -2,11 +2,42 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 afternoon (post-v0.4.25 fleet rollout: 5/6 on v0.4.25 — Charlie stays on v0.4.20.0 canary per Q1 decision).
+Last updated: 2026-04-28 evening (post-v0.4.26 LED feature bundle — fleet OTA in progress).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.26 — DONE (shipped 2026-04-28 evening — LED feature bundle)
+
+Six LED-related items closed end-to-end. Operator swapped Alpha
+(WS2812-equipped) onto COM4 to make this serial-validatable.
+Full schema lives in mqtt_client.h's handleLedCommand() —
+Node-RED dashboards can drive against the v0.4.26 schema once OTA'd.
+
+- **#19 Per-LED addressing** — `cmd/led "pixel"` (single, auto-commit)
+  + `cmd/led "pixels"` (bulk JSON array). New `LedState::MQTT_PIXELS`
+  freezes `_leds[]` for direct-render.
+- **#20 Scene/preset save-to-device** — NVS namespace `led_scenes`,
+  up to 8 named slots. `scene_save / scene_load / scene_delete /
+  scene_list`. Captures pixel buffer + brightness; restores on
+  demand.
+- **#21 Group/broadcast LED commands** — `Enterprise/Site/broadcast/led`
+  topic mirrors `cmd/led` semantics. Subscribed at QoS 1.
+- **#22 Scheduled/time-of-day automation** — new `include/led_schedule.h`
+  with NTP-synced minute-poll, 8 NVS slots, action-as-cmd/led-JSON
+  re-fed at fire time. `sched_add / sched_remove / sched_list /
+  sched_clear`. Timezone hard-coded SAST (UTC+2, no DST); override
+  via `LED_SCHEDULE_TZ_OFFSET_S`.
+- **#23 OTA/heartbeat LED override** — `cmd/led "override"`
+  {r,g,b,anim,duration_ms} with auto-revert. New anim names
+  "alarm" + "warn" for app-level event UX.
+- **#31 Pin LED + RFID tasks to Core 1** — verified-already-done
+  in arduino-esp32 v3.x. Original archive concern was a v2.x
+  default that no longer applies.
+
+Build: esp32dev clean (1645696 bytes flash, +13.4 KB vs v0.4.25;
+70696 RAM unchanged). 105/105 native tests pass.
 
 ### v0.4.25 — DONE (shipped 2026-04-28 afternoon)
 

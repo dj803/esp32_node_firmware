@@ -16,10 +16,10 @@
 - Default baud for serial monitor is 115200.
 - **Always verify which device is on COMx BEFORE flashing** — see "COM port assignments are NOT fixed" in Device Fleet below.
 
-## Device Fleet (firmware v0.4.25 — except Charlie on v0.4.20.0 canary)
+## Device Fleet (firmware v0.4.26 — except Charlie on v0.4.20.0 canary)
 - ESP32-Alpha   — UUID `32925666-155a-4a67-bf50-27c1ffa22b11`, MAC `84:1F:E8:1A:CC:98`
-- ESP32-Alpha   — currently fitted with 8 WS2812 LEDs (used for visual MQTT_HEALTHY validation 2026-04-27).
-- ESP32-Bravo   — UUID `ece1ed31-4096-488b-a083-d5880002c223`, MAC `F4:2D:C9:73:D3:CC` (LED strip moved to Alpha; Bravo currently no LEDs). UUID rotated 2026-04-27 ~22:00 SAST when the #50 erase-flash test wiped NVS; previous UUID `6cfe177f-92eb-4699-a9a6-8a3603aae175` is retained-only and should be retired from hardcoded lookups.
+- ESP32-Alpha   — currently fitted with 8 WS2812 LEDs (visual MQTT_HEALTHY validation 2026-04-27). **Bench-attached on COM4 since 2026-04-28 afternoon swap** — primary serial-accessible LED-equipped device for LED-feature work (#19/#20/#21/#22/#23).
+- ESP32-Bravo   — UUID `ece1ed31-4096-488b-a083-d5880002c223`, MAC `F4:2D:C9:73:D3:CC` (LED strip moved to Alpha; Bravo currently no LEDs). UUID rotated 2026-04-27 ~22:00 SAST when the #50 erase-flash test wiped NVS; previous UUID `6cfe177f-92eb-4699-a9a6-8a3603aae175` is retained-only and should be retired from hardcoded lookups. **Off-bench since 2026-04-28 afternoon swap** — operator will re-attach for the v0.5.0 relay + Hall hardware bring-up session.
 - ESP32-Charlie — UUID `2ff9ddcf-bf7e-4b51-ba6c-fa4bfcd80cdd`, MAC `D4:E9:F4:60:1C:C4`
 - **COM port assignments are NOT fixed.** Multiple ESPs are on the bench at any time and Windows assigns COM ports in plug-in order. Before flashing or monitoring, ALWAYS verify which device is on which port:
   ```powershell
