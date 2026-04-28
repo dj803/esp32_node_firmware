@@ -97,6 +97,8 @@ during planning; recording them here so the reasoning isn't lost.
              reconnects. Only helps staggered-recovery cases — the rarest
              failure mode. Shipped fix (C + A) already handles the common
              and LAN-wide scenarios without the complexity.
+   STATUS:   WONT_DO 2026-04-28 — REJECTED design alternative kept here
+             for posterity. Index moved to WONT_DO.
 
 9. Time-limited AP mode → reboot
    IDEA:     Hard timeout on AP mode (e.g. 1 h); reboot unconditionally to
@@ -108,6 +110,8 @@ during planning; recording them here so the reasoning isn't lost.
              ESP-NOW siblings, and papers over rather than fixes the root
              cause. Could be added later as a ~1 h last-ditch safety net
              if field data shows (A) is insufficient.
+   STATUS:   WONT_DO 2026-04-28 — REJECTED design alternative kept here
+             for posterity. Index moved to WONT_DO.
 
 10. "Has ever successfully connected" NVS flag
     IDEA:    Distinguish first-boot unprovisioned devices from provisioned
@@ -118,6 +122,8 @@ during planning; recording them here so the reasoning isn't lost.
              outage at all — the flag is solving a problem the primary fix
              already removed. Adds NVS state + a new code branch for
              negligible benefit.
+    STATUS:  WONT_DO 2026-04-28 — REJECTED design alternative kept here
+             for posterity. Index moved to WONT_DO.
 
 
 ================================================================================
@@ -1252,6 +1258,17 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               non-RF-aware installer.
     PRIORITY: High for any deployment outside the dev bench. Cheap to
               produce — half a day of writing + one diagram.
+
+    KEY TAKEAWAY: Mounting Alpha on the RFID-RC522-equipped breakout
+    added ~17-23 dB of asymmetry to Alpha→Charlie vs Charlie→Alpha
+    ranging, even when the RFID was un-powered. The breakout +
+    RFID reader (as a passive RF resonator) distort the WROOM
+    antenna pattern; per-pair calibration is the only practical fix.
+    STATUS: RESOLVED as a documented finding 2026-04-25. Informs #37
+    (per-peer asymmetry calibration in v0.4.07/v0.4.09 — shipped) and
+    #40 (operator install guide — open). The firmware-side solution
+    is per-pair calibration constants which is already shipped via
+    #39 multi-point. Index moved to RESOLVED 2026-04-28.
 
 42. ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
     OBSERVATION (2026-04-25): Calibration takes 30 samples per step at the
@@ -3372,6 +3389,16 @@ Next steps (operator decision):
     when monitors are dense; doesn't affect production reliability.
     Combo of A + C + E gives the best balance — fewer events,
     semantic events (summary not raw), single orchestrator.
+    STATUS: RESOLVED 2026-04-28. Sub-E (single orchestrator) shipped
+    via tools/dev/ota-rollout.sh (#79) + the new tools/dev/ota-monitor.sh
+    (#84). Sub-D (CronCreate vs /loop dynamic) is now a documented
+    decision — agents use /loop dynamic for adaptive work and
+    CronCreate for fixed cadence. Sub-A (event filtering) is partially
+    addressed by the wakeup-cadence rule in the autonomous template
+    (#84's C-fix: 60-300 s active, 1200-1800 s idle). Sub-B/C
+    (Node-RED aggregator + composite OTA progress events) are
+    operator-side dashboard work — defer until the next user-visible
+    Node-RED change cycle. Index moved to RESOLVED.
 
 ────────────────────────────────────────────────────────────
 80. -dev suffix breaks OTA upgrade path (recurring friction)

@@ -5,7 +5,7 @@ one-line title and (where relevant) an ETA / link to the relevant version.
 RESOLVED items are listed at the bottom for context but the full text is
 in SUGGESTED_IMPROVEMENTS_ARCHIVE.md.
 
-Last index sweep: 2026-04-27 (post #81 renumbering pass).
+Last index sweep: 2026-04-28 (post-v0.4.23 release; RESOLVED list sorted numerically).
 
 To add a new entry:
   - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.md with a new
@@ -21,9 +21,6 @@ To resolve an entry:
 
 ## OPEN
 
-  #8    Sibling ESP-NOW "come back online" broadcast
-  #9    Time-limited AP mode → reboot
-  #10   "Has ever successfully connected" NVS flag
   #11   NTAG21x write support (NTAG213 / NTAG215 / NTAG216)
   #12   NTAG424 DNA secure messaging (AES)
   #14   Per-sector key rotation from Node-RED (cmd/rfid/set_key)
@@ -50,7 +47,6 @@ To resolve an entry:
   #38   ESP-NOW ranging — runtime-tunable beacon / publish intervals
   #39   ESP-NOW calibration — multi-point + arbitrary-distance variants
   #40   Operator install guide — ESP32-WROOM antenna orientation
-  #41   Hardware finding — breakout board + RFID-RC522 distort the WROOM antenna
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
@@ -58,7 +54,6 @@ To resolve an entry:
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)
   #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
-  #69   Wakeup vs persistent-monitor preemption
   #71   Per-device feature-subset firmware variants                  (was #58 cascade-session)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
   #75   Chaos-testing framework — promote tools/chaos/               (was #64 cascade-session)
@@ -66,7 +61,7 @@ To resolve an entry:
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
 
-  Total open: 44
+  Total open: 39
 
 ────────────────────────────────────────────────────────────
 
@@ -76,45 +71,50 @@ To resolve an entry:
   #7    MQTT-over-TLS to the broker                         (parked 2026-04-27 — private LAN)
   #13   UID-clone / "Chinese backdoor" MIFARE support       (parked 2026-04-27 — no use case)
   #18   NFC phone / card emulation                          (parked 2026-04-27 — ESP32 cannot emulate ISO 14443A)
+  #8    Sibling ESP-NOW "come back online" broadcast        (parked 2026-04-28 — REJECTED in v0.3.15 plan; siblings deinit ESP-NOW in AP mode)
+  #9    Time-limited AP mode → reboot                       (parked 2026-04-28 — REJECTED in v0.3.15 plan; background STA scan supersedes)
+  #10   "Has ever successfully connected" NVS flag          (parked 2026-04-28 — REJECTED in v0.3.15 plan; subsumed by indefinite OPERATIONAL backoff)
   #82   Audit tracking docs for split pattern               (parked 2026-04-27 — neither candidate fits the convention)
 
 ────────────────────────────────────────────────────────────
 
 ## RESOLVED (full text in archive)
 
-  #1    Upgrade GitHub Actions to Node.js 24            (addressed 2026-04-22)
-  #2    JTAG debugging setup                                (was audit item 20)
-  #3    Reproducible builds                                 (was audit item 21)
-  #4    Dependency SBOM + supply-chain scan                 (was audit item 22)
-  #5    Local PlatformIO validation                 (addressed 2026-04-22)
-  #43   Local build leaves firmware_version field EMPTY in MQTT messages   (addressed v0.4.10)
+  #1    Upgrade GitHub Actions to Node.js 24                          (addressed 2026-04-22)
+  #2    JTAG debugging setup                                          (was audit item 20)
+  #3    Reproducible builds                                           (was audit item 21)
+  #4    Dependency SBOM + supply-chain scan                           (was audit item 22)
+  #5    Local PlatformIO validation                                   (addressed 2026-04-22)
+  #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
+  #30   AsyncTCP fork swap (marvinroger → mathieucarbou)              (resolved 2026-04-27 in v0.4.14)
+  #41   Hardware finding — breakout + RFID-RC522 antenna distortion   (resolved as documented finding 2026-04-25; informs #37/#40)
+  #43   Local build leaves firmware_version field EMPTY               (addressed v0.4.10)
   #44   Addressable LED status colors (green/yellow/red) not lighting
-  #50   esptool v5.2 erase-flash does NOT wipe NVS on first-power-on chips   (resolved 2026-04-25 — was DTR-induced second-boot, reconfirmed 2026-04-27)
-  #30   AsyncTCP fork swap (marvinroger → mathieucarbou)                    (resolved 2026-04-27 in v0.4.14)
-  #51   v0.4.10 stability regression — suspected LED MQTT_HEALTHY hooks     (resolved 2026-04-27 in v0.4.16)
-  #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern   (resolved 2026-04-27 in v0.4.13)
-  #57   Install host gcc/g++ to enable native unit tests             (resolved 2026-04-27)
-  #58   Fix daily_health_config.json local_clone path                (resolved 2026-04-27)
-  #59   Root .gitignore                                              (resolved 2026-04-27)
-  #60   Root .gitattributes (CRLF normalisation)                     (resolved 2026-04-27)
-  #61   Mosquitto: add auth (passwd + ACL)                           (2026-04-26 audit)
-  #62   LICENSE file                                                  (addressed 2026-04-26)
-  #64   Root README.md                                               (resolved 2026-04-27)
-  #65   esp32_node_firmware/include/build_config.h stub              (resolved 2026-04-27)
-  #66   .claude/commands/ — operational shortcuts                    (resolved 2026-04-27)
-  #67   Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
-  #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
-  #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
-  #80   -dev suffix breaks OTA upgrade path (recurring friction)      (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #45   Fleet-control buttons (OTA/Restart/Firmware) need stagger    (addressed v0.4.10 — Node-RED hb_cmd_fn/hb_restart_fn patched)
+  #48   Device UUID drift — Delta and Echo had unexpected UUIDs       (root cause 2026-04-28 — RNG-pre-WiFi pseudo-random; see docs/SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md; fix bundles with v0.5.0)
+  #50   esptool v5.2 erase-flash does NOT wipe NVS                    (resolved 2026-04-25 — was DTR-induced second-boot, reconfirmed 2026-04-27)
+  #51   v0.4.10 stability regression — LED MQTT_HEALTHY hooks suspect (resolved 2026-04-27 in v0.4.16; full root cause closed v0.4.22)
   #52   Node-RED file logging configured                              (resolved Tier-1 T1.1 2026-04-27)
   #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance       (firmware part shipped v0.4.11; dashboard tile downstream)
-  #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen instead, no shim needed)
+  #55   AsyncMqttClient malformed-packet counter                      (resolved 2026-04-28 in v0.4.23 — mqtt_disconnects + mqtt_last_disconnect heartbeat fields)
+  #56   Re-implement MQTT_HEALTHY safely via deferred-flag pattern    (resolved 2026-04-27 in v0.4.13)
+  #57   Install host gcc/g++ to enable native unit tests              (resolved 2026-04-27)
+  #58   Fix daily_health_config.json local_clone path                 (resolved 2026-04-27)
+  #59   Root .gitignore                                               (resolved 2026-04-27)
+  #60   Root .gitattributes (CRLF normalisation)                      (resolved 2026-04-27)
+  #61   Mosquitto: add auth (passwd + ACL)                            (2026-04-26 audit; intentionally deferred)
+  #62   LICENSE file                                                  (addressed 2026-04-26)
+  #64   Root README.md                                                (resolved 2026-04-27)
+  #65   esp32_node_firmware/include/build_config.h stub               (resolved 2026-04-27)
+  #66   .claude/commands/ — operational shortcuts                     (resolved 2026-04-27)
+  #67   Node-RED project package.json — declare custom node deps      (2026-04-26 audit)
+  #69   Wakeup vs persistent-monitor preemption                       (resolved 2026-04-28 — sub-E shipped via tools/dev/ota-rollout.sh + ota-monitor.sh; cadence rule via #84)
+  #73   Silent-failure watcher (tools/silent_watcher.sh)              (was #60 cascade-session; shipped)
+  #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen, no shim needed)
+  #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
+  #80   -dev suffix breaks OTA upgrade path                           (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
-  #29   WDT-heartbeat audit for all blocking I/O                      (resolved 2026-04-28 — see docs/SESSIONS/WDT_AUDIT_2026_04_28.md)
-  #48   Device UUID drift — Delta and Echo had unexpected UUIDs       (root cause 2026-04-28 — RNG-pre-WiFi pseudo-random; see docs/SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md; fix bundles with v0.5.0)
-  #55   AsyncMqttClient malformed-packet counter                       (resolved 2026-04-28 in v0.4.23 — mqtt_disconnects + mqtt_last_disconnect heartbeat fields)
 
-  Total resolved: 35
+  Total resolved: 36
