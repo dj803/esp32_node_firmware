@@ -82,6 +82,12 @@ retrospectives but not active reference.
   — open questions left for the operator from the 2026-04-28
   afternoon autonomous session, plus the URGENT fleet-LWT-offline
   observation from ~10:50 SAST that gated the v0.4.24 tag.
+- [SESSIONS/AP_OUTAGE_2026_04_28.md](SESSIONS/AP_OUTAGE_2026_04_28.md)
+  — observation log from the 2026-04-28 fleet AP outage. First
+  fleet-wide outage observed with v0.4.23's #55 mqtt_disconnects
+  counter live; Alpha int_wdt'd while Delta/Foxtrot survived.
+  Timeline + per-device classification + how v0.4.24's pending
+  changes would have affected each device. Feeds #46.
 
 ## `archive/` — superseded reference
 
