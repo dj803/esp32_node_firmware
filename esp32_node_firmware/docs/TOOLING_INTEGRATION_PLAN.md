@@ -82,11 +82,11 @@ Today's release pipeline required a manual `git tag v0.4.10 && git push origin v
 Promote the JSON-decoder block I've been hand-typing all session into `tools/fleet_status.sh`:
 ```bash
 #!/usr/bin/env bash
-mosquitto_sub -h 192.168.10.30 -t '...+/status' -F '%t %p' -W 7 | python tools/fleet_status_parse.py
+mosquitto_sub -h 192.168.10.30 -t '...+/status' -F '%t %p' -W 75 | python tools/fleet_status_parse.py
 ```
 Cuts every "what's the fleet doing" check from 30 seconds of typing to 1 command.
 
-**STATUS (2026-04-27):** `tools/fleet_status.sh` already exists. Verify + document in `tools/README.md` this session.
+**STATUS (2026-04-28):** `tools/fleet_status.sh` exists; window bumped 7s → 75s 2026-04-28 after the LWT-offline-shadow gotcha bit a session. See docs/MONITORING_PRACTICE.md "Capturing fleet snapshots — gotcha" for why ≥75s matters.
 
 ---
 

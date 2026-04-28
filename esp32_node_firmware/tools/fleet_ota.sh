@@ -1,5 +1,25 @@
 #!/usr/bin/env bash
-# Staggered fleet OTA orchestrator with canary checks.
+#
+# DEPRECATED 2026-04-28 — use tools/dev/ota-rollout.sh instead.
+#
+# This script targets v0.4.10 specifically and hardcodes a stale Bravo
+# UUID (`6cfe177f-...`, rotated 2026-04-27 after the NVS-wipe test in
+# #50; current is `ece1ed31-...`). The 3-second mosquitto_sub windows
+# also hit the LWT-offline-shadow gotcha documented in
+# docs/MONITORING_PRACTICE.md "Capturing fleet snapshots — gotcha".
+#
+# Replaced by:
+#   - tools/dev/ota-rollout.sh   — generic per-version rollout with
+#                                  EXCLUDE_UUIDS support (#79 + #84)
+#   - tools/dev/version-watch.sh — long-running watcher for live fw
+#                                  version transitions
+#   - tools/dev/release-smoke.sh — pre-tag chaos smoke (M1+M2+M4)
+#
+# Kept in repo for git history / audit; do not invoke. If something
+# really only works in this script, file a SUGGESTED_IMPROVEMENTS entry
+# and have the new tools absorb it.
+#
+# Original purpose: staggered fleet OTA orchestrator with canary checks.
 # Order: Charlie -> Delta -> Echo. Alpha + Bravo already on v0.4.10.
 BROKER=192.168.10.30
 TARGET="0.4.10"
