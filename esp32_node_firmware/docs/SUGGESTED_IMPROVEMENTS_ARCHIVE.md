@@ -2579,6 +2579,11 @@ Phase C — CI completeness
                           path: ./
                           base: ${{ github.event.repository.default_branch }}
     PRIORITY: Medium. Blocks secrets-in-commit incidents; already spec'd.
+    STATUS:   RESOLVED 2026-04-28. `secrets-scan` job added to
+              .github/workflows/build.yml using
+              trufflesecurity/trufflehog@main with
+              --results=verified,unknown. Runs in parallel with the
+              compile job on every push. First run 25052020093 GREEN.
 
 64. Root README.md                                               (2026-04-26 audit)
     WHERE:    C:\Users\drowa\Documents\git\Arduino\NodeFirmware\README.md  (create)
@@ -2799,6 +2804,17 @@ mid-day update" section.
     inlined most of it. The savings hypothesis from the original
     proposal applies more strongly to BLE (~30 KB) and ranging
     (~unknown). Worth re-measuring once those guards land.
+
+    STATUS: RESOLVED 2026-04-28. CI matrix added — `build-variants`
+    job in .github/workflows/build.yml compiles `esp32dev_minimal`
+    and `esp32dev_relay_hall` in parallel after the canonical
+    `esp32dev` build, no artifact upload (purely a compile gate).
+    First run 25052020093 GREEN. Catches the case where a refactor
+    of the default path silently breaks variants. The full per-
+    variant OTA-manifest story from this entry's PROPOSAL section
+    is deferred to v0.5.0 (when the fleet first has genuinely
+    different hardware roles), but the build-protection sub-item
+    is closed.
 
 72. Bench-supply voltage stress testing rig
     OBSERVATION (2026-04-26 operator suggestion):  Failure modes #51

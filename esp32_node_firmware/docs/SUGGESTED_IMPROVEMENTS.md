@@ -49,12 +49,10 @@ session-planning; reorder within a group freely.
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)         (Charlie canary soak running, sticky on v0.4.20.0)
   #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
 
-### E. CI / security gates (2)
-  #63   Add trufflehog secrets-scan job to build.yml                 (2026-04-26 audit; secrets-scan job added to build.yml 2026-04-28 — closure pending first green CI run)
+### E. CI / security gates (1)
   #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
 
-### F. Hardware bench / variants (2)
-  #71   Per-device feature-subset firmware variants                  (was #58 cascade-session; first cut shipped, CI matrix added 2026-04-28 — closure pending first green run on minimal + relay_hall)
+### F. Hardware bench / variants (1)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
 
 ### G. Docs / process / long-tail closure (4) — mostly validation-pending, not coding
@@ -63,7 +61,7 @@ session-planning; reorder within a group freely.
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 25  (A6 + B6 + C2 + D3 + E2 + F2 + G4)
+  Total open: 23  (A6 + B6 + C2 + D3 + E1 + F1 + G4)
 
 ────────────────────────────────────────────────────────────
 
@@ -128,10 +126,12 @@ session-planning; reorder within a group freely.
   #27   Library-API regression test in CI                             (resolved 2026-04-23 in v0.4.02 — recorded retroactively 2026-04-28; lib_api_assert.h static_asserts run on every esp32dev CI build)
   #35   Operational practice: canary OTA pattern                      (resolved 2026-04-28 — codified in docs/CANARY_OTA.md; Charlie has been the dedicated canary since 2026-04-27)
   #36   Operational practice: heartbeat / boot-reason monitoring      (resolved 2026-04-28 — codified in docs/MONITORING_PRACTICE.md)
+  #63   Add trufflehog secrets-scan job to build.yml                  (resolved 2026-04-28 — secrets-scan job added to build.yml; first run 25052020093 GREEN)
+  #71   Per-device feature-subset firmware variants                   (resolved 2026-04-28 — first cut + CI matrix; build-variants job greens esp32dev_minimal + esp32dev_relay_hall on every push)
   #79   Version-update watcher + ack-driven OTA                       (was #68 cascade-session; shipped tools/dev/{ota-rollout,version-watch}.sh)
   #80   -dev suffix breaks OTA upgrade path                           (was #70 cascade-session; resolved v0.4.18+v0.4.20)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
   #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
   #84   Agent post-action verification gap                            (resolved 2026-04-28 — discipline rule + ota-monitor.sh + cadence rule)
 
-  Total resolved: 51
+  Total resolved: 53
