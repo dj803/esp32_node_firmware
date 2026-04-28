@@ -88,6 +88,8 @@
 #include "wifi_recovery.h"   // pure helpers — backoff index, auth-fail classifier
 #include "ap_portal.h"
 #include "ws2812.h"        // WS2812B strip — before mqtt_client.h and rfid.h
+#include "relay.h"         // (v0.5.0) BDD 2CH relay — before mqtt_client.h (publishers go in mqtt_client.h)
+#include "hall.h"          // (v0.5.0) BMT 49E Hall — before mqtt_client.h
 #include "mqtt_client.h"   // MUST come before ota.h — defines mqttPublishStatus()
 #include "ota.h"
 #include "ota_validation.h"  // Phase 2 / v0.3.34 — post-OTA self-test + rollback
@@ -568,6 +570,14 @@ void loop() {
             bleInit();    // BLE + WiFi share 2.4 GHz; ESP-IDF handles coexistence
             LOG_HEAP("after-ble");
 #endif
+#ifdef RELAY_ENABLED
+            relayInit();   // (v0.5.0) BDD 2CH relay — drives HIGH before OUTPUT to prevent boot-click
+            LOG_HEAP("after-relay");
+#endif
+#ifdef HALL_ENABLED
+            hallInit();    // (v0.5.0) BMT 49E Hall — ADC1 single-shot, periodic publish
+            LOG_HEAP("after-hall");
+#endif
             return;   // Give other tasks a cycle before entering the regular loop
         }
     }
@@ -730,6 +740,9 @@ void loop() {
 #endif
 #ifdef BLE_ENABLED
     bleLoop();
+#endif
+#ifdef HALL_ENABLED
+    hallLoop();   // (v0.5.0) periodic ADC1 read + telemetry publish
 #endif
 
     settingsServerTick();

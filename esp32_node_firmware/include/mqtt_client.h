@@ -315,6 +315,16 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
 #else
     const char* rfidEnabledStr = "false";
 #endif
+#ifdef RELAY_ENABLED
+    const char* relayEnabledStr = "true";
+#else
+    const char* relayEnabledStr = "false";
+#endif
+#ifdef HALL_ENABLED
+    const char* hallEnabledStr = "true";
+#else
+    const char* hallEnabledStr = "false";
+#endif
 
     // Friendly node name from NVS — empty string until the operator sets one.
     // Always emitted so Node-RED's roster flow can label by name when present
@@ -371,6 +381,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
+            "\"relay_enabled\":%s,"
+            "\"hall_enabled\":%s,"
             "\"wifi_channel\":%u,"
             "\"heap_free\":%u,"
             "\"heap_largest\":%u,"
@@ -382,6 +394,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
+            relayEnabledStr,
+            hallEnabledStr,
             (unsigned)wifiCh,
             (unsigned)heapFree,
             (unsigned)heapLargest,
@@ -395,6 +409,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             "\"firmware_ts\":%u,"
             "\"uptime_s\":%u,"
             "\"rfid_enabled\":%s,"
+            "\"relay_enabled\":%s,"
+            "\"hall_enabled\":%s,"
             "\"wifi_channel\":%u,"
             "\"heap_free\":%u,"
             "\"heap_largest\":%u,"
@@ -405,6 +421,8 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
             (unsigned)(uint32_t)FIRMWARE_BUILD_TIMESTAMP,
             (unsigned)(millis() / 1000),
             rfidEnabledStr,
+            relayEnabledStr,
+            hallEnabledStr,
             (unsigned)wifiCh,
             (unsigned)heapFree,
             (unsigned)heapLargest,
@@ -427,6 +445,49 @@ static void mqttPublishStatus(const char* event, const char* extraJson = nullptr
 static void mqttPublishStatus(FwEvent ev, const char* extraJson = nullptr) {
     mqttPublishStatus(fwEventName(ev), extraJson);
 }
+
+// (v0.5.0) Relay + Hall publishers — defined here because they use
+// mqttPublish, called from relay.h / hall.h via the forward-decls inside
+// those headers' anonymous namespaces. Same pattern as ws2812PublishState.
+
+#ifdef RELAY_ENABLED
+// Definitions for the forward-decls in relay.h (inside namespace RelayDriver)
+// AND the top-level wrapper used by the cmd/relay dispatch handler.
+namespace RelayDriver {
+    inline void relayPublishState() {
+        char body[64];
+        snprintf(body, sizeof(body), "{\"ch1\":%s,\"ch2\":%s}",
+                 _state[0] ? "true" : "false",
+                 _state[1] ? "true" : "false");
+        mqttPublish("status/relay", String(body), /*qos=*/1, /*retain=*/true);
+    }
+}
+inline void relayPublishState() { RelayDriver::relayPublishState(); }
+#endif
+
+#ifdef HALL_ENABLED
+// Definitions for the forward-decls in hall.h (inside namespace HallDriver).
+// hall.h itself calls hallPublishTelemetry() / hallPublishEdge() from inside
+// HallDriver::loop(), so the in-namespace definitions are sufficient — no
+// top-level wrappers needed here.
+namespace HallDriver {
+    inline void hallPublishTelemetry(float voltage_v, int16_t gauss, bool aboveThresh) {
+        char body[96];
+        snprintf(body, sizeof(body),
+                 "{\"voltage_v\":%.3f,\"gauss\":%d,\"above_threshold\":%s}",
+                 voltage_v, (int)gauss, aboveThresh ? "true" : "false");
+        mqttPublish("telemetry/hall", String(body), /*qos=*/0, /*retain=*/false);
+    }
+    inline void hallPublishEdge(const char* edge, int16_t gauss, int16_t threshold_g) {
+        char body[96];
+        snprintf(body, sizeof(body),
+                 "{\"edge\":\"%s\",\"gauss\":%d,\"threshold_gauss\":%d}",
+                 edge, (int)gauss, (int)threshold_g);
+        mqttPublish("telemetry/hall/edge", String(body), /*qos=*/1, /*retain=*/false);
+    }
+}
+#endif
+
 
 // Forward declaration — definition is below near the reconnect/hang machinery.
 // (#65 Phase 2, v0.4.19) Lets handleCredRotation() and onMqttMessage()
@@ -1024,6 +1085,38 @@ static void onMqttMessage(char* topic, char* payload,
             if (count > 0) bleSetTrackedMacs(macPtrs, count);
         }
 #endif
+#ifdef RELAY_ENABLED
+    } else if (t == mqttTopic("cmd/relay")) {
+        // 2CH relay: {"ch":1,"state":true} or {"ch":"all","state":false}
+        JsonDocument doc;
+        if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+            LOG_W("MQTT", "cmd/relay: JSON parse error");
+        } else {
+            const char* chStr = doc["ch"].is<const char*>() ? doc["ch"].as<const char*>() : nullptr;
+            bool state = doc["state"] | false;
+            if (chStr && strcmp(chStr, "all") == 0) {
+                relaySetAll(state);
+            } else {
+                uint8_t ch = doc["ch"] | 0;
+                relaySet(ch, state);
+            }
+            relayPublishState();
+        }
+#endif
+#ifdef HALL_ENABLED
+    } else if (t == mqttTopic("cmd/hall/config")) {
+        // {"interval_ms":1000,"threshold_gauss":50}
+        JsonDocument doc;
+        if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+            LOG_W("MQTT", "cmd/hall/config: JSON parse error");
+        } else {
+            uint32_t iv = doc["interval_ms"]      | (uint32_t)HALL_INTERVAL_MS;
+            int      th = doc["threshold_gauss"]  | (int)HALL_THRESHOLD_GAUSS;
+            hallSetConfig(iv, (int16_t)th);
+        }
+    } else if (t == mqttTopic("cmd/hall/zero")) {
+        hallZeroNow();
+#endif
     } else if (t == mqttTopic("cmd/espnow/ranging")) {
         // Enable or disable ESP-NOW ranging from Node-RED.
         // Payload "1" = enable, "0" (or anything else) = disable.
@@ -1259,6 +1352,13 @@ static void onMqttConnect(bool sessionPresent) {
     _mqttClient.subscribe(mqttTopic("cmd/ble/track").c_str(),     1);   // BLE: set tracked beacon
     _mqttClient.subscribe(mqttTopic("cmd/ble/clear").c_str(),     1);   // BLE: clear tracked beacon
     _mqttClient.subscribe(mqttTopic("cmd/ble/list").c_str(),      1);   // BLE: re-publish last results
+#endif
+#ifdef RELAY_ENABLED
+    _mqttClient.subscribe(mqttTopic("cmd/relay").c_str(),         1);   // 2CH relay control (v0.5.0)
+#endif
+#ifdef HALL_ENABLED
+    _mqttClient.subscribe(mqttTopic("cmd/hall/config").c_str(),   1);   // Hall: interval/threshold (v0.5.0)
+    _mqttClient.subscribe(mqttTopic("cmd/hall/zero").c_str(),     1);   // Hall: capture current as zero
 #endif
     _mqttClient.subscribe(mqttTopic("cmd/espnow/ranging").c_str(),    1);  // ranging on/off — retain
     _mqttClient.subscribe(mqttTopic("cmd/espnow/name").c_str(),      1);  // friendly name — retain

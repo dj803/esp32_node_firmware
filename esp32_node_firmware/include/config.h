@@ -592,6 +592,37 @@ inline const char* nvsNsName(NvsNs ns) {
 
 
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// Relay (BDD 2CH 5V — JQC-3FF-S-Z) — v0.5.0 hardware integration
+// Two-channel active-LOW relay driver. Default-DISABLED: production fleet
+// devices that don't have the board attached should NOT drive these pins.
+// Enable per device via build_flags `-DRELAY_ENABLED` (e.g. an
+// `[env:esp32dev_relay]` PIO env), OR uncomment the define here for a
+// device that physically has the relay wired. See docs/PLAN_RELAY_HALL_v0.5.0.md.
+// -----------------------------------------------------------------------------
+// #define RELAY_ENABLED
+#define RELAY_CH1_PIN         25      // Output-capable, no strapping conflict
+#define RELAY_CH2_PIN         26      // Output-capable, no strapping conflict
+#define RELAY_ACTIVE_LOW       1      // 1 = LOW energizes (JQC-3FF-S-Z); 0 = active-HIGH boards
+#define RELAY_NVS_NAMESPACE   "esp32relay"
+
+// -----------------------------------------------------------------------------
+// Hall sensor (BMT 49E module — Honeywell SS49E + LM393) — v0.5.0
+// Periodic ADC1 read → mGauss conversion → MQTT telemetry. Default-DISABLED.
+// Enable per device via `-DHALL_ENABLED`. See docs/PLAN_RELAY_HALL_v0.5.0.md
+// for the 2×10 kΩ divider note (sensor is 5 V powered; ADC max is 3.3 V).
+// -----------------------------------------------------------------------------
+// #define HALL_ENABLED
+#define HALL_AO_PIN                   32      // ADC1_CH4, safe with WiFi
+#define HALL_DO_PIN                   33      // Optional digital threshold (LM393 D0)
+#define HALL_INTERVAL_MS            1000      // Read + publish every 1 s by default
+#define HALL_THRESHOLD_GAUSS          50      // Default threshold for edge-detection
+#define HALL_DIVIDER_RATIO          2.0f      // 2×10 kΩ divider (5 V → 2.5 V)
+#define HALL_SENSOR_VCC_V           5.0f      // SS49E supply spec
+#define HALL_SENSITIVITY_MV_PER_GAUSS  1.4f   // SS49E typical
+#define HALL_NVS_NAMESPACE    "esp32hall"
+
+// -----------------------------------------------------------------------------
 // ESP-NOW Ranging
 // Passive RSSI-based distance estimation for nearby ESP32 sibling nodes.
 // Every node periodically broadcasts ESPNOW_MSG_RANGING_BEACON; the receiver
