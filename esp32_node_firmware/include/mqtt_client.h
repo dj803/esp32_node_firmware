@@ -205,30 +205,65 @@ static String mqttBroadcastRotateTopic() {
 // largest free block; if too small, drop the publish with a WARN. The
 // next call (after broker stabilises and queue drains) will succeed.
 //
-// Threshold: 4 KB — empirically large enough to fit any typical publish
-// payload (status JSON ~250 B, espnow ~370 B, response ~600 B) plus
-// AsyncMqttClient framing overhead and async_tcp internal buffers.
-#define MQTT_PUBLISH_HEAP_MIN  4096
+// Threshold: 8 KB (was 4 KB until v0.4.22). 2026-04-28 #46-decode
+// finding: Alpha v0.4.20 panicked at the SAME bad_alloc site with the
+// 4 KB guard in place. Root cause: the function builds `String topic
+// = mqttTopic(prefix)` BETWEEN the guard check and the publish call,
+// fragmenting the heap further (5-7 String concats). By the time the
+// AsyncMqttClient reserve runs, the largest contiguous block is below
+// what the publish needs. v0.4.22 fix: (1) re-check heap AFTER topic
+// build, (2) bump threshold to 8 KB defensive margin, (3) wrap the
+// publish in try/catch as defense-in-depth (arduino-esp32 has C++
+// exceptions compiled in — the std::terminate frame in the v0.4.10
+// + v0.4.20 panic backtraces proves it).
+#define MQTT_PUBLISH_HEAP_MIN  8192
+
+// Internal helper: rate-limited skip warning. Returns true if it
+// printed. Used by the two heap-guard sites in mqttPublish().
+static inline bool _mqttPubSkipWarn(uint32_t heapMax) {
+    static uint32_t _lastSkipWarnMs = 0;
+    uint32_t now = millis();
+    if (now - _lastSkipWarnMs > 1000) {
+        LOG_W("MQTT", "publish skipped (heap_largest=%u < %u) — "
+                      "fragmentation under network stress; #51/#46",
+              (unsigned)heapMax, (unsigned)MQTT_PUBLISH_HEAP_MIN);
+        _lastSkipWarnMs = now;
+        return true;
+    }
+    return false;
+}
 
 static void mqttPublish(const char* prefix, const String& payload,
                         uint8_t qos = 0, bool retain = false) {
     if (!_mqttClient.connected()) return;   // Do nothing if not connected
+    // Guard 1: gate the topic-build allocations on a healthy heap. If
+    // we can't afford the topic String, we definitely can't afford the
+    // publish.
     if (ESP.getMaxAllocHeap() < MQTT_PUBLISH_HEAP_MIN) {
-        // Heap fragmented — skip rather than risk bad_alloc panic.
-        // Rate-limit the warning to avoid log flooding (one per second max).
-        static uint32_t _lastSkipWarnMs = 0;
-        uint32_t now = millis();
-        if (now - _lastSkipWarnMs > 1000) {
-            LOG_W("MQTT", "publish skipped (heap_largest=%u < %u) — "
-                          "fragmentation under network stress; #51",
-                  (unsigned)ESP.getMaxAllocHeap(), (unsigned)MQTT_PUBLISH_HEAP_MIN);
-            _lastSkipWarnMs = now;
-        }
+        _mqttPubSkipWarn(ESP.getMaxAllocHeap());
         return;
     }
-    String topic = mqttTopic(prefix);
+    String topic = mqttTopic(prefix);   // 5-7 String concat allocs
+    // Guard 2: re-check AFTER the topic build. The String concats can
+    // fragment the heap enough that the publish's contiguous-block
+    // need is no longer satisfiable, even though guard 1 passed. This
+    // is the v0.4.22 #46-decode fix.
+    if (ESP.getMaxAllocHeap() < MQTT_PUBLISH_HEAP_MIN) {
+        _mqttPubSkipWarn(ESP.getMaxAllocHeap());
+        return;
+    }
     LOG_D("MQTT", "pub %s  %s", topic.c_str(), payload.c_str());
-    _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
+    // Defense-in-depth: catch bad_alloc from AsyncMqttClient's
+    // internal vector::reserve() so the panic is NEVER reachable from
+    // this path. arduino-esp32 has C++ exceptions; the std::terminate
+    // frame in the v0.4.10 / v0.4.20 panic backtraces is what we're
+    // intercepting here.
+    try {
+        _mqttClient.publish(topic.c_str(), qos, retain, payload.c_str());
+    } catch (const std::bad_alloc&) {
+        LOG_W("MQTT", "publish caught bad_alloc — heap raced past guard; "
+                      "drop and continue (#46 defense-in-depth)");
+    }
 }
 
 // Map esp_reset_reason() → short string for telemetry (v0.3.33).

@@ -1538,8 +1538,56 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               in steady state. Investigate after #45 stagger lands so
               the cleanup-restart can be done safely.
 
-    UPDATE 2026-04-27 ~23:30 SAST — fresh data point on v0.4.20 release
-    (v0.4.16 cascade-fix + #78 mitigations in place):
+    UPDATE 2026-04-28 morning — DECODED. Built v0.4.20 ELF in a worktree
+    (`git worktree add /c/Users/drowa/v04-20-decode v0.4.20 && pio run`)
+    and ran addr2line on the 14-frame backtrace. Result is a perfect
+    match for the #51 bad_alloc cascade shape:
+
+       panic_abort
+         abort()
+           std::terminate()
+             __cxa_throw                              ← bad_alloc
+               operator new(unsigned int)
+                 std::vector<unsigned char>::reserve  ← AsyncMqttClient buffer
+                   AsyncMqttClient::PublishOutPacket ctor (Publish.cpp:42)
+                     AsyncMqttClient::publish (AsyncMqttClient.cpp:742)
+                       mqttPublish (mqtt_client.h:230)
+                         espnowRangingLoop (mqtt_client.h:396 / espnow_ranging.h:650)
+                           loop (main.cpp:726)
+                             loopTask
+                               vPortTaskWrapper
+
+    SIGNIFICANCE — the v0.4.11 heap-guard
+    (`ESP.getMaxAllocHeap() >= MQTT_PUBLISH_HEAP_MIN` where
+    MQTT_PUBLISH_HEAP_MIN = 4096) is INSUFFICIENT. The heap-guard at
+    mqtt_client.h:216 passed, then the function built `String topic =
+    mqttTopic(prefix)` at line 229 (5-7 String concat allocations),
+    THEN called `_mqttClient.publish()` which internally `vector::
+    reserve()`s a contiguous buffer. By the time the reserve runs, the
+    String concatenations have fragmented the heap below the
+    publish's contiguous-block need; the bad_alloc fires.
+
+    FIX SHIPPED v0.4.22 (in flight as of this writing):
+       1. Re-check ESP.getMaxAllocHeap() AFTER the topic String build,
+          immediately before the _mqttClient.publish() call. The first
+          check still gates the LOG_D + topic build; the second check
+          gates the actual library call where bad_alloc would fire.
+       2. Bump MQTT_PUBLISH_HEAP_MIN 4096 → 8192. Defensive margin for
+          the AsyncMqttClient internal vector reserve + async_tcp send
+          buffer + any concurrent allocations. Empirically, our largest
+          payload is ~640 B (status JSON heartbeat); 8 KB largest-
+          contiguous gives ~12× margin.
+       3. Wrap `_mqttClient.publish()` in try { } catch (std::bad_alloc&) { }
+          as defense-in-depth. arduino-esp32 has exception support
+          compiled in (proven by the std::terminate frame in the
+          decoded backtrace). Caught bad_alloc → LOG_W + drop, same
+          UX as the heap-guard skip.
+
+    HISTORICAL — the original Charlie 02:44 panic (v0.4.10 #51 root
+    cause investigation) had the SAME backtrace shape. v0.4.11 added
+    the threshold-4096 guard and that LOOKED to fix it through the
+    cascade-fix marathon. Tonight's Alpha panic confirms the guard
+    was load-bearing but undersized.
 
     Alpha (production v0.4.20 release, CI build app_sha_prefix
     "a5bb3114") panicked once after ~3 hours of clean uptime. Fleet
