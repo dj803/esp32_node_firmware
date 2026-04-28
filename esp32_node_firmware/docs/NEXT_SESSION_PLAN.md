@@ -1,12 +1,16 @@
 # Next session plan
 
-Drafted 2026-04-28 mid-morning, after the STABILITY DEEP-DIVE session
-(2026-04-28 ~07:55 → 09:30 SAST) AND the v0.5.0 Phase 1 code-only ship
-(2026-04-28 ~09:50 → 10:20). v0.4.22 cut + fleet OTA'd; #46/#51 root
-cause completion + #83 mosquitto.log fix + #84 agent verification
-discipline all SHIPPED. relay.h + hall.h drivers scaffolded behind
-default-disabled gates; both esp32dev and esp32dev_relay_hall compile
-clean. NO devices flashed yet — hardware-presence verification needed.
+Drafted 2026-04-28 (multiple sessions through the morning):
+- STABILITY DEEP-DIVE → v0.4.22 (heap-guard hardening)
+- v0.5.0 Phase 1 code-only ship (relay.h + hall.h scaffolding)
+- "Followups while waiting for hardware" → v0.4.23 (#55 + #76 sub-B/F/H
+  + #29/#48 audits)
+
+Fleet now on **v0.4.23** (5 release devices + Charlie sticky canary at
+12+ h). The `mqtt_disconnects` cumulative counter + `last_restart_reasons`
+NVS ring buffer + 12 s task-WDT + jittered backoff + audit docs all
+shipped. Charlie's canary continues to be the only undisturbed
+diagnostic surface.
 
 ## State at last sweep (2026-04-28 ~09:30 SAST)
 
