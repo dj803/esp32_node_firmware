@@ -2645,6 +2645,10 @@ Phase D — Developer experience
             }
         Generate hash: node-red admin hash-pw
     PRIORITY: Deferred. Re-evaluate at end of dev phase.
+    STATUS:   WONT_DO 2026-04-28 — operator confirmed no admin password
+              for now. See docs/WONT_DO.md item 3 for rationale (same
+              private-LAN threat-model logic as httpNodeAuth WONT_DO #2).
+              Revisit if Node-RED is ever exposed beyond the LAN.
 
 67. Node-RED project package.json — declare custom node deps     (2026-04-26 audit)
     WHERE:    C:\Users\drowa\.node-red\projects\esp32-node-firmware\package.json
@@ -3445,6 +3449,134 @@ Next steps (operator decision):
        Charlie panics with the same lwIP raw.c backtrace → (a) NOT
        stack overflow → likely (b), needs deeper memp_malloc audit.
        Defer fix attempt until canary produces a failure signature.
+
+    UPDATE 2026-04-28 afternoon — FULL FLEET COREDUMP DECODE.
+    All 5 retained `/diag/coredump` payloads pulled and decoded
+    against the worktree v0.4.20 ELF (xtensa-esp32-elf-addr2line
+    -pfiaC). Note: each device's app_sha_prefix differs from the
+    decoding ELF's (only Charlie's "dd877030" matches), so lwIP
+    frames may be off by a few lines; AsyncTCP frames decode
+    cleanly because that library code is stable across versions.
+
+      Alpha    exc_pc=0x40122dab StoreProhibited
+               BT: 0x40122dab 0x400e1d24 0x400e1feb 0x4008ff31
+                   tcp_pcb_remove (lwip tcp.c:2237)
+                   AsyncClient::_error (AsyncTCP.cpp:1023)
+                   AsyncClient::_s_poll (AsyncTCP.cpp:1483)
+                   _async_service_task → vPortTaskWrapper
+
+      Bravo    exc_pc=0x01420004 InstFetchProhibited
+               BT: 0x01420004 0x400e1fcf 0x4008ff31
+                   ?? (PC in invalid range)
+                   AsyncClient::_s_fin (AsyncTCP.cpp:1491)
+                   _async_service_task → vPortTaskWrapper
+
+      Echo     exc_pc=0x40122123 StoreProhibited
+               BT: 0x40122123 0x400e1d08 0x400e1fcf 0x4008ff31
+                   raw_netif_ip_addr_changed (lwip raw.c:667)
+                   AsyncServer::_accepted (AsyncTCP.cpp:1633)
+                   AsyncClient::_s_fin (AsyncTCP.cpp:1491)
+                   _async_service_task → vPortTaskWrapper
+
+      Charlie  exc_pc=0x3f409271 InstructionFetchError
+               BT: 0x3f409271 (single frame; PC in DRAM range
+                               0x3F400000-0x3FFFFFFF — corrupted
+                               function-pointer dispatch into data
+                               segment, frame-pointer chain unwound
+                               past the trampoline)
+
+      Foxtrot  exc_pc=0x4012210b StoreProhibited
+               BT: 0x4012210b 0x400e1d08 0x400e1fcf 0x4008ff31
+                   raw_netif_ip_addr_changed (lwip raw.c:664)
+                   AsyncServer::_accepted (AsyncTCP.cpp:1633)
+                   AsyncClient::_s_fin (AsyncTCP.cpp:1491)
+                   _async_service_task → vPortTaskWrapper
+
+    PATTERN ANALYSIS:
+
+    - 5/5 panics are in `async_tcp` service task. Confirms
+      AsyncTCP's event-dispatch path as the failure surface.
+    - **3 distinct AsyncTCP event handlers** are entry points:
+      `_s_poll` (Alpha), `_s_fin` (Bravo, Echo, Foxtrot via
+      `_accepted`). Not a single bug location — multiple handlers
+      all dereferencing corrupted state.
+    - Echo and Foxtrot have **identical** call paths
+      (`_s_fin → _accepted → raw_netif_ip_addr_changed`) but
+      different exc_pc (0x40122123 vs 0x4012210b — 24 bytes
+      apart, same lwIP function). Repeatable failure mode.
+    - Bravo's exc_pc 0x01420004 is in invalid memory (not flash,
+      not RAM, not peripheral). Charlie's 0x3f409271 is in DRAM.
+      Both confirm corrupted code-pointer dispatch — execution
+      jumped to data, not text.
+    - Alpha is the only one through the `_error()` path
+      (AsyncTCP.cpp:1023). The other four are through `_s_fin`.
+
+    HYPOTHESIS UPDATE:
+
+    Hypothesis (b) "raw_pcbs UAF" — WEAKENED. Alpha's panic is
+    through `tcp_pcb_remove` (lwIP tcp.c, walks tcp_pcbs not
+    raw_pcbs). If the bug were specific to raw_pcbs corruption,
+    Alpha's path wouldn't fit.
+
+    Hypothesis (a) "general corruption" — STRENGTHENED. The
+    diversity of fault paths (multiple AsyncTCP handlers,
+    tcp_pcbs and raw_pcbs both involved, two devices with
+    invalid PCs in non-text memory) is consistent with a
+    generic-corruption pattern, not a single UAF.
+
+    Charlie canary on `[env:esp32dev_canary]` with
+    `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2` has been sticky for
+    15.85 h with no new coredump from the canary build —
+    **RULES OUT stack overflow** as the corruption source.
+    (Charlie's retained coredump is from an earlier non-canary
+    build, app_sha_prefix "dd877030" matching the local v0.4.20
+    worktree — predates the canary flash.)
+
+    AGE OF THE COREDUMPS:
+
+    Each device's `app_sha_prefix` differs:
+      Alpha   "86e3993d1"  (unknown release)
+      Bravo   "0a9d107d"   (unknown release)
+      Echo    "0a9d107d"   (same as Bravo — likely same release)
+      Charlie "dd877030"   (local v0.4.20 worktree)
+      Foxtrot "3f1ea517"   (unknown release)
+
+    The retained `/diag/coredump` topic holds the MOST RECENT
+    panic's payload until overwritten or explicitly cleared.
+    These could be pre-v0.4.22 (in which case the v0.4.22
+    heap-guard hardening + post-v0.4.26 lifecycle may have
+    obviated them) OR post-v0.4.22 (in which case the bug is
+    still live). To disambiguate, the operator should:
+
+      1. Capture the current retained coredumps (done).
+      2. Clear them with a null retained publish on each
+         topic (`mosquitto_pub -t '<root>/<uuid>/diag/coredump'
+         -n -r`).
+      3. Watch over the next ≥24 h soak (which we already
+         need for #46 closure). Any NEW coredump that appears
+         is post-v0.4.22 / post-v0.4.26 and confirms the bug
+         is still live.
+
+    NEXT-STEP DECISION TREE:
+
+    - If the soak window produces NO new coredumps → AsyncTCP
+      race is effectively mitigated by v0.4.22's heap-guard
+      hardening (heap-pressure was the trigger). Promote #78
+      to "mitigated, monitoring" rather than open coding work.
+    - If ≥1 new coredump appears, drop into option D (vendored
+      AsyncTCP patch) starting with the `_s_fin` handler since
+      that's 4/5 of the observed paths. Specifically: refcount
+      the AsyncClient* in the event-queue, defer free until the
+      queue drains. Estimated 20-40 lines of vendored patch.
+    - If option D fails or proves too invasive, drop to option
+      B (replace AsyncMqttClient with PubSubClient + WiFiClient)
+      as a clean-cut. ~50 KB extra flash; loses async publish.
+
+    UPDATED SEVERITY: still MEDIUM. Devices recover via reboot,
+    so impact is "occasional one-cycle outage" not "fleet down".
+    The decode here is the diagnostic step — it doesn't change
+    operational risk, but it does narrow the root-cause
+    hypothesis space substantially.
 
 ────────────────────────────────────────────────────────────
 79. Version-update watcher as a standing dev tool + ack-driven OTA

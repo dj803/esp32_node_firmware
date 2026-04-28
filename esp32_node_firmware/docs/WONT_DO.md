@@ -41,6 +41,23 @@ as missing work.
 
 ────────────────────────────────────────────────────────────────────────────────
 
+3. Node-RED admin API adminAuth  (was SUGGESTED_IMPROVEMENTS #68)
+   File:    ~/.node-red/settings.js
+   Decided: 2026-04-28
+
+   Rationale: same threat-model logic as item 2 above — Node-RED is on a
+   private LAN and the admin API at http://127.0.0.1:1880/flows is not
+   reachable from outside. Adding adminAuth would require committing or
+   side-channelling a password and would block the unauthenticated
+   `Node-RED-Deployment-Type: nodes` flow-push pattern that CLAUDE.md
+   relies on. Operator confirmed 2026-04-28: no admin password for now.
+
+   If the threat model changes (laptop used on a shared/public network,
+   or Node-RED ever exposed to the internet), enable adminAuth the same
+   way as httpNodeAuth (item 2).
+
+────────────────────────────────────────────────────────────────────────────────
+
 3. OTA HTTPS certificate pinning  (was SUGGESTED_IMPROVEMENTS #6)
    File:    include/ota.h (ESP32-OTA-Pull + HTTPClient stack)
    Decided: 2026-04-21 (review), confirmed park 2026-04-27

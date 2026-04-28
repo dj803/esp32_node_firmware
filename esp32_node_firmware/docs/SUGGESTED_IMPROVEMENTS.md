@@ -47,10 +47,10 @@ session-planning; reorder within a group freely.
 ### D. Open stability investigations (3) — surveillance running
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure)
   #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)         (Charlie canary soak running, sticky on v0.4.20.0)
-  #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
+  #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27. Full-fleet coredump decode 2026-04-28: 5/5 panics in async_tcp task across 3 distinct AsyncTCP handlers — pattern points away from single UAF, toward general corruption. Stack overflow ruled out by Charlie canary. Next data point: 24 h post-clear soak)
 
-### E. CI / security gates (1)
-  #68   Node-RED: enable adminAuth in settings.js                    (2026-04-26 audit)
+### E. CI / security gates (0)
+  (all closed — #27 RESOLVED, #63 RESOLVED, #68 WONT_DO)
 
 ### F. Hardware bench / variants (1)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
@@ -61,7 +61,7 @@ session-planning; reorder within a group freely.
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 23  (A6 + B6 + C2 + D3 + E1 + F1 + G4)
+  Total open: 22  (A6 + B6 + C2 + D3 + E0 + F1 + G4)
 
 ────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ session-planning; reorder within a group freely.
   #9    Time-limited AP mode → reboot                       (parked 2026-04-28 — REJECTED in v0.3.15 plan; background STA scan supersedes)
   #10   "Has ever successfully connected" NVS flag          (parked 2026-04-28 — REJECTED in v0.3.15 plan; subsumed by indefinite OPERATIONAL backoff)
   #82   Audit tracking docs for split pattern               (parked 2026-04-27 — neither candidate fits the convention)
+  #68   Node-RED: enable adminAuth in settings.js           (parked 2026-04-28 — same private-LAN threat-model logic as httpNodeAuth WONT_DO #2)
 
 ────────────────────────────────────────────────────────────
 
