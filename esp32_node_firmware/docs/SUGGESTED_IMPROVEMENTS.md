@@ -40,9 +40,9 @@ session-planning; reorder within a group freely.
   #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
 
-### C. Boot / OTA safety net (2) — pioarduino-blocked
-  #25   Bootloader rollback safety net (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y)
-  #26   Recovery partition app
+### C. Boot / OTA safety net (0)
+  (parked 2026-04-28 — #25 needs pioarduino log_printf-wrap fix; #26 needs
+   8 MB flash module. Both moved to WONT_DO with revisit triggers.)
 
 ### D. Open stability investigations (3) — surveillance running
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure)
@@ -61,7 +61,7 @@ session-planning; reorder within a group freely.
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
 
-  Total open: 22  (A6 + B6 + C2 + D3 + E0 + F1 + G4)
+  Total open: 20  (A6 + B6 + C0 + D3 + E0 + F1 + G4)
 
 ────────────────────────────────────────────────────────────
 
@@ -76,6 +76,8 @@ session-planning; reorder within a group freely.
   #10   "Has ever successfully connected" NVS flag          (parked 2026-04-28 — REJECTED in v0.3.15 plan; subsumed by indefinite OPERATIONAL backoff)
   #82   Audit tracking docs for split pattern               (parked 2026-04-27 — neither candidate fits the convention)
   #68   Node-RED: enable adminAuth in settings.js           (parked 2026-04-28 — same private-LAN threat-model logic as httpNodeAuth WONT_DO #2)
+  #25   Bootloader rollback safety net                      (parked 2026-04-28 — pioarduino log_printf-wrap blocker; revisit when upstream fix lands or fleet pushes builds without serial access; see WONT_DO #8)
+  #26   Recovery partition app                              (parked 2026-04-28 — doesn't fit on 4 MB flash; revisit when fleet migrates to 8 MB modules or a production device is bricked without serial recovery; see WONT_DO #9)
 
 ────────────────────────────────────────────────────────────
 

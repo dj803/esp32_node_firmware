@@ -323,6 +323,11 @@ Phase 4 — DEFERRED items                                          (2026-04-23)
               bootloader does fall back to the previous valid app on a
               boot-time partition-validation failure (just doesn't auto-
               detect "valid app boots but is broken").
+    STATUS:   WONT_DO 2026-04-28 — operator parked at re-confirmation of
+              the pioarduino blocker. See docs/WONT_DO.md item 8 for
+              revisit triggers (upstream pioarduino log_printf-wrap fix,
+              fleet pushing builds without serial access, or an actual
+              early-boot-crash incident in production).
 
 26. Recovery partition app
     GAP:      If BOTH ota_0 and ota_1 ever end up corrupted (very rare —
@@ -350,6 +355,10 @@ Phase 4 — DEFERRED items                                          (2026-04-23)
     PRIORITY: Low for current 3-device fleet (all serial-accessible).
               Promote when fleet grows past ~10 devices or when nodes
               are deployed without easy serial access.
+    STATUS:   WONT_DO 2026-04-28 — operator parked pending 8 MB flash
+              module migration. See docs/WONT_DO.md item 9 for revisit
+              triggers (8 MB hardware refresh, production brick without
+              serial recovery, or fleet > 10 devices).
 
 
 ────────────────────────────────────────────────────────────────────────────────
