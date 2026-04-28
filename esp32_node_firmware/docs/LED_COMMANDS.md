@@ -127,6 +127,35 @@ if you want a known-black starting state.
 
 State → `mqtt_pixels` after the implicit commit.
 
+### `test` — installation self-test (v0.4.26+)
+
+```json
+{"cmd":"test"}
+```
+
+Walks the strip through a fixed diagnostic pattern (~6 s total),
+then auto-reverts to the previous state:
+
+| Phase | Duration | Pattern | What it confirms |
+|---|---|---|---|
+| 1 | 1 s | Dim white (64,64,64) on all pixels | Power adequate; data line attached; pixel count visible |
+| 2 | 1 s | Solid red (255,0,0) | R channel correct; not swapped with G or B |
+| 3 | 1 s | Solid green (0,255,0) | G channel correct |
+| 4 | 1 s | Solid blue (0,0,255) | B channel correct |
+| 5 | 200 ms × N | Per-pixel chase | Pixel order is sequential 0→N-1 |
+
+If a pixel lights "red" during phase 3 (green) or "yellow" during
+phase 2 (red), color order is wrong — typically GRB vs RGB. FastLED
+addLeds template parameter on `WS2812B, LED_STRIP_PIN, GRB` may need
+swapping.
+
+If a pixel that should light during phase 5 stays dark, that's a
+broken WS2812 chip (skip-and-continue is normal — the chain still
+works for downstream pixels) OR a count mismatch (`active_count`
+larger than the actual strip length).
+
+State during the walk: `self_test`.
+
 ### `off` — all LEDs black
 
 ```json

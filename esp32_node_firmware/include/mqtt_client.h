@@ -643,6 +643,17 @@ static void handleLedCommand(const char* payload, size_t len) {
         ws2812PostEvent(e);
         ws2812PublishState();
 
+    } else if (strcmp(cmd, "test") == 0) {
+        // (v0.4.26+) Installation self-test — RGBW walk + per-pixel chase.
+        // ~6 s total. Auto-reverts to previous state. Use case: confirm
+        // wiring (data line attached), color order (RGB vs GRB), pixel
+        // count, and brightness scaling on a freshly-installed strip.
+        // Schema: {"cmd":"test"}
+        LedEvent e{};
+        e.type = LedEventType::SELF_TEST;
+        ws2812PostEvent(e);
+        ws2812PublishState();
+
     } else if (strcmp(cmd, "override") == 0) {
         // (#23, v0.4.26) Timed override: color + animation for N ms, then
         // auto-revert. Useful for app-level events from Node-RED — door

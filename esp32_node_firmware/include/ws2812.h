@@ -67,6 +67,7 @@ enum class LedEventType : uint8_t {
     SCENE_SAVE,      // (#20) Persist current _leds[] + brightness to NVS under animName
     SCENE_LOAD,      // (#20) Load scene by name from NVS and apply as MQTT_PIXELS
     SCENE_DELETE,    // (#20) Remove a saved scene from NVS
+    SELF_TEST,       // (LED-installation diagnostic, v0.4.26+) walk RGBW + per-pixel
 };
 
 struct LedEvent {
@@ -89,9 +90,15 @@ enum class LedState : uint8_t {
     RFID_FAIL,
     MQTT_OVERRIDE,
     MQTT_PIXELS,     // (#19) per-pixel mode: renderer skips fill_solid; _leds[] is the source of truth
+    SELF_TEST,       // Installation diagnostic — RGBW walk + per-pixel chase, ~6 s
     OTA,
     OFF,
 };
+
+// Self-test state. _ledSelfTestStartMs marks the start of the cycle;
+// the renderer derives the current step from elapsed time. Total
+// duration ~6 s, then auto-revert to _ledPreviousState.
+static uint32_t _ledSelfTestStartMs = 0;
 
 
 // ── Module-level state (all static — single translation unit) ─────────────────
@@ -470,6 +477,35 @@ static void _ws2812RenderFrame() {
             // than LED_MAX_NUM_LEDS won't accidentally light unused pixels.
             break;
 
+        case LedState::SELF_TEST: {
+            // Installation-diagnostic walk. ~6 s total:
+            //   t   0 - 1000 : solid white   — power + count check
+            //   t 1000 - 2000 : solid red    — color order R correct
+            //   t 2000 - 3000 : solid green  — color order G correct
+            //   t 3000 - 4000 : solid blue   — color order B correct
+            //   t 4000 - 4000+200*N : per-pixel chase (N pixels, 200ms each)
+            //                                 — confirms pixel index ordering
+            // After expiry, auto-revert to _ledPreviousState.
+            uint32_t dt = millis() - _ledSelfTestStartMs;
+            uint32_t perPixelEnd = 4000 + (uint32_t)_ledActiveCount * 200;
+            if (dt < 1000) {
+                fill_solid(_leds, _ledActiveCount, CRGB(64, 64, 64));   // dim white
+            } else if (dt < 2000) {
+                fill_solid(_leds, _ledActiveCount, CRGB(255, 0, 0));
+            } else if (dt < 3000) {
+                fill_solid(_leds, _ledActiveCount, CRGB(0, 255, 0));
+            } else if (dt < 4000) {
+                fill_solid(_leds, _ledActiveCount, CRGB(0, 0, 255));
+            } else if (dt < perPixelEnd) {
+                fill_solid(_leds, _ledActiveCount, CRGB::Black);
+                uint8_t step = (uint8_t)((dt - 4000) / 200);
+                if (step < _ledActiveCount) _leds[step] = CRGB(255, 255, 255);
+            } else {
+                _ledState = _ledPreviousState;
+            }
+            break;
+        }
+
         case LedState::OTA:
             _chase(CRGB(255, 80, 0));   // Orange chasing
             break;
@@ -596,6 +632,18 @@ static void _ws2812HandleEvent(const LedEvent& evt) {
             }
             break;
 
+        case LedEventType::SELF_TEST:
+            // Installation diagnostic. Saves current state, runs the
+            // RGBW + per-pixel walk for ~6 s, then auto-reverts.
+            if (_ledState != LedState::SELF_TEST) {
+                _ledPreviousState = _ledState;
+            }
+            _ledState           = LedState::SELF_TEST;
+            _ledSelfTestStartMs = millis();
+            _ledOverrideEndMs   = 0;
+            LOG_I("ws2812", "self-test started (%u pixels)", (unsigned)_ledActiveCount);
+            break;
+
         case LedEventType::MQTT_COUNT:
             _ledActiveCount = constrain(evt.count, 1, (uint8_t)LED_MAX_NUM_LEDS);
             _ledNvsSave();
@@ -702,6 +750,7 @@ inline void ws2812PublishState() {
         case LedState::RFID_FAIL:      stateStr = "rfid_fail";     break;
         case LedState::MQTT_OVERRIDE:  stateStr = "mqtt_override"; break;
         case LedState::MQTT_PIXELS:    stateStr = "mqtt_pixels";   break;
+        case LedState::SELF_TEST:      stateStr = "self_test";     break;
         case LedState::OTA:            stateStr = "ota";           break;
         case LedState::OFF:            stateStr = "off";           break;
         default:                       stateStr = "idle";          break;
