@@ -3610,3 +3610,78 @@ Next steps (operator decision):
     STATUS: RESOLVED 2026-04-28. Live mosquitto.log writes restored.
     Size-cap rotation guards against recurrence. Index moved to
     RESOLVED.
+
+
+────────────────────────────────────────────────────────────
+84. Agent post-action verification gap — silent waits after fire-and-forget
+    OBSERVATION (2026-04-28 ~08:50 SAST):  After cutting v0.4.22 and
+    triggering fleet OTA via `mosquitto_pub` to 5 devices, the agent
+    went silent for ~23 min until the operator asked "what are we
+    waiting for?". The fleet was actually fine — all 5 devices had
+    OTA'd cleanly to v0.4.22 within ~3 min — but the agent posted no
+    verification or "rollout complete" status. Operator had to
+    intervene to find out the state.
+
+    ROOT CAUSE — three interacting agent-discipline gaps:
+       1. **Fire-and-forget actions don't auto-trigger verification.**
+          A `mosquitto_pub cmd/ota_check` is a one-shot publish; it
+          returns instantly; nothing awaits an "OTA succeeded" event.
+          The agent moves on with no built-in poll.
+       2. **/loop dynamic relies on events.** Wakeup-driven loops are
+          designed around watchers / task-notifications. Without an
+          armed Monitor, the loop iteration ends after the synchronous
+          work and the next wakeup is the cadence default — but if
+          the agent didn't schedule one, there's no next iteration.
+       3. **No "report back" reflex.** The agent's mental model after
+          "cmd/ota_check sent" was "fleet will OTA" without an
+          immediate sanity check. Quiet success is treated the same
+          as quiet failure — both produce silence.
+
+    The same shape happened earlier in this autonomous window after
+    the v0.4.21 OTA rollout, where the rollout script's stale-retained
+    abort fired and the agent kept moving without checking that
+    Alpha had actually OTA'd. (Operator had to ask there too.)
+
+    PROPOSAL — three layered fixes, smallest first:
+
+    A. **Verify-within-N-minutes habit.** Convention: after any
+       state-changing action (flash, OTA trigger, blip, cred_rotate,
+       Node-RED API push), schedule a verification poll within the
+       expected completion window. Concrete:
+          - Flash: serial monitor or MQTT subscribe within 60 s
+          - OTA: subscribe to status for `firmware_version=<target>`
+            for ~3 min per device, or use ota-rollout.sh ack-driven
+          - Blip: monitor `/+/status` for `event=online` from all
+            fleet members within 90 s
+          - Then post a status line to the user, even if "all clean".
+       Codify in CLAUDE.md "Diagnostic process" or
+       AUTONOMOUS_PROMPT_TEMPLATE constraints.
+
+    B. **Auto-armed rollout watcher.** Extend tools/dev/ota-rollout.sh
+       (or write a sibling tools/dev/ota-monitor.sh) that, given a
+       target version, subscribes to the fleet's /status topic and
+       prints one line per device as each picks up the new version.
+       Exits when all expected devices match or after a timeout.
+       Used standalone or piped from the release skill's tail.
+       Operator sees rollout progress in real time; agent gets a
+       single "rollout complete in N min" or "X/Y devices stuck"
+       summary to relay.
+
+    C. **Periodic-status discipline in /loop dynamic.** When the
+       agent self-paces (no Monitor armed), default to ~5 min
+       wakeups rather than 25-30 min idle ticks during ACTIVE work.
+       Bump back to 30 min only when the operator explicitly says
+       "going AFK" or the agent has confirmed nothing is actively
+       changing. The autonomous-template's COMMUNICATION STYLE
+       section already says "I'll be back in a few hours usually
+       means 5-30 min" — extend with "wakeup cadence should match
+       expected next-event window, not the 25-30 min default".
+
+    SEVERITY: MEDIUM — affects autonomous-session UX, not fleet
+    reliability. The fleet was fine; the failure was that the
+    operator couldn't tell it was fine without prompting.
+
+    DISCOVERED: 2026-04-28 ~08:50 SAST during the v0.4.22 release
+    rollout. Operator intervention surfaced an otherwise-clean
+    state, exactly the wrong direction for an autonomous-mode
+    session that's supposed to free operator attention.
