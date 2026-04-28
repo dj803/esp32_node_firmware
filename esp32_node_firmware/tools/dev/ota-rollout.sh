@@ -37,8 +37,15 @@ if [ -n "${FLEET_UUIDS:-}" ]; then
     echo "Using FLEET_UUIDS env: ${UUIDS[*]}"
 else
     echo "Discovering fleet (10 s passive subscribe)..."
+    # (Bug A fix, 2026-04-28) `timeout 10 mosquitto_sub` exits 124 on the
+    # 10-second timer. Under `set -euo pipefail` the 124 propagates through
+    # the pipe and `set -e` aborts the parent script — so the if-empty
+    # guard below never runs, the script just exits silently with no log.
+    # Mask the timeout's non-zero exit with `|| true` so we keep whatever
+    # output was captured before the timer fired. The if-empty guard is
+    # still authoritative for the "no broker / no fleet" case.
     UUIDS=( $(timeout 10 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/+/status" -F '%t' \
-              | awk -F/ '{print $(NF-1)}' | sort -u) )
+              | awk -F/ '{print $(NF-1)}' | sort -u || true) )
 fi
 
 if [ ${#UUIDS[@]} -eq 0 ]; then
@@ -65,8 +72,17 @@ for UUID in "${UUIDS[@]}"; do
     SUCCESS=false
 
     while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-        # Single-shot subscribe with -W 5 timeout
-        OUT=$(timeout 6 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/$UUID/status" -W 5 -F '%p' 2>/dev/null \
+        # (Bug B fix, 2026-04-28) `-R` suppresses retained messages so the
+        # loop only sees LIVE publishes — i.e. status payloads emitted AFTER
+        # we triggered cmd/ota_check above. Without this, a stale retained
+        # boot announcement from before the OTA (e.g. a WDT-class boot from
+        # an earlier outage) tripped the abnormal-boot guard and bailed the
+        # whole rollout, even though the device was already healthy and the
+        # OTA fired cleanly. The retained boot lingers on the broker forever
+        # until overwritten — `-R` lets us ignore it.
+        # `|| true` masks the timeout-no-message exit code (mosquitto_sub
+        # exits non-zero on -W timeout) so set -e doesn't abort the loop.
+        OUT=$(timeout 6 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/$UUID/status" -R -W 5 -F '%p' 2>/dev/null \
               | python -c "
 import sys, json
 for line in sys.stdin:
@@ -82,7 +98,7 @@ for line in sys.stdin:
         print(f'ABNORMAL {br} v{v}', flush=True); sys.exit(0)
     if ev=='heartbeat' and v=='$TARGET_VERSION' and up>=$HEALTHY_UPTIME_S:
         print(f'HEALTHY upt={up}', flush=True); sys.exit(0)
-" 2>/dev/null)
+" 2>/dev/null || true)
 
         if echo "$OUT" | grep -q '^HEALTHY'; then
             echo "  ✓ $OUT"

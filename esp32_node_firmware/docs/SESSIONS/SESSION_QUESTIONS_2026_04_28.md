@@ -2,7 +2,23 @@
 
 Session goal: chip away at OPEN items while waiting for relay hardware.
 
-## Q6 — `tools/dev/ota-rollout.sh` has two bugs worth fixing
+## Q6 — `tools/dev/ota-rollout.sh` has two bugs worth fixing  **[ANSWERED + FIXED 2026-04-28: Bug A masked the timeout exit with `|| true`; Bug B added `-R` to suppress retained reads in the wait loop. Both validated end-to-end against the live fleet — discovery now finds 6/6 devices and the wait loop ignores stale int_wdt retained announcements. Commit pending.]**
+
+### Future enhancement (not in scope today, flagged for next session)
+Discovery includes Charlie, which is on v0.4.20.0 canary by operator
+decision. The rollout fires `cmd/ota_check` on Charlie too — Charlie's
+OTA_DISABLE compile flag means no OTA fires, but the rollout's wait
+loop still spins for 180s before timing out. Two options:
+1. Add `EXCLUDE_UUIDS` env var (mirror of `FLEET_UUIDS` semantic) to
+   skip specified devices.
+2. Discover the current firmware_version per-device during the
+   passive subscribe phase; skip any device already on the target
+   AND any on a clearly-divergent version (e.g. canary builds with
+   a 4-component semver).
+
+Either is ~10 lines. Defer until operator decides which is preferable.
+
+## Q6 — original bug log (kept for archive)
 
 Hit during the v0.4.24 fleet rollout. Both are silent — the script
 exits 0 even when nothing useful happened, which masks the issue.
@@ -38,7 +54,7 @@ Tag: not adding a new SUGGESTED_IMPROVEMENTS entry yet — wait for
 operator confirmation that this is in scope. Fix is a half-day at
 most.
 
-## Q5 — v0.4.24 scope expanded slightly while you were away — OK to tag?
+## Q5 — v0.4.24 scope expanded slightly while you were away — OK to tag?  **[ANSWERED 2026-04-28: yes — v0.4.24 shipped end-to-end including #34 Phase 1 captive DNS + #77 closure]**
 
 After your "Q3 bundle is good" approval I added two tightly-thematic
 items to the v0.4.24 scope:
