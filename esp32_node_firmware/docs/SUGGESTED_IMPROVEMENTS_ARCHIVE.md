@@ -4150,3 +4150,16 @@ Next steps (operator decision):
     B (tooling) deferred to a followup session. Re-evaluate after
     the next 2-3 autonomous sessions to see whether A + C alone
     are sufficient or whether the tooling is needed too.
+
+    UPDATE 2026-04-28 PM — sub-B prototype shipped:
+    `tools/dev/end-of-session-sweep.sh` walks the four documented
+    checks and prints a single-screen TODO. Tested on the current
+    state: clean exit 0, "all 4 checks clean — session close looks
+    complete". Initial run flagged a false positive on #40 (its
+    archive block contains nested STATUS:RESOLVED text from the
+    cross-referenced #41 sub-finding); refined the check to skip
+    OPEN-index lines whose parenthetical already acknowledges
+    partial resolution (shipped / resolved / kept open until /
+    validation pending / partial fix / deferred). Closure of #85
+    pending 2-3 sessions of validation that the script catches
+    real gaps without re-introducing false positives.

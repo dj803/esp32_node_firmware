@@ -59,7 +59,7 @@ session-planning; reorder within a group freely.
   #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
   #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
-  #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28 in CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool deferred)
+  #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28: A + C shipped via CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool prototype shipped 2026-04-28 PM as tools/dev/end-of-session-sweep.sh — closure pending 2-3 sessions of validation that the 4 checks catch real gaps without false positives)
 
   Total open: 20  (A6 + B6 + C0 + D3 + E0 + F1 + G4)
 
