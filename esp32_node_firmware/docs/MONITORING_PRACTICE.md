@@ -98,6 +98,45 @@ This pattern was the root cause of #84 — silent waits after
 fire-and-forget OTAs forced the operator to ask "what are we waiting
 for?". Don't repeat.
 
+## Capturing fleet snapshots — gotcha
+
+When you `mosquitto_sub -t '+/status' -W <N>` for a fleet snapshot,
+you may think you'll get one retained message per device immediately.
+You will NOT. The broker only retains the **last** message per topic,
+and `/status` is the same topic for every event a device emits — boot,
+heartbeat, online, offline. If the most-recent retained message is the
+**LWT offline payload** (because the device's TCP/MQTT session dropped
+without a clean disconnect at some prior point), then the retained
+payload you receive on subscribe is `{"online":false,"event":"offline"}`
+— useless for snapshot purposes.
+
+To get a current heartbeat from every device, your subscription
+window must be **at least one full heartbeat cycle long** (60 s
+default + a margin) so each device emits a live heartbeat that
+updates its retained payload. **75 s is the safe minimum** for the
+current 60 s heartbeat cadence.
+
+```bash
+# Reliable: 75 s window catches every device's live heartbeat
+mosquitto_sub -h 192.168.10.30 -t 'Enigma/.../+/status' -W 75
+```
+
+```bash
+# Unreliable: 8-10 s only catches devices whose retained payload
+# happens to currently be a heartbeat — typically only 0-2 of 5
+mosquitto_sub -h 192.168.10.30 -t 'Enigma/.../+/status' -W 10
+```
+
+This bit a session on 2026-04-28: an hourly-snapshot monitor with
+an 8 s window captured only Bravo (whose retained `/status` happened
+to be a fresh heartbeat). The other 4 production devices' retained
+`/status` were stale offline-LWTs from earlier broker drops, so the
+short window saw only `online:false` and filtered them out. Lengthening
+to 75 s captured all 5 immediately.
+
+`/fleet-status` and `/daily-health` both use ≥75 s windows for this
+reason; ad-hoc `mosquitto_sub` invocations need the same.
+
 ## Anti-patterns
 
 - **Trusting the dashboard alone** — Node-RED's `boot_history` view is
