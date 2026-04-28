@@ -3520,3 +3520,45 @@ Next steps (operator decision):
     DISCOVERED: 2026-04-27 evening autonomous window during the
     Alpha-panic investigation (couldn't grep mosquitto.log for the
     last-publish timestamp because the file was 9 h stale).
+
+    ROOT CAUSE (confirmed 2026-04-28 ~08:08 SAST):
+    The mosquitto.log file had grown to ~236 MB (no daily rotation
+    task ever ran — the schtasks /create from rotate-log.ps1's setup
+    note was never executed). Mosquitto on Windows silently FAILS to
+    re-open an existing log file once it crosses the ~200 MB boundary
+    on a service restart — but doesn't error to the service control
+    manager. The service appears healthy; only the log is dead. This
+    is why the file was untouched from 13:59 the previous day onward
+    despite multiple `net stop/start mosquitto` cycles via the
+    blip-watcher.
+
+    FIX (applied 2026-04-28):
+       1. Renamed the dead 236 MB file to mosquitto.log.archive-2026-04-28
+          via `Move-Item` (works without elevation; mosquitto did NOT
+          have an open handle, confirming the failed-open theory).
+       2. Triggered a 5 s blip; mosquitto's restart created a fresh
+          0-byte mosquitto.log and reopened it for append. Within 30 s
+          the file grew to 23 KB with current heartbeats from the
+          fleet — write path restored.
+       3. Strengthened C:\ProgramData\mosquitto\rotate-log.ps1: added
+          $maxSizeMB = 100 size-cap rotation in addition to the daily
+          rotation. If the daily rotation has already run today AND
+          the log has crossed 100 MB, rotates again with a counter
+          suffix (mosquitto.log.YYYY-MM-DD.1, .2, ...). Prevents the
+          freeze recurring even if the daily task is missed.
+       4. Saved a copy at esp32_node_firmware/tools/mosquitto/rotate-log.ps1
+          so the strengthened version is checked-in for reproducibility.
+          The active runtime copy at C:\ProgramData\mosquitto\rotate-log.ps1
+          is the same file content.
+
+    REMAINING OPERATOR ACTION (one-time, requires elevation):
+       Verify or register the daily rotation scheduled task:
+          schtasks /create /tn "MosquittoLogRotate" \
+                   /tr "powershell -File C:\ProgramData\mosquitto\rotate-log.ps1" \
+                   /sc daily /st 02:00 /ru SYSTEM
+       Without this, the size-cap fallback still saves us, but only
+       if rotate-log.ps1 is invoked somehow (e.g. ad-hoc by operator).
+
+    STATUS: RESOLVED 2026-04-28. Live mosquitto.log writes restored.
+    Size-cap rotation guards against recurrence. Index moved to
+    RESOLVED.

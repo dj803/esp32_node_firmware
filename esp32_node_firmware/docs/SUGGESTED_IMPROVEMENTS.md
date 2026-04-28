@@ -68,9 +68,8 @@ To resolve an entry:
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; sub-A+E shipped, B/C/D/F/G/H/I open)
   #77   Adaptive OTA stagger interval                                (was #66 cascade-session)
   #78   AsyncTCP _error path race — replace stack or patch library   (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27)
-  #83   Mosquitto log file frozen after blip-watcher service restarts (discovered 2026-04-27; medium)
 
-  Total open: 48
+  Total open: 47
 
 ────────────────────────────────────────────────────────────
 
@@ -115,5 +114,6 @@ To resolve an entry:
   #53   Per-heartbeat LOG_HEAP for fleet-wide leak surveillance       (firmware part shipped v0.4.11; dashboard tile downstream)
   #74   IPv6Address.h support — moot                                  (mathieucarbou/AsyncTCP v3.3.2 chosen instead, no shim needed)
   #81   Renumbering pass on archive (resolve #58–#70 collisions)      (resolved 2026-04-27)
+  #83   Mosquitto log file frozen after blip-watcher service restarts (resolved 2026-04-28 — size-cap rotation in rotate-log.ps1)
 
-  Total resolved: 30
+  Total resolved: 31
