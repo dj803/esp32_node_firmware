@@ -256,6 +256,28 @@ void setup() {
     // be called before it expires or the bootloader will roll us back.
     otaValidationCheckBoot();
 
+    // (#76 sub-D, v0.4.24) Restart-loop cool-off. If the device has just
+    // ESP.restart()'d ≥ MQTT_RESTART_LOOP_THRESHOLD times in a row with
+    // reason=mqtt_unrecoverable, the broker is unreachable in a way that
+    // restarting won't fix (bad URL, bad creds, broker offline indefinitely).
+    // Enter AP mode so the operator can inspect via web UI without a serial
+    // cable. Streak is broken automatically by mqttMarkHealthyIfDue() once
+    // a successful boot reaches MQTT_LOOP_HEALTHY_UPTIME_MS of connectivity.
+    {
+        uint8_t loopCount = RestartHistory::countTrailingCause("mqtt_unrecoverable");
+        if (loopCount >= MQTT_RESTART_LOOP_THRESHOLD) {
+            LOG_W("BOOT", "Restart-loop detected: %u consecutive mqtt_unrecoverable — entering AP mode",
+                  (unsigned)loopCount);
+            // Try to load creds so AP portal can run APSTA background scan
+            // (if creds are present they'll let the portal auto-recover when
+            // the broker comes back). If creds are absent, AP portal still
+            // starts in pure-AP mode for first-touch provisioning.
+            CredentialStore::load(activeBundle);
+            currentState = State::AP_MODE;
+            return;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // STATE: BOOT
     // Determine the initial state based on NVS credential freshness.
@@ -681,6 +703,11 @@ void loop() {
     // ── MQTT heartbeat ────────────────────────────────────────────────────────
     mqttHeartbeat();
 
+    // (#76 sub-D) After MQTT_LOOP_HEALTHY_UPTIME_MS of stable connectivity,
+    // push an "operational" marker to RestartHistory so any pre-existing
+    // mqtt_unrecoverable streak gets broken. Idempotent.
+    mqttMarkHealthyIfDue();
+
     // ── Core-dump publish (#65, v0.4.17) ──────────────────────────────────────
     // Once per boot, after MQTT is up, drain any stored core dump by publishing
     // its summary (PC, exception cause, faulting task, backtrace) to
@@ -705,12 +732,17 @@ void loop() {
               (unsigned)MQTT_HUNG_TIMEOUT_MS);
         ledSetPattern(LedPattern::ERROR);
         mqttForceDisconnect();   // releases stuck async-client state, clears _mqttConnectStartMs
-    } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD) {
+    } else if (mqttFailCount() >= MQTT_RESTART_THRESHOLD ||
+               mqttDisconnectedDurationMs() >= MQTT_UNRECOVERABLE_TIMEOUT_MS) {
         // (#65 Phase 2, v0.4.19) Was unconditional ESP.restart() — now defer
         // 300 ms via mqttScheduleRestart() so the diagnostic JSON publish
         // drains and the dashboard sees WHY this device just decided to
         // self-restart (fail count, last disconnect reason, RSSI).
-        LOG_W("Loop", "MQTT unrecoverable — flagging credentials stale and scheduling restart");
+        // (#76 sub-C, v0.4.24) Trigger now also fires on time — 10 min
+        // continuous outage is enough regardless of fail count.
+        LOG_W("Loop", "MQTT unrecoverable (fails=%d, outage=%lu ms) — scheduling restart",
+              (int)mqttFailCount(),
+              (unsigned long)mqttDisconnectedDurationMs());
         ledSetPattern(LedPattern::ERROR);
         CredentialStore::setCredStale(true);
         CredentialStore::incrementRestartCount();

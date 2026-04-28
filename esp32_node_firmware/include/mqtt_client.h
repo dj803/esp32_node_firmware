@@ -89,6 +89,20 @@ static AsyncMqttClient  _mqttClient;                         // The MQTT client 
 static TimerHandle_t    _mqttReconnectTimer = nullptr;       // FreeRTOS timer for reconnect delay
 static uint32_t         _mqttReconnectDelay = 1000;          // Current reconnect delay (ms); grows on failure
 static int              _mqttReconnectCount = 0;             // Consecutive failure count; reset on connect
+// (v0.4.24, #76 sub-C) Time-based unrecoverable detection. Set to millis()
+// in onMqttDisconnect() the first time we drop after a successful connect;
+// cleared (back to 0) in onMqttConnect(). loop()'s self-heal compares
+// (millis() - _mqttFirstFailMs) against MQTT_UNRECOVERABLE_TIMEOUT_MS to
+// decide when to schedule a restart. Survives backoff weirdness — a
+// 10-minute outage triggers regardless of how many reconnect attempts
+// the backoff schedule managed to slot into that window.
+static uint32_t         _mqttFirstFailMs    = 0;
+// (v0.4.24, #76 sub-D) Track when MQTT first connected this boot, so we
+// can push "operational" to RestartHistory after MQTT_LOOP_HEALTHY_UPTIME_MS
+// of sustained connectivity to break any pre-existing mqtt_unrecoverable
+// streak. _mqttHealthyMarked guards against repeated pushes.
+static uint32_t         _mqttFirstConnectMs = 0;
+static bool             _mqttHealthyMarked  = false;
 // (#55) Cumulative since boot — never resets. Mosquitto records "malformed
 // packet" disconnects 1-2× per fleet-day; this counter surfaces the rate
 // to the dashboard so operators can spot a device drifting from "0" to "1+"
@@ -1339,8 +1353,12 @@ static void onMqttConnect(bool sessionPresent) {
     LOG_I("MQTT", "Connected to broker");
     _mqttReconnectDelay     = 1000;   // Reset back-off delay after a successful connect
     _mqttReconnectCount     = 0;      // Clear failure counter
+    _mqttFirstFailMs        = 0;      // (#76 sub-C) clear time-based unrecoverable trigger
     _mqttNeedsRediscovery   = false;  // Clear rediscovery flag if loop() hadn't seen it yet
     _mqttConnectStartMs     = 0;      // Clear watchdog — we are no longer in a connecting state
+    if (_mqttFirstConnectMs == 0) {
+        _mqttFirstConnectMs = millis();   // (#76 sub-D) start the healthy-uptime window
+    }
 
     // Update sibling health advertisement — MQTT is now connected.
     // responderSetHealthFlag is defined in espnow_responder.h, which is included
@@ -1452,6 +1470,14 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     _mqttReconnectCount++;
     _mqttDisconnectTotal++;                        // (#55) cumulative for heartbeat surface
     _mqttLastDisconnectReason = (uint8_t)reason;   // (#65) cache for restart diag
+    // (#76 sub-C) Stamp the first-fail time so loop()'s self-heal can compare
+    // (millis() - _mqttFirstFailMs) against MQTT_UNRECOVERABLE_TIMEOUT_MS.
+    // Only stamp when starting a fresh disconnection streak — subsequent
+    // disconnects within the same outage keep the original timestamp so the
+    // duration measures the full outage, not just the latest retry.
+    if (_mqttFirstFailMs == 0) {
+        _mqttFirstFailMs = millis();
+    }
 
     // Update sibling health advertisement — MQTT is no longer connected.
     responderSetHealthFlag(1, false);
@@ -1644,6 +1670,31 @@ void mqttBegin(const CredentialBundle& bundle, const BrokerResult& broker) {
 bool mqttNeedsRediscovery()      { return _mqttNeedsRediscovery; }
 void mqttClearRediscoveryFlag()  { _mqttNeedsRediscovery = false; }
 int  mqttFailCount()             { return _mqttReconnectCount; }
+
+// (v0.4.24, #76 sub-C) Returns ms since the first disconnect of the current
+// outage, or 0 if MQTT is connected (or has never disconnected this boot).
+// Used by loop()'s self-heal to escalate to ESP.restart() once an outage
+// crosses MQTT_UNRECOVERABLE_TIMEOUT_MS regardless of how many reconnect
+// attempts the backoff cadence fit into the window.
+uint32_t mqttDisconnectedDurationMs() {
+    if (_mqttFirstFailMs == 0) return 0;
+    return millis() - _mqttFirstFailMs;
+}
+
+// (v0.4.24, #76 sub-D) Once MQTT has been continuously connected for
+// MQTT_LOOP_HEALTHY_UPTIME_MS, push an "operational" marker to the
+// RestartHistory ring. This breaks any trailing mqtt_unrecoverable streak
+// so the next intentional restart doesn't tip the device into AP_MODE.
+// Idempotent — second call after the marker fires is a no-op.
+void mqttMarkHealthyIfDue() {
+    if (_mqttHealthyMarked) return;
+    if (_mqttFirstConnectMs == 0) return;        // never connected this boot
+    if (!_mqttClient.connected()) return;        // currently down — wait
+    if (millis() - _mqttFirstConnectMs < MQTT_LOOP_HEALTHY_UPTIME_MS) return;
+    RestartHistory::push("operational");
+    _mqttHealthyMarked = true;
+    LOG_I("MQTT", "Healthy uptime reached — restart-loop streak cleared");
+}
 
 // Returns true if connect() was called but no callback has arrived within
 // MQTT_HUNG_TIMEOUT_MS — the AsyncMqttClient's TCP layer has silently stalled.

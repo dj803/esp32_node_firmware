@@ -179,8 +179,28 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
 
 #define MQTT_REDISCOVERY_THRESHOLD     5   // Re-run broker discovery after this many
                                            // consecutive MQTT failures (Tier 1 self-heal).
-#define MQTT_RESTART_THRESHOLD        10   // Hard-restart the device after this many
-                                           // consecutive failures (Tier 2 self-heal).
+// (v0.4.24, #76 sub-C) Time-based escalation is the primary trigger; the
+// count-based threshold is now a defensive backstop bumped 10 → 30 to avoid
+// firing prematurely on fast-retry storms (mathieucarbou AsyncTCP retries
+// in <1 s when broker is up but the connect handshake fails). The unrecoverable
+// timeout fires after 10 min of continuous disconnection, which catches the
+// genuine "broker is gone" case without being fooled by reconnect cadence.
+#define MQTT_RESTART_THRESHOLD        30   // Hard-restart the device after this many
+                                           // consecutive failures (Tier 2 backstop).
+#define MQTT_UNRECOVERABLE_TIMEOUT_MS 600000 // (#76 sub-C) Primary Tier 2 trigger:
+                                           // restart if MQTT has been continuously
+                                           // disconnected for this long (10 min default).
+                                           // More intuitive than count-based and
+                                           // immune to backoff-cadence weirdness.
+// (v0.4.24, #76 sub-D) Restart-loop cool-off: if the most recent N
+// consecutive entries in the RestartHistory ring buffer all share a single
+// recovery-failure cause (currently "mqtt_unrecoverable"), the next boot
+// enters AP mode instead of repeating the doomed cycle. Operator can fix
+// the underlying issue (broker config, network) via the AP web portal.
+// Streak is broken by RestartHistory::push("operational") which fires after
+// MQTT_LOOP_HEALTHY_UPTIME_MS of stable connectivity.
+#define MQTT_RESTART_LOOP_THRESHOLD    3   // ≥ this many consecutive mqtt_unrecoverable → AP_MODE
+#define MQTT_LOOP_HEALTHY_UPTIME_MS  300000 // 5 min stable MQTT → push "operational" to break streak
 // (v0.4.14, 2026-04-27) Bumped 12000 → 90000.
 // 12 s was tuned for the "TCP connected, MQTT CONNACK never arrived" hang —
 // but the same path ALSO fires on the much more common "broker down, lwIP

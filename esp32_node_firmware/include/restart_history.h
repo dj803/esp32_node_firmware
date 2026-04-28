@@ -77,6 +77,33 @@ namespace RestartHistory {
         return out;
     }
 
+    // (v0.4.24, #76 sub-D) Count consecutive newest entries that match `cause`.
+    // Walks backwards from the most-recently-pushed slot. Stops at the first
+    // mismatch or empty slot. Used by setup() to detect a restart-loop
+    // ("3 consecutive mqtt_unrecoverable") and route to AP_MODE instead of
+    // repeating the doomed cycle.
+    inline uint8_t countTrailingCause(const char* cause) {
+        if (!cause || !*cause) return 0;
+        Preferences p;
+        if (!p.begin(NS, /*readOnly=*/true)) return 0;
+        uint8_t head = p.getUChar(HEAD_KEY, 0);
+        if (head >= RING_SIZE) head = 0;
+        uint8_t count = 0;
+        for (uint8_t i = 0; i < RING_SIZE; i++) {
+            // Walk backwards from (head - 1) — the newest entry — towards the
+            // oldest. Stop on first mismatch or empty slot.
+            uint8_t idx = (head + RING_SIZE - 1 - i) % RING_SIZE;
+            char key[8];
+            _slotKey(key, sizeof(key), idx);
+            String v = p.getString(key, "");
+            if (v.length() == 0) break;
+            if (v != cause) break;
+            count++;
+        }
+        p.end();
+        return count;
+    }
+
     // Diagnostic only — clears the ring. Not currently exposed as a command;
     // call manually if a forensic reset is needed.
     inline void clearAll() {
