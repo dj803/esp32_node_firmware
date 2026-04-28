@@ -58,6 +58,23 @@ Always run these in order before assuming firmware bugs:
    fall back to a hardcoded map only as a last resort. UUID drift has been
    observed on Delta/Echo (#48) — see SUGGESTED_IMPROVEMENTS.
 
+## Verify-after-action discipline (#84)
+Every state-changing action gets a verification poll within the expected
+completion window, AND a status line posted to the operator — even when
+everything's clean. Quiet success and quiet failure must look different.
+
+| Action | Verification window | How |
+|---|---|---|
+| USB-flash | 60 s | mosquitto_sub on the device's `/status`, confirm event=boot + uptime≤5 |
+| OTA single device | 3 min | mosquitto_sub for firmware_version=<target>, uptime small |
+| OTA fleet rollout | 5 + 3 min/device | `tools/dev/ota-monitor.sh <version>` (auto-polls all-match or timeout) |
+| Synthetic blip | 90 s | mosquitto_sub on `+/status`, confirm event=online from every fleet member |
+| cmd/restart, cmd/cred_rotate | 90 s | poll for boot_reason=software with restart_cause=<expected> |
+| Node-RED flow push | 30 s | poll /flows or visual confirm |
+
+Pattern was the root cause of #84 — silent waits after fire-and-forget OTAs
+made the operator have to ask "what are we waiting for?". Don't repeat.
+
 ## Monitoring sessions — always run the silent watcher
 For any session where stability is a concern (post-flash soak, post-OTA,
 overnight runs, Phase B-style diagnostics), arm both watchers:

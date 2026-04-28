@@ -3685,3 +3685,30 @@ Next steps (operator decision):
     rollout. Operator intervention surfaced an otherwise-clean
     state, exactly the wrong direction for an autonomous-mode
     session that's supposed to free operator attention.
+
+    STATUS: RESOLVED 2026-04-28. All three layered fixes shipped:
+
+       A. CLAUDE.md got a new "Verify-after-action discipline (#84)"
+          section with a per-action verification-window table (USB
+          flash 60 s, OTA single 3 min, OTA fleet 5 + 3 min/device,
+          blip 90 s, cmd/restart + cred_rotate 90 s, Node-RED push
+          30 s). AUTONOMOUS_PROMPT_TEMPLATE CONSTRAINTS gained a
+          "Verify-within-N-minutes" bullet that explicitly requires
+          the agent to post a status line — even when all-clean.
+
+       B. tools/dev/ota-monitor.sh shipped. Passive observer (does
+          NOT trigger OTAs) — subscribes to /+/status, prints one
+          line per device as each picks up the target version,
+          exits on all-match, timeout, or first abnormal boot. Pairs
+          with `mosquitto_pub cmd/ota_check` or
+          `tools/dev/ota-rollout.sh`. Smoke-tested by triggering a
+          Bravo cmd/restart with a single-UUID watch — match line
+          fired at 1 s, exit 0.
+
+       C. AUTONOMOUS_PROMPT_TEMPLATE CONSTRAINTS gained a wakeup-
+          cadence rule: 60-300 s during ACTIVE work, 1200-1800 s
+          only when operator is AFK or fleet is confirmed steady.
+          Folded into the same constraints block as A so the rule
+          is one read.
+
+    Tested live by tonight's autonomous session (this commit).

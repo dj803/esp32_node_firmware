@@ -52,6 +52,17 @@ CONSTRAINTS
   • Stop a watcher before flashing the COM port it holds
   • Use tools/dev/ota-rollout.sh for staggers (ack-driven, not fixed-interval)
   • Commit and push after every meaningful change so progress is visible
+  • Verify-within-N-minutes after every state-changing action (#84). Flash:
+    confirm boot announce within 60 s. OTA: poll for firmware_version=<target>
+    within 3 min/device or use tools/dev/ota-monitor.sh. Blip: monitor
+    +/status for event=online from all fleet members within 90 s. THEN post
+    a status line — even if all-clean. Quiet success and quiet failure
+    must look different to the operator.
+  • In /loop dynamic, match wakeup cadence to expected next-event window.
+    During ACTIVE work (in-flight OTA, post-flash boot, soak transition)
+    use 60-300 s wakeups. Drop to 1200-1800 s only when (a) the operator
+    explicitly says AFK, OR (b) the agent has confirmed the fleet is in
+    steady state with nothing actively changing.
 
 COMMUNICATION STYLE
   • One-word commands ("next", "yes", "continue") = pace/confirm. Execute, don't ask back.
