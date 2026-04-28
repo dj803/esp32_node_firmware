@@ -56,6 +56,10 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 - [OPERATOR_INSTALL_GUIDE.md](OPERATOR_INSTALL_GUIDE.md) — antenna +
   power layout rules of thumb derived from the 10-config RF sweep.
   Tracks #40; supersedes ad-hoc notes once field-validated.
+- [TOPIC_VERSIONING_DESIGN.md](TOPIC_VERSIONING_DESIGN.md) — design
+  proposal for versioned MQTT topic prefixes (#33). Not yet
+  implemented; ship trigger is fleet > 10 devices, first breaking
+  schema change, or v1.0 firmware release.
 
 ## `SESSIONS/` — point-in-time reports
 

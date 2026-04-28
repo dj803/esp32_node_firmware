@@ -36,7 +36,7 @@ To resolve an entry:
   #26   Recovery partition app
   #27   Library-API regression test in CI
   #31   Pin LED + RFID tasks to Core 1
-  #33   Versioned MQTT topic prefixes
+  #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
   #34   Captive portal DNS responder                                  (Phase 1 DNS hijack code-shipped 2026-04-28; Phase 2 port-80 redirector still open)
   #35   Operational practice: canary OTA pattern
   #36   Operational practice: heartbeat / boot-reason monitoring
