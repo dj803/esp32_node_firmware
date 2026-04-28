@@ -1,107 +1,113 @@
 # Next session plan
 
-Drafted 2026-04-28 afternoon (autonomous followups while waiting for relay
-hardware). Goal of session was to chip away at OPEN items; outcome:
+Drafted 2026-04-28 evening — wrapping a long autonomous block that shipped
+**three releases same day** (v0.4.24 / v0.4.25 / v0.4.26):
 
-- **#76 sub-C/D/I** code-shipped to master (firmware: time-based MQTT
-  unrecoverable trigger + restart-loop AP fallback + /daily-health
-  WDT/SW categorisation).
-- **#75 chaos framework** code-shipped to `tools/chaos/` (scripts +
-  runner.sh + README + JSON reports under `~/daily-health/`).
-- **#24, #28 — audit-stale** entries moved to RESOLVED.
-- **v0.4.24 NOT TAGGED** — fleet went LWT-offline mid-session; cannot
-  validate new restart-policy paths until fleet returns.
+- **v0.4.24** — #76 sub-C/D/I (time-based MQTT unrecoverable + restart-
+  loop AP fallback + /daily-health WDT/SW categorisation) + #75 chaos
+  framework + #34 Phase 1 captive DNS + #40 operator install guide +
+  #24/#28/#77 audit-stale RESOLVED.
+- **v0.4.25** — #32 heap-headroom gates at MQTT/BLE/TLS init + #34 Phase 2
+  (port-80 redirector) + ota-rollout EXCLUDE_UUIDS + #33 versioned-topic
+  design doc + ota-rollout TIMEOUT_PER_DEVICE_S 180 → 300.
+- **v0.4.26** — LED feature bundle: #19 per-LED addressing + #20 scene
+  save-to-device + #21 broadcast LED commands + #22 time-of-day schedule
+  + #23 timed override + #31 task pin verified. Plus `docs/LED_COMMANDS.md`
+  reference + `cmd/led "test"` self-test on master pending next cut.
 
-Open: 47 → 38. Resolved: 36 → 38. WONT_DO unchanged at 8.
+Open: 39 → 29. Resolved: 32 → 47. WONT_DO unchanged at 8.
 
-## State at end of session (2026-04-28 afternoon)
+## State at end of session (2026-04-28 evening)
 
 | | |
 |---|---|
-| Master HEAD | `firmware(#76): time-based MQTT escalation + restart-loop AP fallback` (8031d0b) → `tools(#75): promote chaos scenarios to tools/chaos/ + runner.sh` (e0b6cb3) plus end-of-session doc sweep |
-| Fleet | **OFFLINE** — every device LWT-offline. Broker healthy. Operator-side issue (AP suspected). See SESSION_QUESTIONS_2026_04_28 |
-| Charlie soak | Pre-session: ~12.4 h sticky on v0.4.20.0 canary. Tripped silently — `/diag/coredump` shows another #78 async_tcp InstructionFetchError. Cleanly **ruled out stack overflow** for this crash family — canary build would have halted at violation. |
-| Backlog | OPEN 38, RESOLVED 38, WONT_DO 8 |
-| Pending releases | **v0.4.24** code-only on master, awaits fleet + tag |
+| Master HEAD | `feat(LED): cmd/led "test" — installation self-test pattern` (b5cc195) on master pending the next cut |
+| Fleet | 5/5 production on **v0.4.26** (Alpha, Bravo, Delta, Echo, Foxtrot); **Charlie** sticky on v0.4.20.0 canary per Q1 decision |
+| Master vs fleet | Self-test feature is one commit ahead of v0.4.26 — fleet doesn't have it yet. Cut v0.4.27 if/when more bundle-able items accumulate, or stay on v0.4.26 indefinitely. |
+| Charlie soak | Up 15+ h since the AP-outage recovery. Heap healthy. Retained `/diag/coredump` from #78 InstructionFetchError preserved. |
+| Backlog | OPEN 29, RESOLVED 47, WONT_DO 8 |
 
-## Recommended next session — fleet recovery + v0.4.24 cut + relay hardware
+## Bench state (2026-04-28 late afternoon)
 
-Three menu items in priority order:
+- **Alpha on COM4** — operator swapped 2026-04-28 afternoon to put the
+  WS2812-equipped device on a serial-accessible bench port. Unblocks
+  visual + serial validation of LED-feature work.
+- **Charlie on COM5** — sticky canary on v0.4.20.0, do not disturb
+  (preserves the retained `/diag/coredump` for #78 forensics).
+- **Bravo off-bench** — operator will re-attach for the v0.5.0 relay +
+  Hall hardware bring-up session.
 
-### A. Fleet recovery + v0.4.24 release (~30 min — critical path)
+## Recommended next session — A/B/C menu
 
-1. **Operator triage** the fleet outage. Most likely path:
-   - Power-cycle the AP if uncertain.
-   - Run `/daily-health` to confirm devices reassociated.
-   - Check `mosquitto.log` for any unusual disconnect pattern around
-     ~10:50 SAST 2026-04-28.
+### A. v0.5.0 hardware bring-up (relay + Hall on Bravo) — ~2 h
 
-2. Once 5/6 fleet (or all 6 if Charlie's been swapped to release) shows
-   healthy heartbeats, **cut v0.4.24** via the existing release pipeline:
-   - bump version → tag → push → CI builds → OTA manifest update →
-     fleet OTA stagger → validation.
-   - Validation = M1 + M2 chaos via the new `tools/chaos/runner.sh`.
-   - Specifically watch for `restart_cause=mqtt_unrecoverable` in any
-     boot announcement during M2 — that confirms sub-C is firing on
-     time rather than count.
+The natural next big milestone. Plan unchanged from earlier sessions
+(see [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md)). Pre-session
+operator action: re-attach Bravo to the bench, wire relay (GPIO 25/26)
++ Hall (GPIO 32/33) per the GPIO inventory.
 
-3. If sub-D fires unexpectedly (a device enters AP_MODE on first boot),
-   that's a regression — clear the RestartHistory ring via the dev
-   path, document the trigger, and roll back v0.4.24.
-
-### B. v0.5.0 Phase 2 hardware bring-up (relay + Hall on Bravo) — ~2 h
-
-Plan unchanged from previous session (PLAN_RELAY_HALL_v0.5.0.md). Bravo
-is already wired per the GPIO inventory. Steps:
-
+Steps once Bravo is wired:
 1. Capture Bravo's pre-flash state (firmware, uptime, boot_reason).
-2. USB-flash `esp32dev_relay_hall` to Bravo on COM4.
-3. Validate `cmd/relay` end-to-end (click + retained state + NVS
-   restore on restart).
+2. USB-flash `esp32dev_relay_hall` to Bravo on COM4 (will reassign
+   COM4 ↔ Alpha — operator should swap cables back).
+3. Validate `cmd/relay` (click + retained state + NVS restore).
 4. Validate `cmd/hall/zero` + `cmd/hall/config` + `telemetry/hall` +
    `telemetry/hall/edge`.
 5. M1 + M2 chaos to confirm no new failure surface.
-6. Tag v0.5.0 if validation lands clean.
+6. Tag **v0.5.0** if validation lands clean. The accumulated `cmd/led
+   "test"` from this session rides along in v0.5.0.
 
-This depends on (A) being done — releasing v0.4.24's restart-policy
-changes BEFORE introducing new hardware paths gives a cleaner blast
-radius if the new hardware tickles a regression.
+### B. LED self-test validation + dashboard tile — ~1 h (operator-led)
 
-### C. #78 AsyncTCP race deep dive — ~3 h diagnostic + design
+The cmd/led `test` self-test is on master but not yet OTA'd. Cutting
+v0.4.27 just for it is excessive; bundle into v0.5.0 or whatever
+ships next. Once it's on the fleet, operator can fire `mosquitto_pub
+-t '<root>/<uuid>/cmd/led' -m '{"cmd":"test"}'` against Alpha and
+visually confirm the RGBW + per-pixel walk.
 
-Charlie's canary trip ruled out stack overflow as the cause for the
-async_tcp `InstructionFetchError` family. The remaining hypotheses
-are use-after-free in `_error` path or task-priority race between
-async_tcp service task and lwIP TCP timer. Next-step options:
+If the dashboard work is desired (#36 — DO NOT for autonomous):
+operator builds a Vue tile in Node-RED that exposes the new schema:
+brightness slider + color picker + scene dropdown + schedule editor.
+Reference: [LED_COMMANDS.md](LED_COMMANDS.md) is the single-source
+schema doc.
 
-1. **Patch AsyncTCP locally** — wrap `tcp_arg` / `tcp_recv` / `tcp_sent`
-   / `tcp_err` in `tcpip_api_call` so all lwIP calls happen in TCPIP
-   task context. Risk: maintenance burden against upstream.
-2. **Replace AsyncMqttClient + AsyncTCP** with PubSubClient
-   (synchronous). No async-task race surface. Larger refactor.
-3. **Capture + decode another panic** with the v0.4.24 build's
-   improved restart-policy diagnostics. May reveal whether it's a
-   service-task or timer race.
+### C. #78 AsyncTCP race deep-dive — ~3 h diagnostic + design
 
-Premature without more data. Recommend deferring until v0.4.24 +
-v0.5.0 ship and we have another month of fleet uptime context.
+Charlie's earlier canary trip (12.4 h before the AP outage) ruled out
+stack overflow for the async_tcp `InstructionFetchError` family. The
+remaining hypotheses are use-after-free in `_error` path or task-
+priority race between async_tcp service task and lwIP TCP timer.
+Defer until more diagnostic data accumulates — premature without
+another panic capture on v0.4.26 to compare.
 
-## Other followups (≤1 h each)
+## Items still in OPEN that DON'T match A/B/C
 
-- **#27** Library-API regression test in CI — promote `lib_api_assert.h`
-  to a CI gate (DO-NOT for autonomous since it touches workflows).
-- **#36** Heartbeat / boot-reason monitoring tile in Node-RED Dashboard
-  2.0 — operator session, DO-NOT for autonomous.
-- **#46** Recent abnormal reboots — Charlie canary trip + Foxtrot UUID
-  drift (+ today's fleet outage if it produces new boot reasons) all
-  feed this. Audit at the next quiet point.
-- **#71 second cut** — full variant infrastructure beyond
-  `esp32dev_minimal` and `esp32dev_relay_hall`. Combined with the
-  ota.json `Variant` schema. v0.5.x territory.
+Hardware-blocked (need bench + sensors):
+- #11/#12/#14-17 RFID feature work (Foxtrot bench)
+- #37/#38/#39/#42 ESP-NOW ranging
+- #47 hardware verification
 
-## Won't do this session
+Pioarduino-blocked: #25 bootloader rollback (upstream issue).
 
-- v0.4.24 tag without fleet recovery (validation discipline).
-- v0.5.0 hardware before v0.4.24 is shipped (clean blast radius).
-- #78 fix attempt without more diagnostic data.
-- Anything DO-NOT (CI workflows, dashboard tiles, mosquitto auth, etc.).
+DO-NOT-for-autonomous (operator session):
+- #27 lib-API CI gate (workflow change)
+- #36 dashboard tile (Node-RED operator-visible)
+- #63 trufflehog CI (workflow change)
+- #68 Node-RED adminAuth
+- #71 full variant infra (substantial; needs operator scoping)
+- #75 chaos CI hook (workflow change — runner+scripts already shipped)
+
+Investigation/defer:
+- #46 abnormal reboots — Alpha int_wdt'd in this morning's AP outage,
+  no follow-up action without another data point.
+- #49 OTA URL bootstrap propagation — deferred to v0.5.0 bundle.
+- #54 Charlie canary soak — ongoing.
+- #72 bench-supply rig — needs operator hardware.
+- #78 AsyncTCP race — see C above.
+- #85 doc-sweep tooling B sub-tool — partial fix already shipped.
+
+## Won't do at session start
+
+- New autonomous releases without operator scoping. Three releases in
+  one day is a lot; let the v0.4.26 fleet soak before the next cut.
+- Anything DO-NOT.
