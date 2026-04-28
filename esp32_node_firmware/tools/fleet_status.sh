@@ -2,11 +2,19 @@
 # fleet_status.sh — one-shot snapshot of every device's retained MQTT status.
 # Usage: tools/fleet_status.sh
 # Output: one line per device, sorted by node_name.
+#
+# Window is 75 s — at least one full heartbeat cycle (60 s cadence + margin) so
+# every device emits a live heartbeat that updates its retained payload. A
+# shorter window relies on the retained `/status` already being a heartbeat,
+# which is unreliable: if the most-recent retained payload is the LWT-offline
+# (because the device's TCP/MQTT session dropped without a clean disconnect at
+# any point in the past), the snapshot misses that device entirely. See
+# docs/MONITORING_PRACTICE.md "Capturing fleet snapshots — gotcha".
 
 BROKER="${MQTT_BROKER:-192.168.10.30}"
 TOPIC_BASE="Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox"
 
-timeout 8 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/+/status" -F "%t %p" -W 7 2>/dev/null \
+timeout 80 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/+/status" -F "%t %p" -W 75 2>/dev/null \
     | python -c "
 import sys, json
 seen = {}
