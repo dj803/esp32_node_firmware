@@ -1,83 +1,96 @@
 # Next big session — pick one
 
-Drafted 2026-04-27 evening, after the v0.4.13 → v0.4.20 cascade-fix
-marathon closed and the 2026-04-26 audit hygiene batch (#58-#65)
-landed. Fleet is on v0.4.20-release; OTA manifest matches.
+Drafted 2026-04-28 morning, after the 12 h autonomous window
+(2026-04-27 21:30 → 2026-04-28 ~07:25 SAST) closed cleanly. Fleet on
+v0.4.20 release (5 devices) + v0.4.20.0 canary (Charlie, sticky via
+OTA_DISABLE, 9+ h continuous soak with heap pinned at 131036).
 
-## Recommendation revised 2026-04-27 evening
+## Recommended path
 
-The original A (coredump-to-flash) is **already shipped**. Charlie's
-canary first-boot tonight published a real coredump on
-`/diag/coredump`: AsyncTCP `InstructionFetchError`, exc_task=async_tcp,
-PC=0x3f409271. That confirms include/coredump_publish.h (added in
-v0.4.17, commit 43c71a6) is wired through, and the partition table /
-sdkconfig.defaults are correct on real fleet hardware. Backlog #65
-sub-item E moves to "shipped + validated".
+### A — Cut v0.4.21 release (this session)
 
-Sub-item A (pre-restart diag publish) shipped in v0.4.19 (commit
-9ed19a4). Remaining #65 sub-items B/C/D/F/G/H/I are all nice-to-have
-but not blockers.
+Pure diagnostic + tooling enhancement. Already validated end-to-end
+on Bravo via M1+M2+M3:
+- #76 sub-G — `restart_cause` field in boot announcement
+- #71 minimal-variant infrastructure (RFID_DISABLED gate)
+- OTA_DISABLE compile gate for canary builds
 
-**New recommended next session: B (v0.5.0 relay + Hall hardware).**
+Risk profile: low. Production behaviour unchanged; only adds a JSON
+field on boot announcements. The 5 release devices on v0.4.20 will
+auto-OTA up to v0.4.21 within an hour. Charlie's canary stays on
+v0.4.20.0 because of OTA_DISABLE.
 
-The coredump win + canary build + v0.4.20 fleet stability mean the
-diagnostic + safety-net layer is now strong enough to support feature
-work. v0.5.0 is the deliberate moment to introduce hardware-divergent
-nodes; if any new failure mode emerges, the coredump path will catch
-it without requiring a serial monitor.
+After v0.4.21 lands, all production devices have:
+- The diagnostic field needed to distinguish OTA-restart vs
+  cred_rotate vs cmd/restart vs mqtt_unrecoverable on next boot.
+- The infrastructure to opt a device into a feature-subset variant
+  later without touching every consumer.
 
-## Originally-listed: B — Start v0.5.0 relay + Hall hardware
+### B — Investigate Alpha's `loopTask` panic (next session)
 
-Plan already drafted at
-[esp32_node_firmware/docs/PLAN_RELAY_HALL_v0.5.0.md](esp32_node_firmware/docs/PLAN_RELAY_HALL_v0.5.0.md).
-GPIO assignments, NVS schemas, MQTT topics, wiring all worked out.
-Hardware on hand. Cleanly scoped: `relay.h` + `hall.h` modules
-mirror existing `ws2812.h` / `rfid.h` patterns.
+Tonight's surprise: Alpha (production v0.4.20) panicked once at
+~23:30 SAST with a NEW signature:
 
-Pros: pure feature work, no diagnostic chase risk, unblocks the
-"add a sensor" use case the deployment exists to support.
+```
+exc_task: loopTask
+exc_pc:   0x4008ec14
+exc_cause: IllegalInstruction
+backtrace: 14 frames (0x4008ec14 0x4008ebd9 0x400954ad 0x401ae04b ...)
+```
 
-Cons: doesn't pay down the panic-investigation tax — next cascade
-(if it happens) costs the same 2-3 hours. Better to let v0.4.20
-soak undisturbed first; this introduces NEW failure modes (relay
-inrush brownout, ADC contention) right after a stability win.
+Cannot decode locally — Alpha's CI v0.4.20 binary has `app_sha_prefix`
+`a5bb3114`; local builds produce `dd877030`. To proceed:
 
-## Alternative: C — 7-day stack-canary soak (#54)
+1. Download the CI v0.4.20 ELF from the release artefacts page
+   (https://github.com/dj803/esp32_node_firmware/releases/tag/v0.4.20),
+   if the retention window covers it.
+2. OR rebuild from the v0.4.20 tag locally:
+   `git fetch --tags && git checkout v0.4.20 && pio run -e esp32dev`
+   (deterministic-ish — same source, same toolchain, should produce
+   matching addresses for IRAM/IROM frames).
+3. Run `xtensa-esp32-elf-addr2line -e firmware.elf -fipC <each PC>`
+   on the captured backtrace.
+4. Compare site to the existing `raw_netif_ip_addr_changed` family —
+   if it converges to a similar lwIP/AsyncTCP path, single-bug story.
+   If it's elsewhere (heap allocator, JSON serialiser, RFID tick),
+   document as a separate item.
 
-[`platformio.ini`](esp32_node_firmware/platformio.ini) already has
-[env:esp32dev_canary]; sdkconfig.defaults already sets
-CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y. Just flash it to one
-non-bench device and let it run for a week.
+### C — Charlie canary soak — long-tail wait
 
-Pros: catches the lingering hypothesis #5 from #51 (WS2812 task
-stack overflow at 4 KB) without any code changes.
+Currently sticky at 9+ h, heap pinned, no panic. Continue until either:
+- Canary trips with a stack-overflow halt (root cause for hypothesis #5
+  from #51 confirmed; bump the offending task's stack), OR
+- 7 days clean (hypothesis #5 retired, return Charlie to release).
 
-Cons: not really a "session" — flash + leave it. Doesn't move other
-backlog items forward. Best done as a silent background check
-parallel to A or B, not as the headline session.
+Existing soak watcher catches abnormal boots; the canary halt itself
+is silent on MQTT but visible on serial (open COM5 carefully —
+DTR-reset wipes the halt state).
 
-## Recommendation
+## After A + B + C
 
-B then (if budget) the long-tail #65 sub-items (C/D/F/G/H/I —
-threshold tuning, cool-off counter, WDT bump, distinct boot_reason).
-Run C (canary soak) in parallel on Charlie — already armed
-2026-04-27 evening, see memory/canary_soak_charlie_2026_04_27.md.
+The big unblocked feature work is **v0.5.0 relay + Hall hardware**
+([PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md)). With
+coredump-to-flash + restart_cause + canary detector all in place,
+introducing hardware-divergent nodes to the fleet is now well-supported
+diagnostically — any new failure mode auto-captures its backtrace.
 
-The Charlie coredump from tonight (AsyncTCP InstructionFetchError)
-suggests #67 (AsyncTCP _error race) is still latent in v0.4.20 —
-the v0.4.16 broker-probe reduces the trigger surface but doesn't
-fully eliminate the underlying library bug. Investigate as a
-parallel thread, not the main session, since the coredump path is
-now the diagnostic safety-net.
+## Followups not on the critical path
 
-## Deferred decisions
+- #76 sub-B (NVS ring buffer of last-N restart contexts) is the natural
+  next builder on top of sub-G. ~50 lines.
+- #76 sub-F (`CONFIG_ESP_TASK_WDT_TIMEOUT_S` 5 s → 12 s) is a 1-line
+  change in sdkconfig.defaults — bundle with sub-B.
+- v0.4.22 batch can ship sub-B/C/D/F/H/I together once they're written.
+- The mosquitto.log file rotation issue (log frozen at 13:59 since
+  the M3 chaos work) needs investigation — service is running but
+  not writing to the canonical log path. Likely a side-effect of the
+  blip-watcher's restart cycles. Out of scope for v0.4.21 but worth
+  filing as #83.
 
-- #57 (host gcc install): MinGW64 already at `C:\mingw64\bin`
-  per platformio.ini comment line 152 — close to working. Move to
-  RESOLVED after one successful `pio test -e native -v` invocation.
-- #56 (MQTT_HEALTHY deferred-flag): per memory note, the pattern was
-  shipped in v0.4.13. Confirm in code (look for `_mqttLedHealthyAtMs`
-  consumed in `mqttHeartbeat()`) and move to RESOLVED.
-- #81 renumbering pass: still cosmetic; don't bundle.
-- #82 split FAILURE_MODES + memory_budget: low priority; tackle next
-  time one of those docs grows past 600 lines.
+## Deferred decisions (already in the backlog)
+
+- **#57** host gcc — RESOLVED. MinGW64 works via `PATH=/c/mingw64/bin:$PATH`.
+- **#56** MQTT_HEALTHY deferred-flag — RESOLVED in v0.4.13.
+- **#82** split FAILURE_MODES + memory_budget docs — parked (neither
+  fits the index/archive convention's prerequisites).
+- **#6/#7/#13/#18** → moved to WONT_DO with documented rationale.

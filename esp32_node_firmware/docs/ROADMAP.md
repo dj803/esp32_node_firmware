@@ -2,11 +2,57 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-27 (v0.4.13 fleet-wide OTA + USB validation complete; #44 deferred-flag verified on hardware).
+Last updated: 2026-04-28 (cascade-fix marathon CLOSED at v0.4.20; restart_cause + minimal-variant infra prepared for v0.4.21; canary soak sticky on Charlie at 9+ h, no trip).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.21 — IN FLIGHT (2026-04-28 morning)
+
+Diagnostic + tooling release. Pure additions over v0.4.20; no behaviour
+change for production fleet. Key entries:
+
+- **#76 sub-G — NVS-persisted `restart_cause` in boot announcement.**
+  New `include/restart_cause.h` (Preferences wrapper). `mqttScheduleRestart()`
+  now writes the reason to NVS just before arming the deferred-restart
+  deadline; `mqttBegin()` reads + clears once on boot. `mqttPublishStatus("boot")`
+  appends `"restart_cause":"<reason>"` to JSON when non-empty (alongside
+  the existing `boot_reason`). Validated end-to-end on Bravo: cmd/restart
+  → reboot → boot announce carries `restart_cause:"cmd_restart"`;
+  subsequent heartbeats do not (one-shot). M1+M2+M3 chaos all pass.
+- **#71 first cut — minimal-variant infrastructure.** New
+  `[env:esp32dev_minimal]` extending `esp32dev` with `-DRFID_DISABLED`.
+  `config.h` now gates `#define RFID_ENABLED` with `#ifndef RFID_DISABLED`.
+  `mqtt_client.h::handleRfidWhitelist` and its dispatcher wrapped in
+  `#ifdef RFID_ENABLED` so the link doesn't fail when RFID is compiled out.
+  Bravo flashed, `rfid_enabled:false` in heartbeat, M1+M2+M3 pass on the
+  variant. Production esp32dev binary unchanged (RFID stays on by default).
+- **#54 + #80 — `OTA_DISABLE` compile gate for canary builds.** Canary's
+  `0.4.20.0` version sorts BEFORE `0.4.20` release per #80's 4-component
+  semver, which made the canary self-OTA up to release on first OTA check
+  and killed the soak. Added `-DOTA_DISABLE` to `[env:esp32dev_canary]`
+  build_flags; `otaCheckNow()` returns immediately when defined. Re-flashed
+  Charlie, validated via `cmd/ota_check` (no OTA fired); 9+ h sticky soak
+  ongoing.
+
+**Closes:** #30 (mathieucarbou fork swap, retroactive), #43 (firmware_version
+EMPTY, retroactive), #50 (esptool erase-flash NVS — confirmed working),
+#51 (v0.4.10 stability regression, closed by v0.4.16 cascade fix), #56
+(MQTT_HEALTHY deferred-flag, retroactive), #57 (host gcc), #58/#59/#60/#62/
+#64/#65 (repo-hygiene audit batch), #66 (`.claude/commands/` shortcuts),
+#73 (silent-failure watcher, retroactive), #79 (version-update + ack-driven
+OTA tooling, retroactive), #80 (-dev OTA path, retroactive), #81
+(renumbering pass), #82 (parked — convention doesn't apply).
+
+**Parks:** #6 OTA cert pinning, #7 MQTT-over-TLS, #13 UID-clone MIFARE,
+#18 NFC card emulation → moved to docs/WONT_DO.md with rationale.
+
+### v0.4.20 — DONE (shipped 2026-04-27 evening)
+- **#70 option B — 4-component dev versioning.** Local builds now report
+  `MAJOR.MINOR.PATCH.DEV` (e.g. `0.4.20.0`) which sorts cleanly before
+  the matching release per `semverIsNewer`. -dev devices auto-upgrade
+  to release via the existing periodic OTA check.
 
 ### v0.4.11 — DONE
 Heap-guard fix in `mqttPublish()` (#51 root cause). Plus bundled: BLE off, NDEF feature, #48/#49 visibility logs, heap heartbeat, tools/ directory, CLAUDE.md, .claude/settings.json.
@@ -78,55 +124,67 @@ T1.1 Node-RED file logging, T1.2 Mosquitto log rotation (PowerShell scheduled ta
 
 ## Next (week of 2026-04-28)
 
-### v0.4.14 — Tier-2 quick wins bundle (Path B from 2026-04-27 plan)
-No firmware changes. Tooling + repo hygiene:
-- **Heap-trajectory Node-RED Dashboard 2.0 tile** — Vue template plotting rolling 24h heap_free per device (data already in heartbeats since v0.4.11). Pairs with existing `boot_history` tile.
-- **T2.3 GitHub branch protection on `master`** — require status checks (CI green) before merge; keep direct push allowed for solo-dev workflow.
-- **T2.6 Auto-tag GitHub Action** — on push-to-master, parse `config.h::FIRMWARE_VERSION`; if non-`-dev` and tag absent, auto-create + push tag. Eliminates "I forgot to tag" risk seen with prior releases.
-- **T2.4 Mosquitto WebSocket listener** — 2 lines in `mosquitto.conf` (`listener 9001 / protocol websockets`). Lets browser MQTT tools connect when Node-RED is mid-debug.
+### v0.4.22 — coredump from Alpha-class panics (#46 follow-up)
 
-### Bench-isolate Charlie (#46)
-Charlie's chronic flake. 12 h bench soak (separate desk, separate USB, no ESP-NOW peers) to establish hardware vs environmental. Independent of firmware versions.
+Tonight's Alpha panic (`loopTask` `IllegalInstruction` PC 0x4008ec14,
+14-frame backtrace) gave a NEW signature distinct from the async_tcp
+family. Cannot decode locally — Alpha's CI v0.4.20 binary has app_sha
+prefix `a5bb3114`; my local builds produce `dd877030`. To root-cause
+it we need either:
+- Download the CI v0.4.20 ELF from the GitHub release artefacts (if
+  retention window is long enough) and addr2line against it, OR
+- Rebuild from the v0.4.20 tag locally (`git checkout v0.4.20 && pio
+  run -e esp32dev`) to reproduce the same SHA, OR
+- Wait for another Alpha-class panic on v0.4.21+ which we DO have ELF
+  access to, then decode that.
 
-### v0.4.13 stability soak
-24h `silent_watcher.sh` + `boot_history` poller. Watch for any post-OTA crash in #51-style failure modes. Charlie on `-dev` is the primary watch target — re-flash to release via OTA after soak.
+The shape (`loopTask` + IllegalInstruction + long-uptime trigger) fits
+either a slow heap leak overwriting a vtable OR a subtle stack overflow
+that the canary build would catch. Charlie's canary at 9+ h with no trip
+weakens the stack-overflow hypothesis but doesn't eliminate it —
+Alpha's stack pressure may differ.
 
-### v0.4.15 — BLE coexistence real fix (Path C)
-The deeper fix for the BLE silent-deadlock workaround currently shipped as `BLE_ENABLED 0` in `config.h`. Plan at [`~/.claude/plans/v0.4.15-plan.md`](C:\Users\drowa\.claude\plans\v0.4.15-plan.md) (to be created when Phase 1 begins).
+### Charlie canary soak — long-tail wait
 
-**Failure shape recap.** With BLE enabled, devices hang ~70 min after a Wi-Fi/broker reconnect cycle. RTC WDT does not bite; chip stays powered; FreeRTOS scheduler hangs. Symptom: LWT-only on broker, no heartbeats, no panic.
+Sticky now (OTA_DISABLE). Continue until either (a) canary tripping with
+a stack-overflow halt → root cause found, (b) 7 days clean → hypothesis
+retired and Charlie returns to release. Existing soak watcher catches
+abnormal boot reasons; canary halts are silent except via serial — open
+serial monitor on COM5 only when investigating, mindful of DTR-reset.
 
-#### Phase 1 — bench investigation (can start immediately, no soak gate)
-Touches a single off-fleet device on a separate desk. Fleet keeps running v0.4.13 unaffected.
+### v0.5.0 — Relay + Hall hardware introduction
 
-1. **Bench rig.** Single bench device with `BLE_ENABLED 1`, `LOG_LEVEL_DEBUG`, no ESP-NOW peers. Candidate: **Bravo** (no LEDs currently — fine for headless bench; also the natural soak target since it was the former #51 cascade-trigger suspect) **or a spare ESP32**. **Not Alpha** — Alpha currently carries the WS2812 strip and is providing the visual MQTT_HEALTHY validation for v0.4.13.
-2. **Synthetic broker-blip.** PowerShell loop on the host stops + restarts the `mosquitto` service every 30 min for 24 h. Forces the reconnect-then-deadlock window.
-3. **Coexistence audit (parallel work).**
-   - IDF `CONFIG_ESP_COEX_*` settings vs current sdkconfig — check `BTDM_CTRL_COEX_*` knobs.
-   - NimBLE `nimble_port_deinit()` completeness on shutdown paths.
-   - BLE scan duty cycle vs Wi-Fi DTIM beacon overlap.
-4. **Mitigation candidates** (try one at a time, leave the bench rig running 24 h between each):
-   - Pin `nimble_host` task to Core 1 (currently floating).
-   - Lower BLE scan duty (`BLE_SCAN_INTERVAL_MS` ↑, `BLE_SCAN_WINDOW_MS` ↓).
-   - Add a BLE-watchdog loop in main: if `nimble_host` task hasn't ticked in N minutes, deinit + reinit.
-   - Drop NimBLE entirely → switch to esp32-arduino's built-in BLE stack (heavier RAM, simpler coexistence model).
-5. **Phase 1 acceptance criterion.** 24 h bench soak with BLE on + 30-min broker blips + zero silent deadlocks.
+Plan drafted at [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
+GPIO assignments worked out (RELAY_CH1=25, RELAY_CH2=26, HALL_AO=32,
+HALL_DO=33). Hardware on hand. The diagnostic safety-net (coredump +
+restart_cause + canary build) is now strong enough to support feature
+work — any new failure mode introduced by relay/Hall integration will
+auto-capture its own backtrace.
 
-#### Phase 2 — fleet rollout (gated on v0.4.13 24h soak + Phase 1 acceptance)
-Soak gate matters here, not in Phase 1: if v0.4.13 has a latent post-OTA issue and we ship v0.4.15 with BLE on top, a fleet-wide failure is hard to attribute — was it BLE coexistence or a v0.4.13 regression? Soak isolates the baseline.
+This is the right next big session once #46 Alpha-class is resolved or
+acknowledged stable.
 
-**Prereqs:**
-- v0.4.13 24 h soak across the fleet — zero `boot_reason=panic|task_wdt|int_wdt|brownout`, no LWT-only stalls.
-- Phase 1 acceptance criterion met (24 h bench soak with BLE on, zero silent deadlocks).
+### v0.4.22 — #76 long-tail (sub-B/C/D/F/H/I)
 
-**Rollout:** Fleet OTA stagger same shape as v0.4.13 (2-min intervals). Watch heap_free trajectory closely — re-enabled BLE adds ~50 KB heap pressure.
+Restart-policy hardening leftovers from the cascade-fix entry. Each is
+a small firmware change; can be bundled into one release after Charlie
+canary completes a full week soak:
 
-**Risks.**
-- Coexistence bugs are notoriously timing-dependent — fix on bench may not reproduce in fleet.
-- Re-enabling BLE adds ~50 KB heap pressure; verify `mqttPublish()` heap-guard threshold (4096) is still adequate post-fix.
-- If we end up swapping NimBLE for arduino-bt, that pulls in another ~80 KB flash and changes the BLE scanner API surface — significant refactor of `ble.h`.
-
-**Defer if:** v0.4.14 surfaces any post-OTA instability; Charlie's chronic flake (#46) turns out to be hardware. Either consumes the cycle budget Path C needs.
+- **B.** NVS ring buffer of last-N restart contexts; surface in boot
+  announcement as `last_restart_reasons:[...]`. Builds on the
+  shipped sub-G primitive.
+- **C.** Time-based MQTT_RESTART_THRESHOLD instead of count-based.
+  More intuitive; survives backoff-window weirdness.
+- **D.** NVS cool-off counter for restart-loops: ≥3 restarts in 10 min
+  with reason=mqtt_unrecoverable → fall back to AP/config portal mode
+  instead of restarting again.
+- **F.** Bump `CONFIG_ESP_TASK_WDT_TIMEOUT_S` 5 s → 12 s. Combines
+  with the broker probe + pre-restart publish to give legitimate slow
+  reconnects more headroom without losing the safety net.
+- **H.** Better backoff math; replace `1→2→4→...→60 s` cap-at-60 with
+  jittered exponential.
+- **I.** Surface WDT-reset vs SW_CPU_RESET as separate metrics in
+  /daily-health and the heap-trajectory tile.
 
 ---
 

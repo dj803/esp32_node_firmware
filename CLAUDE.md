@@ -65,12 +65,37 @@ overnight runs, Phase B-style diagnostics), arm both watchers:
 - **`tools/silent_watcher.sh`** as a Monitor task — alerts on LWT offline
   (silent deadlocks that don't reboot) AND abnormal boot reasons (panic,
   task_wdt, int_wdt, brownout). Catches the failure modes the boot_history
-  watcher misses. Documented in #60.
+  watcher misses. Documented in #73 (was #60 cascade-session).
 - **boot_history poller** as a separate Monitor task — alerts on
   net-new abnormal entries in the Node-RED `boot_history` flow context.
+- **`/diag/coredump` listener** (since v0.4.17) — devices auto-publish a
+  retained coredump payload on the first boot after a panic. `/fleet-status`
+  surfaces these. No serial monitor required; the backtrace is in MQTT.
+- **`restart_cause` field** (since v0.4.21) — the boot announcement now
+  includes a `restart_cause` JSON field on the boot AFTER any
+  software-initiated restart (cmd/restart, cred_rotate, mqtt_unrecoverable,
+  OTA reboot). Empty / absent on poweron / panic / wdt boots.
 
 Without the silent watcher, deadlock-class failures (#51 failure mode (b))
 go unnoticed until someone eyeballs the LEDs.
+
+## Canary build (#54 stack-overflow surveillance)
+The `[env:esp32dev_canary]` PIO env enables `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2`
+plus `OTA_DISABLE` (so the canary build doesn't auto-OTA up to release —
+without OTA_DISABLE, the local canary's `0.4.20.0` version sorts before
+the matching release per #80's 4-component semver and gets pulled down
+within an OTA cycle). USB-flash one device with this env for a long
+soak; if any task overflows its stack, the firmware halts at the
+violation site (visible on serial). Restore via `pio run -e esp32dev -t
+upload --upload-port COMx`.
+
+## Variant builds (#71 first cut)
+`[env:esp32dev_minimal]` extends `esp32dev` with `-DRFID_DISABLED`. The
+gate lives in `config.h` as `#ifndef RFID_DISABLED #define RFID_ENABLED #endif`,
+and `mqtt_client.h::handleRfidWhitelist` is wrapped in `#ifdef RFID_ENABLED`
+so the link doesn't fail. Heartbeat reports `rfid_enabled:false` on the
+minimal variant. Same pattern (gate + variant env) extends to BLE and
+future ESPNOW_RANGING when those features need per-device toggling.
 
 ## Capturing fresh-device first boot (provisioning / bootstrap debugging)
 PySerial's default DTR-on-open RESETS the ESP32, so opening serial right
