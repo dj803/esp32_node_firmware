@@ -1,9 +1,12 @@
 # Next session plan
 
-Drafted 2026-04-28 morning, after the STABILITY DEEP-DIVE session
-(2026-04-28 ~07:55 → 09:30 SAST) closed cleanly. v0.4.22 cut + fleet
-OTA'd; #46/#51 root cause completion + #83 mosquitto.log fix + #84
-agent verification discipline all SHIPPED.
+Drafted 2026-04-28 mid-morning, after the STABILITY DEEP-DIVE session
+(2026-04-28 ~07:55 → 09:30 SAST) AND the v0.5.0 Phase 1 code-only ship
+(2026-04-28 ~09:50 → 10:20). v0.4.22 cut + fleet OTA'd; #46/#51 root
+cause completion + #83 mosquitto.log fix + #84 agent verification
+discipline all SHIPPED. relay.h + hall.h drivers scaffolded behind
+default-disabled gates; both esp32dev and esp32dev_relay_hall compile
+clean. NO devices flashed yet — hardware-presence verification needed.
 
 ## State at last sweep (2026-04-28 ~09:30 SAST)
 
@@ -14,63 +17,93 @@ agent verification discipline all SHIPPED.
 | Backlog | OPEN 47, RESOLVED 32, WONT_DO 5 |
 | Open coredump | None unresolved — Alpha's loopTask v0.4.20 panic fully decoded as the same bad_alloc shape from #51, fixed in v0.4.22 |
 
-## Recommended next session — v0.5.0 RELAY + HALL HARDWARE Phase 1
+## Recommended next session — v0.5.0 Phase 2: HARDWARE BRING-UP
 
-The diagnostic safety-net is now mature enough to support feature work:
+Phase 1 (code-only scaffolding) shipped this session in commit cc0a074:
+- `include/relay.h` driver with active-LOW logic + boot-click guard +
+  NVS state persistence at namespace "esp32relay".
+- `include/hall.h` driver with ADC1 11 dB read + 8-sample average +
+  Gauss conversion via the 2× divider + per-unit offset calibration
+  via cmd/hall/zero.
+- `cmd/relay`, `cmd/hall/config`, `cmd/hall/zero` MQTT handlers in
+  `mqtt_client.h`, each `#ifdef`-gated.
+- `relay_enabled` + `hall_enabled` heartbeat fields.
+- `[env:esp32dev_relay_hall]` PIO env enabling both flags via
+  `-DRELAY_ENABLED -DHALL_ENABLED`.
+- Both `esp32dev` (default paths) and `esp32dev_relay_hall` (full
+  paths) compile clean.
 
-- v0.4.17 coredump-to-flash captures any panic backtrace without serial
-- v0.4.21 restart_cause distinguishes software-restart causes
-- v0.4.22 dual-guard + try/catch around the bad_alloc class (#46/#51)
-- Charlie canary continues to detect stack overflows silently
-- ota-monitor.sh + verify-after-action discipline mean rollouts won't
-  silently fail
+Phase 2 needs HARDWARE on the bench — that's the operator action that
+gates this session.
 
-Open the [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md) plan and
-ship Phase 1:
+### Pre-session prep (operator hands-on, ~30 min)
 
-### Scope (single session, ~3-4 h)
+Wire the BDD 2CH relay + BMT 49E Hall sensor to Bravo per the table
+in PLAN_RELAY_HALL_v0.5.0.md "Hardware summary" + "GPIO inventory":
 
-1. **Hardware bring-up on bench device.** Pick Bravo (no peripherals,
-   already the active flashable bench rig). Wire BDD relay board
-   (5V VCC + JD-VCC bridge, IN1=GPIO25, IN2=GPIO26) and BMT 49E Hall
-   sensor (VIN + 2×10kΩ divider to ADC1 GPIO32, DO to GPIO33). Verify
-   no boot brownout with both attached.
+| Module | ESP32 GPIO | ESP32 power | Notes |
+|---|---|---|---|
+| Relay VCC | — | 5V | signal-side opto supply |
+| Relay GND | — | GND | common |
+| Relay IN1 | **GPIO 25** | — | active-LOW |
+| Relay IN2 | **GPIO 26** | — | active-LOW |
+| Relay JD-VCC | — | **separate 5V supply** | ~150 mA inrush; ESP32 5V will brownout |
+| Hall VIN/VCC | — | 5V | SS49E spec 4.5–10.5 V; 3.3 V is OUT OF SPEC |
+| Hall GND | — | GND | common |
+| Hall AO | **GPIO 32** | — | via 2×10 kΩ divider (5 V → 2.5 V; ADC max 3.3 V) |
+| Hall DO | **GPIO 33** *(optional)* | — | LM393 threshold output |
 
-2. **`include/relay.h`** mirroring `ws2812.h` shape:
-   - `#ifdef RELAY_ENABLED` gate.
-   - `relayInit()`: pinMode + drive HIGH BEFORE OUTPUT (avoid boot
-     click), restore from NVS namespace `esp32relay`.
-   - `relaySet(ch, bool)`, `relayGet(ch)`, persisted via Preferences.
-   - MQTT handler in `mqtt_client.h`: `cmd/relay` retained JSON
-     `{"ch":1,"state":true}`.
-   - Heartbeat advertises `relay_enabled:true` and `relay_state:[bool,bool]`.
+Verify no boot-brownout with both modules attached.
 
-3. **`include/hall.h`** for the Hall sensor:
-   - `#ifdef HALL_ENABLED` gate.
-   - ADC1 single-shot read with 11 dB attenuation, 12-bit resolution.
-   - Reading published periodically via `+/sensor/hall` (separate from
-     `+/status` heartbeat).
-   - Optional digital threshold from D0 (LM393 comparator) for low-
-     latency interrupt.
+### Session scope (~2 h)
 
-4. **Validate end-to-end** on Bravo:
-   - cmd/relay ch=1 state=true → relay clicks, GPIO25 goes LOW (relay
-     active-low), heartbeat reflects new state.
-   - Magnet swept past Hall → ADC value moves; D0 threshold fires.
-   - Reboot Bravo via cmd/restart → relay state restored from NVS,
-     no boot-click on either channel.
+1. **Capture Bravo's pre-flash state** (firmware version, uptime,
+   last boot reason) per the verify-after-action / pre-reflash
+   discipline (#84). Stop any watcher holding COM4.
 
-5. **Document** in PLAN_RELAY_HALL_v0.5.0.md what shipped + what's
-   deferred to Phase 2 (Node-RED dashboard tile, MQTT command shape,
-   variant-build integration with #71).
+2. **USB-flash `esp32dev_relay_hall` to Bravo:**
+   ```
+   pio run -e esp32dev_relay_hall -t upload --upload-port COM4
+   ```
+   Bravo will report `firmware_version="0.4.22.0"` (local-build dev
+   variant of v0.4.22 with the gates flipped on). Heartbeat will
+   advertise `relay_enabled:true,hall_enabled:true`.
 
-### After Phase 1
+3. **Validate relay end-to-end:**
+   ```
+   mosquitto_pub -t '<bravo>/cmd/relay' -m '{"ch":1,"state":true}'
+   ```
+   Expect: relay 1 clicks closed, MQTT `status/relay` retained
+   `{"ch1":true,"ch2":false}`, log line `Relay ch1 → ON (pin 25)`.
 
-- Variant build (#71) story extended with `[env:esp32dev_relay_hall]`.
-- Node-RED dashboard tile (Phase 2 of v0.5.0) — operator-facing, NOT
-  in autonomous scope per DO NOT.
-- Cut v0.5.0 release once at least one device is wearing the hardware
-  in production.
+   Then `cmd/restart` Bravo. After reboot, relay state should
+   self-restore from NVS without a boot-click.
+
+4. **Validate Hall end-to-end:**
+   - `mosquitto_sub -t '<bravo>/telemetry/hall'` — confirm periodic
+     `{"voltage_v":..,"gauss":..,"above_threshold":..}` at the
+     default 1 s cadence.
+   - `cmd/hall/zero` with no magnet near — captures the current
+     reading as offset, persists to NVS.
+   - Sweep a magnet past the sensor — `gauss` value moves; on
+     threshold cross, `telemetry/hall/edge` fires with
+     `{"edge":"rising"|"falling",...}`.
+   - `cmd/hall/config '{"interval_ms":500,"threshold_gauss":30}'` —
+     confirm cadence + threshold change.
+
+5. **M1 + M2 chaos** to confirm the relay/hall paths don't add new
+   failure surface (per Test-after-change discipline). Skip M3
+   unless the M2 outcome warrants tightening.
+
+6. **Document** what shipped + what's deferred (Node-RED dashboard
+   tile is operator-visible per DO NOT; defer to a manual operator
+   session).
+
+7. **Cut v0.5.0 release** if the bench validation lands clean. Bravo
+   is on the variant binary; the release manifest stays at v0.4.22
+   for the rest of the fleet OR we update PLAN_RELAY_HALL with a
+   per-device variant-aware OTA story (the per-variant manifest from
+   #71).
 
 ## Alternative single-session paths if v0.5.0 isn't ready
 
