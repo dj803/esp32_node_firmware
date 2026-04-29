@@ -8,6 +8,7 @@ references.
 ## When to look here
 
 - Setting up a new device → [INSTALL_GUIDE.md](INSTALL_GUIDE.md) + [AP_MODE_SETUP.md](AP_MODE_SETUP.md)
+- Adding hardware to an existing device (NeoPixel matrix, relay, Hall) → [HARDWARE_WIRING.md](HARDWARE_WIRING.md)
 - Something looks broken → [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - A device just rebooted unexpectedly → [ABNORMAL_REBOOTS.md](ABNORMAL_REBOOTS.md)
 - Need to publish to / understand an MQTT topic → [MQTT_COMMAND_REFERENCE.md](MQTT_COMMAND_REFERENCE.md) + [DIAG_TOPICS.md](DIAG_TOPICS.md)
@@ -21,6 +22,7 @@ references.
 
 ### Field / bench install
 - [INSTALL_GUIDE.md](INSTALL_GUIDE.md) — antenna orientation, RC522 distance, USB cable routing, calibration discipline
+- [HARDWARE_WIRING.md](HARDWARE_WIRING.md) — expansion modules (NeoPixel matrix, 2-ch relay, future Hall) wiring + firmware enable
 - [AP_MODE_SETUP.md](AP_MODE_SETUP.md) — first-boot bootstrap walkthrough via the captive portal
 
 ### Daily ops
