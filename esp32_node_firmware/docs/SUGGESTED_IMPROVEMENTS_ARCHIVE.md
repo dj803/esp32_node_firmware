@@ -5360,3 +5360,18 @@ Next steps (operator decision):
        - config.h:106 WIFI_BACKOFF_STEPS_MS
        - Pattern reference: AP_STA_SCAN_INTERVAL_MS (config.h:149) for
          the background-probe rhythm
+
+    UPGRADED 2026-04-29 PM (~16 min post-recovery): WORSE than initially
+    thought. Mosquitto log shows ALL 6 ESP32s simultaneously disconnected
+    at 14:09:11 (broker restart kicked clients). Only 2 reconnected by
+    14:17 (Alpha + Delta — both panicked + rebooted on the way, fresh
+    boots reset backoff). The other 4 (Bravo / Charlie / Echo / Foxtrot)
+    NEVER reconnected — they presumably saturated the 600 s backoff
+    tier during the chaotic recovery window. From the operator's
+    perspective: only 2/6 of the fleet visible in Node-RED 16+ minutes
+    after stable power return, while their status LEDs prove firmware
+    is still running. PRIORITY is now FLEET-CRITICAL recovery, not just
+    UX. Real-world data point that fix option (a) — periodic SSID probe
+    during the 600 s wait, short-circuiting on availability — would
+    have ended this incident cleanly. Bundle in the next stability
+    release as a high-confidence one-shot win.
