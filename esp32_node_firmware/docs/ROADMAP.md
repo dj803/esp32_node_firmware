@@ -2,11 +2,47 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-28 evening (post-v0.4.26 LED feature bundle — fleet OTA in progress).
+Last updated: 2026-04-29 afternoon (post-v0.4.28 #78 cascade-window guard + #96 AP-mode-loop bundle).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.28 — DONE (shipped 2026-04-29 afternoon — #78 cascade-window guard + #96 long-outage AP-mode-loop fixes)
+
+Three bugs closed end-to-end by symbolic decode + bench validation.
+
+- **#78 RESOLVED** — AsyncTCP `_error` vs AsyncMqttClient publish race.
+  Decoded all 5 v0.4.26 cascade panics against the v0.4.26 ELF
+  (worktree at `/c/Users/drowa/v0426-decode/`); common-ancestor frame
+  is `mqttPublish` ← `espnowRangingLoop`. Fix: cascade-window publish
+  guard with `_lastNetworkDisconnectMs` stamped from
+  `onMqttDisconnect` + WiFi-lost + WiFi-reconnect sites; `mqttPublish`
+  drops silently for `CASCADE_QUIET_MS` (5 s default) after any
+  stamp. See [docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md](SESSIONS/COREDUMP_DECODE_2026_04_29.md).
+- **#96 sub-A RESOLVED** — Long-outage AP-mode reboot loop:
+  `ap_portal.h:1001` now pushes `"ap_recovered"` to RestartHistory
+  before `ESP.restart()` in the STA-reconnect path, so post-reboot
+  `countTrailingCause("mqtt_unrecoverable")` returns 0. Self-clears
+  the streak on first AP-→-STA cycle.
+- **#96 sub-B RESOLVED** — `mqttScheduleRestart()` is now idempotent
+  (early-return when `_mqttRestartAtMs != 0`), preventing the
+  hundreds-per-cascade-window phantom restart-loop signature.
+- **#54 RESOLVED 2026-04-29 morning** — Charlie's 35h+ canary on
+  `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2` survived multiple cascade
+  events without firing. Strong positive evidence that #78 is heap
+  corruption, not stack overflow. Charlie reflashed off canary to
+  free COM5 for the #78 bench-debug session.
+
+Validation: USB-flashed all 6 fleet devices with v0.4.28. Each
+recovered cleanly from the AP-mode loop on first AP-→-STA reconnect
+(`last_restart_reasons` ends in `"ap_recovered"` on every device).
+6/6 healthy on v0.4.28.0 with steady heartbeats post-flash.
+
+Build: esp32dev clean (~1646 KB flash, RAM 22.3% / Flash 83.7%, no
+size delta vs v0.4.27 — guards are essentially free). All 6 fleet
+devices on v0.4.28 manually flashed; CI tag will canonicalize to
+v0.4.28 (3-component) and the gh-pages OTA manifest will publish.
 
 ### v0.4.26 — DONE (shipped 2026-04-28 evening — LED feature bundle)
 
