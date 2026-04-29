@@ -42,7 +42,7 @@
 // build to allow operators to distinguish iterations. CI builds get the tag
 // injected via FIRMWARE_VERSION_OVERRIDE = "0.4.20" (no 4th component) so a
 // release is always the cleaner 3-component form.
-#define FIRMWARE_VERSION           "0.4.29.0"
+#define FIRMWARE_VERSION           "0.4.30.0"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 
@@ -96,15 +96,28 @@
 // actively sabotaging that recovery.
 //
 // WIFI_BACKOFF_STEPS_MS is the schedule of wait durations between reconnect
-// attempts. The last value is used forever — a 30-min outage ends up polling
-// every 10 min until the router returns.
+// attempts. The last value is used forever.
 //
 // WIFI_OUTAGE_RESTART_MAX is a SEPARATE counter (NVS key "wifi_outage") from
 // DEVICE_RESTART_MAX. Router blips no longer burn through the generic counter;
 // only firmware-panic / MQTT-unrecoverable paths count toward DEVICE_RESTART_MAX.
+//
+// (#98, v0.4.30) Schedule compressed from
+//   { 15s, 30s, 60s, 120s, 300s, 600s }   (saturating at 10 min)
+// to
+//   { 15s, 30s, 60s, 60s, 60s, 60s }      (saturating at 1 min)
+// after the 2026-04-29 PM real-world router-power-failure recovery
+// found 4/6 fleet devices stuck silent for 16+ minutes post-recovery
+// because they hit the 600 s tier during the chaotic recovery window
+// and were waiting out 10 min between retries even after the router
+// was back up. The original "10 min spacing once we've given up
+// hope" tier was tuned for "router truly dead" — but in practice
+// router blips dominate that scenario by frequency, and the 1-min
+// fixed tier still polls indefinitely with negligible CPU cost
+// (one WiFi.reconnect per minute is nothing).
 // -----------------------------------------------------------------------------
 static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
-    15000, 30000, 60000, 120000, 300000, 600000
+    15000, 30000, 60000, 60000, 60000, 60000
 };
 #define WIFI_BACKOFF_STEPS_COUNT \
     (sizeof(WIFI_BACKOFF_STEPS_MS)/sizeof(WIFI_BACKOFF_STEPS_MS[0]))
