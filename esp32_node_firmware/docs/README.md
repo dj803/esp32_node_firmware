@@ -102,6 +102,20 @@ retrospectives but not active reference.
   — open questions left for the operator from the 2026-04-28
   afternoon autonomous session, plus the URGENT fleet-LWT-offline
   observation from ~10:50 SAST that gated the v0.4.24 tag.
+- [SESSIONS/ALPHA_SERIAL_2026_04_29.md](SESSIONS/ALPHA_SERIAL_2026_04_29.md)
+  — Alpha v0.4.26 production serial capture during the 2026-04-29
+  morning #54 + #78 disposition session.
+- [SESSIONS/CHARLIE_CANARY_SERIAL_2026_04_29.md](SESSIONS/CHARLIE_CANARY_SERIAL_2026_04_29.md)
+  — Charlie's canary v0.4.20.0 serial capture documenting 35 h+
+  cascade-survival without firing the stack canary; closes #54.
+- [SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md](SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md)
+  — first time a #78-class cascade event was captured with
+  continuous serial logging through the trigger; surfaced #94's
+  silent-degradation variant + reproduction-recipe protocol.
+- [SESSIONS/COREDUMP_DECODE_2026_04_29.md](SESSIONS/COREDUMP_DECODE_2026_04_29.md)
+  — symbolic decode of all 6 retained `/diag/coredump` payloads
+  against the v0.4.26 ELF; common-ancestor analysis for #78;
+  #96 root-cause + side-effects writeup. v0.4.28 closing evidence.
 - [SESSIONS/AP_OUTAGE_2026_04_28.md](SESSIONS/AP_OUTAGE_2026_04_28.md)
   — observation log from the 2026-04-28 fleet AP outage. First
   fleet-wide outage observed with v0.4.23's #55 mqtt_disconnects

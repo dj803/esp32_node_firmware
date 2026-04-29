@@ -85,7 +85,13 @@ session checklist"):
 2. ROADMAP.md `### vX.Y.Z — DONE` entry under "Now".
 3. NEXT_SESSION_PLAN.md refresh — what's next given what just shipped.
 4. SUGGESTED_IMPROVEMENTS.md OPEN-list audit for stale entries (move
-   silently-resolved → RESOLVED, REJECTED → WONT_DO).
+   silently-resolved → RESOLVED, REJECTED → WONT_DO). **For every
+   #N closed or filed this session, verify SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+   has a corresponding full-text entry, and resolved entries have a
+   `STATUS: RESOLVED YYYY-MM-DD in vX.Y.Z` line appended.** This is
+   the most-frequently-missed step — see "SUGGESTED_IMPROVEMENTS
+   bookkeeping" under Workflow above. `tools/dev/end-of-session-sweep.sh`
+   surfaces mismatches automatically.
 5. docs/README.md index for any new doc.
 6. Memory MEMORY.md + per-session memory file under
    `~/.claude/projects/<project>/memory/`.
@@ -208,6 +214,18 @@ To capture a TRULY first boot:
 
 ### Verification Before Commit
 Always wait for user to provide compile output or serial logs confirming a fix works before moving to commit/push. Do not assume code changes succeed.
+
+### SUGGESTED_IMPROVEMENTS bookkeeping (#85 sub-D)
+The convention header at the top of `docs/SUGGESTED_IMPROVEMENTS.md`
+(filed 2026-04-29 after a drift-correction pass) is **load-bearing** — re-read it before editing either file:
+
+- **Every new entry** gets full text in `SUGGESTED_IMPROVEMENTS_ARCHIVE.md` AND a one-line summary in `SUGGESTED_IMPROVEMENTS.md`. Both edits, every time.
+- **Every resolution** gets a `STATUS: RESOLVED YYYY-MM-DD in vX.Y.Z` line appended to the existing archive entry, AND moves the index summary from OPEN to RESOLVED. Both edits, every time.
+- **Every WONT_DO** gets a `STATUS: WONT_DO YYYY-MM-DD — <reason>` line in the archive entry and a move to the WONT_DO section in the index.
+
+The drift trap: detail-rich inline parentheticals in the index file feel like "the entry" but they're not — the archive is the durable record. If you find yourself writing > 1 line of detail in the index, move it to ARCHIVE.md and replace the inline detail with a brief pointer ("full text in archive").
+
+Run `tools/dev/end-of-session-sweep.sh` before committing — the script's #85 sub-D check will surface index/archive mismatches.
 
 ## Release Pipeline
 When user requests a version release or OTA deployment, ALWAYS execute the full pipeline in one flow: commit → tag → push → GitHub release → update OTA manifest. Do not stop after code changes.

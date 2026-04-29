@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/dev/end-of-session-sweep.sh — checklist surfacer for autonomous
-# session close. Walks the four checks from SUGGESTED_IMPROVEMENTS #85
-# sub-B and prints a single-screen TODO that the agent works through
-# before declaring the session done.
+# session close. Walks five checks from SUGGESTED_IMPROVEMENTS #85
+# sub-B/sub-D and prints a single-screen TODO that the agent works
+# through before declaring the session done.
 #
 # This is a SURFACER, not a fixer. It identifies candidates; the agent
 # decides whether each is real work or a false positive.
@@ -131,11 +131,69 @@ check_readme_coverage() {
   fi
 }
 
+# ── Check 5: archive completeness — every #N referenced in the index ────────
+# Filed 2026-04-29 after a drift pass found #54/#78/#96/#97 with index lines
+# but no archive entry / no STATUS line. Convention: every #N in the index
+# has a `^N\. ` entry in ARCHIVE.md, and every entry under "## RESOLVED" /
+# "## WONT_DO" sections of the index has a `STATUS:` line in its archive
+# entry. Catches both "filed-but-never-archived" and "resolved-in-index-
+# only" drift.
+check_archive_completeness() {
+  # Pull the set of all #N tokens that appear at the start of a line in
+  # the index (sorted, unique). These are the entries the index claims
+  # exist.
+  local index_nums archive_nums missing_archive=()
+  index_nums="$(grep -oE '^\s+#[0-9]+\b' "$INDEX_FILE" | grep -oE '[0-9]+' | sort -un)"
+  for num in $index_nums; do
+    if ! grep -qE "^${num}\. " "$ARCHIVE_FILE"; then
+      missing_archive+=("$num")
+    fi
+  done
+  if [ ${#missing_archive[@]} -gt 0 ]; then
+    CANDIDATES+=("Index references but ARCHIVE.md has no entry for: #${missing_archive[*]} — append the full-text entry per the convention header")
+  fi
+
+  # For every entry under the index's "## RESOLVED" or "## WONT_DO"
+  # sections, the archive entry should have a STATUS line. (Same caveat
+  # as Check 3: archive bodies sometimes mention STATUS for cross-
+  # references, so we look for STATUS at column 4 (the entry's own
+  # status footer convention) AND require it within ~80 lines of the
+  # `^N\. ` line.)
+  local resolved_section status_missing=()
+  resolved_section="$(awk '/^## RESOLVED/,EOF' "$INDEX_FILE")"
+  while IFS= read -r line; do
+    local n
+    n="$(echo "$line" | grep -oE '^\s+#[0-9]+' | grep -oE '[0-9]+' || true)"
+    [ -z "$n" ] && continue
+    # Find the archive block for entry $n and check the next 200 lines
+    # for a STATUS line that's a direct entry footer (4-space indented).
+    if grep -qE "^${n}\. " "$ARCHIVE_FILE"; then
+      local block
+      block="$(awk -v n="$n" '
+        $0 ~ "^"n"\\. " { hit=1; print; next }
+        hit && /^[0-9]+\. / { hit=0 }
+        hit { print }
+      ' "$ARCHIVE_FILE")"
+      # Accept EITHER the new STATUS: footer convention OR the
+      # legacy "(addressed|resolved YYYY-MM-DD ...)" parenthetical
+      # at the entry title line. Both are valid acknowledgements.
+      if ! echo "$block" | grep -qE '^    STATUS: ' \
+         && ! echo "$block" | head -1 | grep -qiE '\((addressed|resolved|wont_do|won.t do|moot|deferred|partial)\b'; then
+        status_missing+=("$n")
+      fi
+    fi
+  done <<< "$resolved_section"
+  if [ ${#status_missing[@]} -gt 0 ]; then
+    CANDIDATES+=("Index marks RESOLVED/WONT_DO but ARCHIVE entry has no STATUS footer for: #${status_missing[*]} — append 'STATUS: RESOLVED YYYY-MM-DD in vX.Y.Z' to the archive entry")
+  fi
+}
+
 # ── Run all checks ───────────────────────────────────────────────────────────
 check_fleet_version
 check_roadmap_coverage
 check_resolved_in_open
 check_readme_coverage
+check_archive_completeness
 
 # ── Output ───────────────────────────────────────────────────────────────────
 if [ ${#CANDIDATES[@]} -eq 0 ]; then

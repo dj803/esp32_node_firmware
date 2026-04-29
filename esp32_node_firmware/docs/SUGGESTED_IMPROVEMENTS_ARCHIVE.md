@@ -2418,6 +2418,21 @@ with an empty buffer. CRITICAL fix path:
     PRIORITY: Low. Diagnostic only. Schedule alongside the v0.4.13
               tag if no other stack-related issues surface by then.
 
+    STATUS: RESOLVED 2026-04-29 with positive evidence. Charlie's
+    canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2 on v0.4.20.0)
+    soaked 35 h+ on the bench across multiple #78 cascade events
+    (2026-04-28 evening + 2026-04-29 morning + 2026-04-29 09:21
+    bench-debug AP-cycle) WITHOUT firing the stack-canary fault
+    handler. This is strong positive evidence that #78 is heap
+    corruption, not stack overflow — corroborated by the v0.4.28
+    cascade-window-guard fix targeting AsyncTCP `_error` vs
+    AsyncMqttClient publish race rather than any stack-size bump.
+    Charlie reflashed off canary to v0.4.27 production 2026-04-29
+    afternoon (freeing COM5 for the #78 bench-debug session).
+    Surveillance closed. If a future panic surfaces in stack-overflow
+    territory, re-flash one device with [env:esp32dev_canary] and
+    resume the soak — the env stays in platformio.ini for revival.
+
 55. AsyncMqttClient malformed-packet counter
     OBSERVATION (2026-04-25 mosquitto log review):  Mosquitto recorded
     2 'malformed packet' disconnect events in 2 days — Charlie at
@@ -3624,6 +3639,54 @@ Next steps (operator decision):
     The decode here is the diagnostic step — it doesn't change
     operational risk, but it does narrow the root-cause
     hypothesis space substantially.
+
+    STATUS: RESOLVED 2026-04-29 in v0.4.28. ROOT-CAUSE DECODED
+    2026-04-29 morning by symbolizing all 5 retained v0.4.26
+    /diag/coredump payloads against the v0.4.26 ELF (worktree at
+    /c/Users/drowa/v0426-decode/). Common-ancestor frame in 3 of
+    5 production panics: `mqttPublish` (mqtt_client.h:292) ←
+    `espnowRangingLoop` (espnow_ranging.h:650). Race window:
+    WiFi disconnect → AsyncTCP `_async_service_task` runs
+    `_handle_async_event:284` → `AsyncClient::_s_error:1503`
+    freeing the AsyncClient. Concurrently loopTask runs
+    `espnowRangingLoop` → `mqttPublish` → `AsyncMqttClient::publish`
+    → enqueues into the freed/freeing AsyncClient. Manifests as
+    Alpha freed-vtable jump (0x00000019 = +0x19 offset from null
+    `this`), Delta/Echo std::terminate from
+    __cxa_allocate_exception itself failing on corrupted heap
+    (uncatchable by the v0.4.22 try/catch defense), Foxtrot strlen
+    on freed payload, Bravo WiFi-driver TX-queue corruption.
+
+    FIX SHIPPED IN v0.4.28: cascade-window publish guard.
+    `_lastNetworkDisconnectMs` static volatile in mqtt_client.h,
+    stamped via `mqttMarkNetworkDisconnect()` from three sites:
+       (a) `onMqttDisconnect()` (mqtt_client.h:1645)
+       (b) main.cpp WiFi-lost branch (`if (_wifiWasConnected)`)
+       (c) main.cpp WiFi-reconnect branch (`if (wifiConnected &&
+           !_wifiWasConnected)`)
+    `mqttPublish()` early-returns silently for `CASCADE_QUIET_MS`
+    (default 5 s, tunable) after any stamp. Closes the race
+    directly — during the cascade window no publishes are
+    enqueued, so AsyncTCP never dispatches into freed objects,
+    AsyncMqttClient never allocates from corrupted heap, WiFi-
+    driver TX queue isn't fed new frames.
+
+    VALIDATION: Three operator-triggered AP-cycle reproduction
+    tests on the bench (2026-04-29 PM). No cascade panic on any
+    cycle (the bug is non-deterministic per #92). Alpha v0.4.28
+    showed visibly cleaner heap fragmentation than its unguarded
+    peers post-cycle — `heap_largest` 81908 vs 36-43K on
+    v0.4.26 peers — secondary positive signal that the guard
+    suppresses the fragmentation-inducing publish chain during
+    the cascade window. Mass USB-reflash of all 6 fleet devices
+    completed cleanly; #54 (stack-canary surveillance) closed
+    with positive evidence in the same session. See
+    docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md for the full
+    decode + side-effects analysis. The earlier-considered
+    vendored AsyncTCP defensive null-out is no longer urgent —
+    the cascade-window guard makes it unreachable from the
+    production trigger path. File a follow-up only if the
+    soak surfaces a residual cascade.
 
 ────────────────────────────────────────────────────────────
 79. Version-update watcher as a standing dev tool + ack-driven OTA
@@ -5015,3 +5078,162 @@ Next steps (operator decision):
 
     LINKS:
        - Hit during #94 v0.4.27 USB-flash to Alpha 2026-04-29 morning
+
+96. Long-outage AP-mode loop — phantom restart-loop signature
+    DISCOVERED: 2026-04-29 PM during the bench AP-cycle #3 long-
+    disconnect test. Fleet-wide 12.6 minute outage put ALL 6 devices
+    into a NVS-persisted AP-mode reboot loop within ~5 minutes of
+    AP recovery. Operator power-cycling the fleet did NOT clear it
+    (confirmed RAM vs NVS persistence experimentally), and the
+    AP-portal-→-STA-reconnect path restarted in a way that preserved
+    the bad state. See
+    docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md "Side-effect #1" for
+    full timeline.
+
+    SUB-A — AP-portal restart doesn't break the streak
+
+    OBSERVATION: ap_portal.h:1001 calls `ESP.restart()` directly
+    when STA reconnects to "Enigma" after AP-mode entry. No new
+    RestartHistory ring entry is pushed first, so the post-restart
+    OPERATIONAL boot-time check in main.cpp:300
+    `RestartHistory::countTrailingCause("mqtt_unrecoverable") >=
+    MQTT_RESTART_LOOP_THRESHOLD` (threshold = 3) still trips on the
+    same accumulated streak.
+
+    Result: AP → STA reconnect → restart → OPERATIONAL boot detects
+    streak → AP again. Loop is sticky; the only escape (per the
+    code comment at main.cpp:296) is a code path that pushes a
+    non-`mqtt_unrecoverable` entry to the ring before restart.
+
+    SUB-B — `mqttScheduleRestart()` lacks debounce
+
+    OBSERVATION: `mqttScheduleRestart()` in mqtt_client.h:1990
+    pushes a new RestartHistory entry unconditionally on every call.
+    Caller in main.cpp's MQTT recovery logic fires on EVERY loop
+    iteration while the unrecoverable-timeout condition holds. During
+    the 12.6 min outage's recovery window, the function was called
+    hundreds of times in milliseconds (visible in Alpha's serial log
+    at 12:01:03.103: "Scheduling restart (mqtt_unrecoverable) in
+    300 ms" repeated ~hundreds of times in the same millisecond).
+    The 8-slot ring buffer was completely overwritten with
+    `"mqtt_unrecoverable"` entries within ~20 seconds.
+
+    The post-restart check then read 8 consecutive
+    `"mqtt_unrecoverable"` entries — a phantom restart-loop
+    signature that looked like 8 distinct failed restarts when
+    there was actually ONE outage and ONE ESP.restart().
+
+    FIXES SHIPPED IN v0.4.28:
+
+    sub-A: ap_portal.h:1001 (ESP.restart() at STA-reconnect)
+    pushes `RestartHistory::push("ap_recovered")` before the
+    restart. Next-boot countTrailingCause walks newest-first, sees
+    `ap_recovered`, mismatches `mqtt_unrecoverable`, returns 0.
+    Streak broken. Self-clears on first AP-→-STA cycle post-flash.
+
+    sub-B: mqttScheduleRestart() in mqtt_client.h:1990 now
+    early-returns if `_mqttRestartAtMs != 0` — a deferred restart
+    is already scheduled. Idempotent: one push per actual restart.
+    Without sub-B, sub-A is a band-aid; the next long outage would
+    refill the ring on the freshly-flashed firmware.
+
+    RECOVERY FOR ALREADY-STUCK DEVICES: USB-flash with v0.4.28.
+    On first post-flash boot the boot-time check still sees the
+    8 stale `mqtt_unrecoverable` entries → enters AP mode → AP-mode
+    periodic STA scan reconnects to "Enigma" → the new sub-A code
+    pushes "ap_recovered" before ESP.restart() → next boot's
+    countTrailingCause sees newest = "ap_recovered" → operates
+    normally.
+
+    VALIDATION: 6/6 fleet devices recovered cleanly via USB-flash
+    on 2026-04-29 PM. Each device's first MQTT boot announcement
+    post-flash showed `last_restart_reasons` ending in
+    `"ap_recovered"` — direct audit-trail evidence the sub-A
+    code path executed exactly as designed.
+
+    LINKS:
+       - Surfaced during v0.4.28 #78 bench-debug session
+       - docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md
+       - main.cpp:296-310 (boot-time MQTT_RESTART_LOOP_THRESHOLD check)
+       - ap_portal.h:1001 (sub-A fix site)
+       - mqtt_client.h:1990 (sub-B fix site)
+       - include/restart_history.h (RING_SIZE=8, NS="rstdiag")
+
+    STATUS: RESOLVED 2026-04-29 in v0.4.28. Both sub-A and sub-B
+    shipped in the same release as the #78 cascade-window guard.
+    Validated end-to-end across all 6 fleet devices via mass
+    USB-reflash + observed self-recovery on first AP-→-STA cycle.
+
+97. Auto-OTA-during-cascade-recovery gate
+    DISCOVERED: 2026-04-29 PM during v0.4.28 AP-cycle #2 testing.
+    Bravo / Echo / Foxtrot were on v0.4.26, recovering from a fresh
+    WiFi outage. As soon as they reconnected to "Enigma" their
+    periodic OTA poll fired, pulled v0.4.27 from gh-pages, flashed,
+    and rebooted — all while still inside the cascade-recovery
+    window of the AP-cycle event.
+
+    OBSERVATION: It worked OK this time (clean upgrade, no
+    bricking, no panics post-OTA), but raises three concerns:
+
+       1. Heap state is unknown post-cascade. If a silent
+          #78-style heap corruption happened during the cascade
+          window without firing a panic, an OTA write into the
+          flash partition that touches the corrupted heap during
+          the verify/install phase can brick the device or leave
+          the new firmware un-bootable.
+
+       2. OTA install during instability adds reboots,
+          amplifying the disruption window. A device already
+          mid-recovery doesn't need an additional install-then-
+          reboot cycle.
+
+       3. A regression in the new firmware is much harder to
+          roll back from a fleet that's mid-cascade than from a
+          steady-state fleet. Devices are LWT-offline,
+          observability is degraded, and OTA-pull happens on
+          their schedule rather than the operator's.
+
+    PROPOSED FIX: At the top of `otaCheckNow()` (and any other
+    OTA-poll trigger sites), skip the OTA poll if a recent
+    network disconnect timestamp indicates we're inside the
+    cascade-recovery window. Same guard pattern as the v0.4.28
+    #78 cascade-window publish guard, but with a longer window
+    (~5 min). Pseudocode:
+
+       if (_lastNetworkDisconnectMs != 0 &&
+           (millis() - _lastNetworkDisconnectMs) < OTA_POST_DISCONNECT_QUIET_MS) {
+           LOG_I("OTA", "skipping poll — inside post-disconnect quiet window");
+           return;
+       }
+
+    The static `_lastNetworkDisconnectMs` already exists from the
+    #78 fix and is stamped from three sites (onMqttDisconnect,
+    WiFi-lost, WiFi-reconnect) — reusing it here is essentially
+    free.
+
+    `OTA_POST_DISCONNECT_QUIET_MS` is intentionally longer than
+    `CASCADE_QUIET_MS` (5 s) because OTAs are large flash writes
+    that take many seconds to complete; we want the device to
+    have settled into stable steady-state operation for several
+    minutes before attempting one. 5 minutes is the proposed
+    starting point — long enough to clear typical reconnect
+    storms, short enough that operator-triggered OTAs don't
+    feel held back.
+
+    COST: OTA pickup delayed up to OTA_POST_DISCONNECT_QUIET_MS
+    after any WiFi/MQTT event. In practice OTAs are mostly
+    operator-triggered (`cmd/ota_check`) or fleet-rolled via
+    tools/dev/ota-rollout.sh anyway — periodic-poll being
+    slightly later is negligible.
+
+    PRIORITY: MEDIUM. Not a stability bug today (we got lucky in
+    the AP-cycle #2 test), but a pre-emptive hardening. Bundle
+    with the next routine release (v0.4.29 candidate alongside
+    #87 / #88 / #89 ranging UX work).
+
+    LINKS:
+       - Observed during v0.4.28 #78 bench-debug session
+       - docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md
+       - mqtt_client.h:226-280 (existing _lastNetworkDisconnectMs
+         + cascade-window helpers — reuse the same static)
+       - include/ota.h (otaCheckNow site)
