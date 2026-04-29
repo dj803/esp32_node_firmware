@@ -60,6 +60,12 @@ CONSTRAINTS
     a tiny 1-second blip and check `blip.log` for the entry. If silent,
     ask operator to start it via "Start Blip Watcher.bat" rather than
     falling back to "ask operator to run blips manually" each time.
+  • `C:\ProgramData\mosquitto\mosquitto.log` is owned by SYSTEM (mosquitto
+    service runs as SYSTEM) — non-elevated read returns "Permission
+    denied". Same root cause as the blip-watcher elevation gap. Either
+    ask operator for `Get-Content ... -Tail 60`, OR loosen the ACL once
+    via `icacls C:\ProgramData\mosquitto\mosquitto.log /grant
+    "$env:USERNAME:(R)"` from elevated PS — read-only, durable, no risk.
   • Use tools/dev/ota-rollout.sh for staggers (ack-driven, not fixed-interval)
   • Commit and push after every meaningful change so progress is visible
   • Verify-within-N-minutes after every state-changing action (#84). Flash:

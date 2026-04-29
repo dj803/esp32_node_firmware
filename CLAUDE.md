@@ -47,6 +47,29 @@
 - Reports land in `C:\Users\drowa\daily-health\`. Exit codes: 0=green, 1=yellow, 2=red.
 - Mosquitto file logging lives at `C:\ProgramData\mosquitto\mosquitto.log` once
   `apply-logging-config.ps1` has been run elevated.
+- **Non-elevated read of mosquitto.log is denied by default** (file owned by
+  SYSTEM, same root cause as the blip-watcher elevation gap). One-time fix:
+  run `esp32_node_firmware/tools/Grant Mosquitto Log Read.bat` as admin
+  (self-elevates via UAC), or paste from elevated PS:
+  `icacls C:\ProgramData\mosquitto\mosquitto.log /grant "${env:USERNAME}:R"`.
+  After that the log is durably readable from any agent session.
+
+## Chaos triggers (broker blips, fleet stress)
+Synthetic broker blips for cascade-window-guard validation use the
+**file-trigger blip-watcher** at `esp32_node_firmware/tools/blip-watcher.ps1`.
+The watcher must be running in the operator's elevated PS (launch via
+`Start Blip Watcher.bat` — self-elevates via UAC). Once armed, any
+non-elevated session triggers an N-second `net stop / sleep / net start
+mosquitto` cycle by writing the integer to the trigger file:
+
+```bash
+echo 30 > /c/ProgramData/mosquitto/blip-trigger.txt   # 30 s blip
+```
+
+Cycle is logged to `C:\ProgramData\mosquitto\blip.log`. Don't try
+`Stop-Service mosquitto` / `net stop mosquitto` directly from a non-
+elevated agent session — both return access-denied (mosquitto runs
+as SYSTEM). Use the file-trigger pattern.
 
 ## Diagnostic process (for fleet issues — silent OTAs, missing devices, stuck states)
 Always run these in order before assuming firmware bugs:

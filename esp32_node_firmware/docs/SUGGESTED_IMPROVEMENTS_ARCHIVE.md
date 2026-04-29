@@ -5294,3 +5294,69 @@ Next steps (operator decision):
     post-cascade is unknown and the conservative wait beats a
     half-flashed firmware. Sibling-retry path is also gated since
     the retry would just re-enter the same window.
+
+
+98. Heartbeat / device-status reconnect needs to be faster after router power failure
+    DISCOVERED: 2026-04-29 PM during real-world router+power outage immediately
+    after v0.4.29 release was tagged. Operator pulled both router and host power
+    briefly. After power returned and broker came back up:
+       - All 6 fleet devices showed heartbeat status-LED activity (firmware
+         running, WiFi-side OK)
+       - 10+ minutes later, ZERO fresh event=online / event=heartbeat /
+         event=boot messages reached the broker
+       - Only retained pre-outage LWT (event=offline) and retained coredumps
+         remained visible
+
+    LIKELY ROOT CAUSE: WiFi-outage backoff schedule
+    (`WIFI_BACKOFF_STEPS_MS = 15000, 30000, 60000, 120000, 300000, 600000`
+     in config.h:106) saturates at 600 s after 5 failed attempts. If the
+    router was down long enough that 5 attempts elapsed (~9 minutes
+    cumulative), the device sits in the 10-min-between-tries band waiting.
+    A router that was actually back within 2 minutes still gets a 10-min
+    silent stretch before the next reconnect attempt fires.
+
+    OBSERVABLE SYMPTOM:
+       - Heartbeat status LED keeps blinking (it's a loop()-tick LED, not
+         MQTT-tied)
+       - WS2812 strip on Alpha showed green-pulsing (MQTT_HEALTHY) on first
+         post-outage reconnect — but only the device that WAS in the early
+         backoff slot got there fast
+       - Other devices stay silent until the next 600 s tick fires
+
+    FIX OPTIONS:
+       (a) When backoff saturates at 600 s, also probe SSID periodically
+           (e.g. every 30 s) and short-circuit the wait if the SSID becomes
+           available again. Pattern matches AP-mode background scan
+           (AP_STA_SCAN_INTERVAL_MS = 30000). ~20 lines in main.cpp's WiFi
+           recovery branch.
+       (b) Reset the backoff index to 0 on any successful WiFi association,
+           regardless of MQTT outcome. (Currently the backoff index
+           persists across attempts that succeed at the WiFi layer but
+           fail at MQTT.) Already partially done in v0.3.15 — verify it
+           catches the post-router-failure case specifically.
+       (c) Compress the schedule: 15/30/60/120/300/300 instead of
+           …/300/600. Caps total worst-case wait at ~6.5 min instead of
+           ~21 min cumulative across all attempts. Operationally the
+           600 s tier was tuned for "router truly gone" cases that don't
+           need fast reconnect — but real-world router blips dominate
+           that scenario by frequency.
+       (d) Fold sibling-MAC ping in: if any nearby ESP-NOW peer is
+           reachable, the operating channel is up and we should fast-track
+           a WiFi.reconnect() instead of waiting out the backoff. ~50 lines.
+
+    CONSTRAINT: Don't stomp on the WIFI_OUTAGE_RESTART_MAX safety net
+    (config.h:112). The current saturating-600s pattern was designed to
+    avoid burning the restart counter on router outages — must preserve
+    that property.
+
+    PRIORITY: HIGH for operator-quality-of-life. After a 2-minute router
+    blip, "fleet visible in 1 min" vs "fleet visible in 10 min" is a
+    significant difference. Especially relevant for hot-pluggable bench
+    sessions and any scheduled-restart automation in the building's UPS.
+
+    LINKS:
+       - Filed by operator immediately after the 2026-04-29 PM outage
+       - main.cpp WiFi-recovery branch (+700-740 has the relevant logic)
+       - config.h:106 WIFI_BACKOFF_STEPS_MS
+       - Pattern reference: AP_STA_SCAN_INTERVAL_MS (config.h:149) for
+         the background-probe rhythm
