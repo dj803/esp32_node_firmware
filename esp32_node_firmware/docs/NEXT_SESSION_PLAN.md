@@ -1,108 +1,99 @@
 # Next session plan
 
-Drafted 2026-04-28 evening (post-PM-soak wrap-up). Today shipped three
-releases in the morning (v0.4.24 / v0.4.25 / v0.4.26), then the
-afternoon was a no-release backlog-cleanup + 3 h observation soak.
+Refreshed 2026-04-29 morning after the Phase 2 R1 ESP-NOW ranging session
+(2026-04-28 evening) and the overnight power-failure cascade event
+(2026-04-29 morning). The previous A/B/C menu is superseded — #78 is now
+bench-debuggable for the first time, which makes it the priority.
 
-## State at end of session (2026-04-28 ~17:50 SAST)
+## State at end of session (2026-04-29 ~08:40 SAST)
 
 | | |
 |---|---|
-| Master HEAD | `chore(memory): record afternoon backlog cleanup + soak window` (TBD) |
-| Fleet | 5/5 production on **v0.4.26** (Alpha, Bravo, Delta, Echo, Foxtrot); **Charlie** sticky on v0.4.20.0 canary, 19 h uptime |
-| Soak | 3 h observed clean: zero abnormal boots since 14:46 baseline, zero new coredumps, zero mqtt_disconnects increments. Heap fragmentation reaches stable steady-state at 40-43 KB largest contiguous (well above v0.4.22's 8 KB publish threshold). |
-| Backlog | OPEN **20**, RESOLVED **53**, WONT_DO **11** (down from 29/47/9 at session start) |
-| One incident | Alpha brownout 14:44:58 SAST, recovered clean. Almost certainly USB-hub current limit on the LED rig (8× WS2812 @ full white draws ~480 mA + ESP32 baseline). NOT firmware. Logged in #46 archive — second one would escalate to a hardware sub-item. |
+| Master HEAD | unchanged from end of 2026-04-28 PM session (no commits in the Phase 2 R1 work yet) |
+| Fleet | 5/5 production on **v0.4.26**. Charlie sticky on **v0.4.20.0 canary, 34.6 h uptime**, survived TWO independent #78 cascades without firing the stack-canary. |
+| Backlog | OPEN **27**, RESOLVED **53**, WONT_DO **11** (up from 20/53/11 at last session start; +7 from Phase 2 R1: #86-#91, +1 from morning cascade #92) |
+| Two unstaged doc commits worth of edits | `git diff esp32_node_firmware/docs/` shows ~470 lines added across SUGGESTED_IMPROVEMENTS.md + ARCHIVE.md (docs only, no firmware changes) |
+| Two events | Phase 2 R1 cascade 2026-04-28 evening (USB-power-cycling trigger). Power-failure → AP-restart cascade 2026-04-29 morning. Both triggered #78 → fleet-wide multi-task-family panic. |
 
-## Bench state (unchanged from earlier today)
+## Bench state (current)
 
-- **Alpha on COM4** — WS2812-equipped, serial-accessible. Just rebooted at 14:44 (brownout); 3 h+ clean uptime since.
-- **Charlie on COM5** — sticky canary on v0.4.20.0 (do not disturb — preserves #78 forensics). Memory says 19 h+, no new panics.
-- **Bravo off-bench** — operator will re-attach for v0.5.0 relay + Hall hardware bring-up.
+- **Charlie on COM** — sticky canary v0.4.20.0, 34.6 h uptime, MQTT_HEALTHY. **DO NOT DISTURB** — its survival across the cascades is the positive-evidence-for-not-stack-overflow datapoint that closes #54.
+- **Alpha** — power on laptop USB. v0.4.26. Retained `cmd/espnow/ranging "1"`.
+- **Bravo / Echo / Delta** — were on battery during the overnight outage (now on mains again presumably). v0.4.26. **Delta has NVS-persisted per-peer cal entry** for Foxtrot (tx=-73, n=1.61) — this survived the morning panic + reboot, validating the persistence path.
+- **Foxtrot** — just power-cycled by operator after staying offline through the cascade. Up since ~08:40 SAST.
 
-## Soak windows still ticking
+## What we learned (yesterday evening + this morning)
 
-- **#46 closure** — needs ≥24 h fleet-soak on v0.4.22+ with zero abnormal-bad_alloc panics. Started 14:46 SAST 2026-04-28; completes ~14:46 SAST 2026-04-29. 3 h logged so far, all clean.
-- **#76 fleet-validation closure** — same window. All sub-items (A-I) code-shipped; just waits on the soak.
-- **#78 AsyncTCP race** — separate question from #46. The 5 retained `/diag/coredump` payloads decoded this session are pre-v0.4.22-fix. To distinguish "v0.4.22 obviated the race" vs "still latent": **clear retained coredumps** and watch the 24 h window for new ones.
-  - Operator command (intentionally NOT auto-run this session — deletes diagnostic data on shared broker):
-    ```bash
-    for uuid in 32925666-... ece1ed31-... 2fdd4112-... 2ff9ddcf-... c1278367-... ; do
-      mosquitto_pub -h 192.168.10.30 \
-        -t "Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/$uuid/diag/coredump" -n -r
-    done
-    ```
-  - Resolve UUIDs from live MQTT first (CLAUDE.md "Diagnostic process") rather than hardcoding from this doc.
+**Per-peer calibration pipeline is verified end-to-end on hardware.** First time. cal_entries 0→1 + calibrated:true confirmed. Pipeline is sound; numerical acceptance bounds (R²≥0.95, n∈[2,4], etc.) didn't pass on this rig because of indoor multipath, not firmware issues.
 
-## Recommended next session — A/B/C menu
+**Orientation is the dominant ranging-asymmetry factor.** Quantified at 9-14 dB rotation swing on the figure-of-8 antenna pattern. Through-wall pairs average over lobes via multipath (Alpha→Echo flat at -84 dB across all 4 Echo rotations). **Echo's hardware exonerated** — earlier "weak TX" was an unlucky-orientation snapshot.
 
-### A. v0.5.0 hardware bring-up (relay + Hall on Bravo) — ~2 h
+**#78 is reproducible.** Two independent cascades within 24 h, both triggered by Wi-Fi association cycling (USB-power-cycle of devices on day 1, AP/power restoration on day 2). 4 distinct exc_task families now confirmed: async_tcp, tiT/lwIP, loopTask, wifi (NEW today). int_wdt joins panic as a #78 boot_reason. Battery operation does NOT mitigate.
 
-Still the natural next big milestone, blocked only on operator
-re-attaching Bravo. Plan unchanged: see
-[PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
+**#86 is a manifestation of #78.** Bravo's silent-collect failure cleared by full power-cycle but not by panic-reboot — heap corruption residue. Fixing #78 fixes #86.
 
-Pre-session operator action:
-1. Re-attach Bravo to the bench (will likely reassign COM4 ↔ Alpha — note the COM port verification recipe in CLAUDE.md before flashing).
-2. Wire relay (GPIO 25/26) + Hall (GPIO 32/33) per PLAN_RELAY_HALL.
+**#54 has positive evidence: #78 is NOT a stack overflow.** Charlie's canary build with `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2` survived BOTH cascades without firing. Strong confirmation of heap-corruption hypothesis.
 
-Steps once Bravo is wired:
-1. Capture Bravo's pre-flash state (firmware, uptime, boot_reason).
-2. USB-flash `esp32dev_relay_hall` to Bravo (COM port verified).
-3. Validate `cmd/relay` (click + retained state + NVS restore).
-4. Validate `cmd/hall/zero` + `cmd/hall/config` + `telemetry/hall` + `telemetry/hall/edge`.
-5. Run `tools/dev/release-smoke.sh` (M1 + M2 + M4) to confirm no new failure surface.
-6. Tag **v0.5.0** if validation lands clean. The accumulated `cmd/led "test"` from the prior session rides along.
+## Recommended next session — #78 bench-debug session (~3-4 h)
 
-### B. #46 / #76 closure pickup — ~30 min (low effort, high yield)
+This is now the highest-yield work in the backlog. The #78 reproduction recipe means we can capture the cascade in real time on serial and root-cause it. Promoted from "C surgical patch" (was speculative) to "primary next-session candidate".
 
-Tomorrow when the 24 h soak completes:
-1. Run `tools/fleet_status.sh` (now 75 s window — fixed today).
-2. Capture any new `/diag/coredump` payloads — there should be none.
-3. If clean: move #46 + #76 to RESOLVED in the index, add STATUS lines to the archive.
-4. If new abnormal boot or coredump appears: investigate per [COREDUMP_DECODE.md](COREDUMP_DECODE.md).
+### Pre-session operator action
+1. Rotate **Bravo OR Delta** onto a serial-attached COM port (whichever is most convenient). Both have shown new exc_pcs in recent cascades. Charlie stays on its COM port — preserves canary forensics.
+2. Pull Charlie's serial backlog and save it to a session note. With 34.6 h of uptime and TWO cascades survived, the serial log will show what Charlie's stack-canary checks were doing during the events. Either:
+   - No canary fire log lines → confirms #78 is not a stack issue (strongest evidence)
+   - Canary fire log lines that didn't propagate to the dashboard → bug in the canary report path (informs #54 disposition differently)
 
-Same closure pattern works for #78 if the operator chose to clear retained coredumps and watch.
+### Steps in session
+1. **Serial-attached fleet baseline** — start `pio device monitor -p COMx -b 115200 | tee docs/SESSIONS/<device>_PRE_CASCADE_<date>.txt` on the attached device. **Critical: logging must be running BEFORE the cascade fires.** 2026-04-29 morning capture confirmed production v0.4.26 (and v0.4.20.0 canary) are SILENT on serial during steady state — emit nothing unless something abnormal happens. Post-event captures miss the panic dump entirely. Bring fleet up to steady-state with the log already running.
+2. **Pull v0.4.26 ELF artifact from CI** for symbol resolution. Specifically need to symbolize:
+   - Bravo wifi `0x401d2c66` LoadProhibited (NEW today)
+   - Alpha async_tcp `0x00000019` InstFetchProhibited (NEW today — null-region jump)
+   - Plus the 4 historic exc_pcs from the 2026-04-28 evening cascade (in #92 archive)
+3. **Reproduce the cascade**: kill the WiFi AP for 30+ seconds, restore, watch the serial output as the panic happens. Capture the panic backtrace before it hits the watchdog and reboots.
+4. **Decode panic** with `addr2line` against the ELF (per [COREDUMP_DECODE.md](COREDUMP_DECODE.md)).
+5. **Root-cause analysis** — with the symbolic backtrace, identify whether the corruption is:
+   - AsyncTCP's `_error` path passing a freed pointer downstream (original hypothesis)
+   - lwIP's pbuf or PCB lifetime mismanagement under reconnect storm
+   - WiFi driver's TX-queue cleanup racing with reconnect
+   - Something else entirely
+6. **Implement targeted fix** — either vendored AsyncTCP patch, lwIP-config tweak, or defensive null-out somewhere in the reconnect path. Likely 50-100 lines.
+7. **Re-run reproduction recipe** post-fix to verify the cascade no longer fires.
+8. **Tag v0.4.27 / v0.5.0** if fix lands clean.
 
-### C. #78 AsyncTCP race surgical patch — ~3-4 h coding + validation
+### Acceptance
+- Reproduction recipe is run, cascade captured on serial, exc_pc symbolized
+- Root cause identified with reasonable confidence
+- Either fix shipped OR clear next-step plan documented
+- Any net-new exc_pcs added to #78 archive entry
 
-Drop into option D from the #78 archive entry: vendored AsyncTCP patch
-focused on the `_s_fin` handler (4/5 of the observed fault paths). The
-goal: refcount the AsyncClient* in the event-queue, defer free until
-the queue drains.
+## Action items from morning analysis (2026-04-29)
 
-**Only worth doing if** the soak post-clear (B above) shows new
-coredumps. If the soak is clean, v0.4.22's heap-guard hardening
-already obviated the race in practice and #78 can move to
-"mitigated, monitoring" status without coding work.
+These are notes for the next session — not work to do mid-summary.
 
-Per the decode pattern (3 distinct AsyncTCP entry handlers — _s_poll,
-_s_fin, _accepted — and 2/5 PCs in non-text memory) the bug is more
-likely "general use-after-free across the event-dispatch path" than
-"single UAF in the _error callback". The patch needs to address the
-generic case, not just the historic _error path.
+### 3. #78 reproduction-recipe diagnostic session
+**Owner:** next session. Plan above.
 
-## Items in OPEN that DON'T match A/B/C — at-a-glance
+### 4. Symbolize new exc_pcs against v0.4.26 ELF
+**Owner:** next session, as part of the bench-debug session prep. The ELF artifact lives in CI build output. Two specific PCs to resolve first:
+- `0x401d2c66` (Bravo, wifi task, LoadProhibited)
+- `0x00000019` (Alpha, async_tcp, InstFetchProhibited — likely indicates a vtable / function-pointer call through a null pointer)
 
-- **Group A — RFID/NFC (6)**: hardware-blocked on Foxtrot. Unblock by re-attaching Foxtrot to the bench.
-- **Group B — ESP-NOW ranging (6)**: needs Bravo + Charlie pair. Pairs naturally with v0.5.0's Bravo bring-up.
-- **Group D — open stability investigations (3)**: #46 + #54 + #78. All in surveillance / soak. See B above.
-- **Group F — bench / variants (1)**: #72 voltage stress rig — needs operator hardware purchase.
-- **Group G — long-tail closure (4)**: #33 (deferred to v1.0 / fleet > 10), #40 (field-validation pending), #76 (soak pending — see B), #85 (multi-session validation of the new sweep tool).
+### 5. Operator install guide cascade-recovery note
+**Owner:** done in this session — see new section in [OPERATOR_INSTALL_GUIDE.md](OPERATOR_INSTALL_GUIDE.md) below.
 
-## Tooling shipped this afternoon (PM session)
+## Other queued work (not next-session priority)
 
-For the next session's planning grep:
-- `tools/dev/release-smoke.sh` — pre-tag chaos M1+M2+M4 wrapper (--quick, --m3 variants).
-- `tools/dev/end-of-session-sweep.sh` — 4-check session-close surfacer (#85 sub-B prototype).
-- `docs/COREDUMP_DECODE.md` — addr2line workflow runbook with worked examples.
-- `docs/CANARY_OTA.md` + `docs/MONITORING_PRACTICE.md` — operational practice docs.
-- `tools/fleet_status.sh` — capture window 7 s → 75 s (the LWT-shadow gotcha).
-- `.github/workflows/build.yml` — secrets-scan (trufflehog) job + variant-build matrix.
+- **v0.5.0 hardware bring-up** (relay + Hall on Bravo): blocked on operator re-attaching Bravo with relay/Hall wiring. Plan unchanged in [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
+- **#54 disposition**: mark RESOLVED with positive evidence next session (Charlie's 34.6 h cascade-survival).
+- **#46 + #76 closure**: was waiting on a 24 h soak; the soak was inconclusive due to power event. Re-set the soak window once #78 fix lands; the post-fix soak is the right time to close.
+- **#90 systematic orientation test** in cleaner-RF environment: queued, low priority while #78 is open.
+- **#91 procurement**: ESP32-WROOM-32U + antennas, ~$15-30. Order anytime; will inform a dedicated #91 session weeks from now.
+- **#40 install-guide content for orientation + cascade-recovery + power-cycle-if-silent**: items 5 below + #90 + #86 workaround. Bundle for one install-guide refresh.
 
-## Won't do at session start
+## Won't do at next-session start
 
-- New firmware release without operator request — fleet just had three releases today.
-- Auto-clear retained coredumps — operator decision.
-- Modify `~/.claude/` user-config files outside the repo.
+- New firmware release without operator request — there's no ship pressure right now.
+- Auto-clear retained coredumps — operator decision (still useful for forensics).
 - Anything DO-NOT-for-autonomous (workflow surgery, dashboard work, secrets-handling).
+- Touch Charlie's canary — it's contributing positive evidence on every soak hour.

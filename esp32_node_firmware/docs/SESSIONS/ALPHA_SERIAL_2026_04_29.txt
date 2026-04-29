@@ -1,0 +1,4 @@
+# Alpha serial capture (no-reset open, v0.4.26 production firmware)
+# port=COM4 baud=115200 duration=45s
+# captured 2026-04-29T09:11:54
+# ---

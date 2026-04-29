@@ -1,0 +1,3 @@
+# Charlie canary serial capture (no-reset open)
+# port=COM5 baud=115200 duration=45s
+# captured 2026-04-29T09:07:35

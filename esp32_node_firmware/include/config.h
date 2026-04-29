@@ -42,7 +42,7 @@
 // build to allow operators to distinguish iterations. CI builds get the tag
 // injected via FIRMWARE_VERSION_OVERRIDE = "0.4.20" (no 4th component) so a
 // release is always the cleaner 3-component form.
-#define FIRMWARE_VERSION           "0.4.26.0"
+#define FIRMWARE_VERSION           "0.4.27.0"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 

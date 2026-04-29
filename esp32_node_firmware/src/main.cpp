@@ -694,6 +694,16 @@ void loop() {
             CredentialStore::clearWifiOutageCount();   // outage survived → clear budget
             LOG_I("Loop", "Wi-Fi reconnected after %u ms outage", (unsigned)outageMs);
             ledSetPattern(LedPattern::WIFI_CONNECTED);
+
+            // (#92 fix, 2026-04-29) ESP-NOW is bound to the WiFi driver lifecycle.
+            // After a WiFi disconnect/reconnect cycle, esp_now_send() returns
+            // ESP_ERR_ESPNOW_NOT_INIT and every ranging beacon silently fails.
+            // Re-initialize the ESP-NOW driver now that WiFi is back up.
+            // Discovered by serial-attached bench-debug 2026-04-29 morning —
+            // see docs/SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md.
+            esp_now_deinit();           // safe no-op if not currently initialized
+            espnowResponderStart();     // re-init + re-register dispatch callback
+            LOG_I("Loop", "ESP-NOW reinitialized after WiFi reconnect");
         }
 
         if (!wifiConnected) {

@@ -1,0 +1,324 @@
+# logger started 2026-04-29T09:17:49 port=COM4 baud=115200 (no-reset open)
+[2026-04-29T09:21:24.021] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 1171 ms (base 1000 ± 200)
+[2026-04-29T09:21:24.021] [I][WiFi] Disconnected (reason=200)
+[2026-04-29T09:21:24.021] [W][Loop] Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)
+[2026-04-29T09:21:24.021] [I][Loop] WiFi reconnect attempt (next backoff step 15000 ms)
+[2026-04-29T09:21:24.021] E (2805260) wifi:sta is connecting, return error
+[2026-04-29T09:21:39.028] [I][Loop] WiFi reconnect attempt (next backoff step 30000 ms)
+[2026-04-29T09:21:39.028] E (2820261) wifi:sta is connecting, return error
+[2026-04-29T09:22:09.023] [I][Loop] WiFi reconnect attempt (next backoff step 60000 ms)
+[2026-04-29T09:22:09.023] E (2850262) wifi:sta is connecting, return error
+[2026-04-29T09:23:09.059] [I][Loop] WiFi reconnect attempt (next backoff step 120000 ms)
+[2026-04-29T09:23:09.059] [W][Loop] WiFi.reconnect() failed 3 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T09:23:09.059] [2894384][E][STA.cpp:530] disconnect(): STA disconnect failed! 0x3002: ESP_ERR_WIFI_NOT_STARTED
+[2026-04-29T09:23:09.059] [2894394][E][STA.cpp:347] connect(): STA connect failed! 0x3002: ESP_ERR_WIFI_NOT_STARTED
+[2026-04-29T09:23:24.201] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T09:23:24.201] [I][Loop] Wi-Fi reconnected after 120178 ms outage
+[2026-04-29T09:23:24.201] E (2925429) ESPNOW: esp now not init!
+[2026-04-29T09:23:24.201] E (2925430) ESPNOW: esp now not init!
+[2026-04-29T09:23:24.201] E (2925430) ESPNOW: esp now not init!
+[2026-04-29T09:23:24.201] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:26.828] E (2928052) ESPNOW: esp now not init!
+[2026-04-29T09:23:26.828] E (2928053) ESPNOW: esp now not init!
+[2026-04-29T09:23:26.828] E (2928053) ESPNOW: esp now not init!
+[2026-04-29T09:23:26.828] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:30.252] E (2931470) ESPNOW: esp now not init!
+[2026-04-29T09:23:30.252] E (2931471) ESPNOW: esp now not init!
+[2026-04-29T09:23:30.252] E (2931471) ESPNOW: esp now not init!
+[2026-04-29T09:23:30.252] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:33.756] E (2934988) ESPNOW: esp now not init!
+[2026-04-29T09:23:33.756] E (2934989) ESPNOW: esp now not init!
+[2026-04-29T09:23:33.756] E (2934989) ESPNOW: esp now not init!
+[2026-04-29T09:23:33.756] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:37.293] E (2938507) ESPNOW: esp now not init!
+[2026-04-29T09:23:37.293] E (2938508) ESPNOW: esp now not init!
+[2026-04-29T09:23:37.293] E (2938508) ESPNOW: esp now not init!
+[2026-04-29T09:23:37.293] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:40.799] E (2942025) ESPNOW: esp now not init!
+[2026-04-29T09:23:40.799] E (2942026) ESPNOW: esp now not init!
+[2026-04-29T09:23:40.799] E (2942026) ESPNOW: esp now not init!
+[2026-04-29T09:23:40.799] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:44.315] E (2945545) ESPNOW: esp now not init!
+[2026-04-29T09:23:44.315] E (2945546) ESPNOW: esp now not init!
+[2026-04-29T09:23:44.315] E (2945546) ESPNOW: esp now not init!
+[2026-04-29T09:23:44.315] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:47.834] E (2949064) ESPNOW: esp now not init!
+[2026-04-29T09:23:47.834] E (2949065) ESPNOW: esp now not init!
+[2026-04-29T09:23:47.834] E (2949065) ESPNOW: esp now not init!
+[2026-04-29T09:23:47.834] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:51.352] E (2952582) ESPNOW: esp now not init!
+[2026-04-29T09:23:51.352] E (2952583) ESPNOW: esp now not init!
+[2026-04-29T09:23:51.352] E (2952583) ESPNOW: esp now not init!
+[2026-04-29T09:23:51.352] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:54.880] E (2956103) ESPNOW: esp now not init!
+[2026-04-29T09:23:54.880] E (2956103) ESPNOW: esp now not init!
+[2026-04-29T09:23:54.880] E (2956104) ESPNOW: esp now not init!
+[2026-04-29T09:23:54.880] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:23:58.393] E (2959621) ESPNOW: esp now not init!
+[2026-04-29T09:23:58.393] E (2959622) ESPNOW: esp now not init!
+[2026-04-29T09:23:58.393] E (2959622) ESPNOW: esp now not init!
+[2026-04-29T09:23:58.393] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:02.024] E (2963242) ESPNOW: esp now not init!
+[2026-04-29T09:24:02.024] E (2963243) ESPNOW: esp now not init!
+[2026-04-29T09:24:02.024] E (2963243) ESPNOW: esp now not init!
+[2026-04-29T09:24:02.024] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:05.434] E (2966660) ESPNOW: esp now not init!
+[2026-04-29T09:24:05.434] E (2966661) ESPNOW: esp now not init!
+[2026-04-29T09:24:05.434] E (2966661) ESPNOW: esp now not init!
+[2026-04-29T09:24:05.434] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:08.964] E (2970178) ESPNOW: esp now not init!
+[2026-04-29T09:24:08.964] E (2970179) ESPNOW: esp now not init!
+[2026-04-29T09:24:08.964] E (2970179) ESPNOW: esp now not init!
+[2026-04-29T09:24:08.964] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:12.478] E (2973696) ESPNOW: esp now not init!
+[2026-04-29T09:24:12.478] E (2973697) ESPNOW: esp now not init!
+[2026-04-29T09:24:12.478] E (2973697) ESPNOW: esp now not init!
+[2026-04-29T09:24:12.478] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:16.092] E (2977314) ESPNOW: esp now not init!
+[2026-04-29T09:24:16.092] E (2977315) ESPNOW: esp now not init!
+[2026-04-29T09:24:16.092] E (2977315) ESPNOW: esp now not init!
+[2026-04-29T09:24:16.092] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:19.505] E (2980732) ESPNOW: esp now not init!
+[2026-04-29T09:24:19.505] E (2980733) ESPNOW: esp now not init!
+[2026-04-29T09:24:19.505] E (2980733) ESPNOW: esp now not init!
+[2026-04-29T09:24:19.505] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:23.127] E (2984350) ESPNOW: esp now not init!
+[2026-04-29T09:24:23.127] E (2984351) ESPNOW: esp now not init!
+[2026-04-29T09:24:23.127] E (2984351) ESPNOW: esp now not init!
+[2026-04-29T09:24:23.127] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:26.548] E (2987770) ESPNOW: esp now not init!
+[2026-04-29T09:24:26.548] E (2987770) ESPNOW: esp now not init!
+[2026-04-29T09:24:26.548] E (2987770) ESPNOW: esp now not init!
+[2026-04-29T09:24:26.548] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:30.063] E (2991288) ESPNOW: esp now not init!
+[2026-04-29T09:24:30.063] E (2991289) ESPNOW: esp now not init!
+[2026-04-29T09:24:30.063] E (2991289) ESPNOW: esp now not init!
+[2026-04-29T09:24:30.063] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:33.590] E (2994806) ESPNOW: esp now not init!
+[2026-04-29T09:24:33.590] E (2994807) ESPNOW: esp now not init!
+[2026-04-29T09:24:33.590] E (2994807) ESPNOW: esp now not init!
+[2026-04-29T09:24:33.590] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:37.107] E (2998325) ESPNOW: esp now not init!
+[2026-04-29T09:24:37.107] E (2998326) ESPNOW: esp now not init!
+[2026-04-29T09:24:37.107] E (2998326) ESPNOW: esp now not init!
+[2026-04-29T09:24:37.107] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:40.619] E (3001843) ESPNOW: esp now not init!
+[2026-04-29T09:24:40.620] E (3001844) ESPNOW: esp now not init!
+[2026-04-29T09:24:40.620] E (3001844) ESPNOW: esp now not init!
+[2026-04-29T09:24:40.620] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:44.147] E (3005362) ESPNOW: esp now not init!
+[2026-04-29T09:24:44.147] E (3005363) ESPNOW: esp now not init!
+[2026-04-29T09:24:44.147] E (3005363) ESPNOW: esp now not init!
+[2026-04-29T09:24:44.147] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:47.662] E (3008881) ESPNOW: esp now not init!
+[2026-04-29T09:24:47.662] E (3008882) ESPNOW: esp now not init!
+[2026-04-29T09:24:47.662] E (3008882) ESPNOW: esp now not init!
+[2026-04-29T09:24:47.662] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:51.177] E (3012399) ESPNOW: esp now not init!
+[2026-04-29T09:24:51.177] E (3012400) ESPNOW: esp now not init!
+[2026-04-29T09:24:51.177] E (3012400) ESPNOW: esp now not init!
+[2026-04-29T09:24:51.177] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:54.702] E (3015921) ESPNOW: esp now not init!
+[2026-04-29T09:24:54.702] E (3015921) ESPNOW: esp now not init!
+[2026-04-29T09:24:54.702] E (3015921) ESPNOW: esp now not init!
+[2026-04-29T09:24:54.702] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:24:58.221] E (3019439) ESPNOW: esp now not init!
+[2026-04-29T09:24:58.221] E (3019440) ESPNOW: esp now not init!
+[2026-04-29T09:24:58.221] E (3019440) ESPNOW: esp now not init!
+[2026-04-29T09:24:58.221] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:01.748] E (3022960) ESPNOW: esp now not init!
+[2026-04-29T09:25:01.748] E (3022960) ESPNOW: esp now not init!
+[2026-04-29T09:25:01.748] E (3022960) ESPNOW: esp now not init!
+[2026-04-29T09:25:01.748] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:05.265] E (3026478) ESPNOW: esp now not init!
+[2026-04-29T09:25:05.265] E (3026479) ESPNOW: esp now not init!
+[2026-04-29T09:25:05.265] E (3026479) ESPNOW: esp now not init!
+[2026-04-29T09:25:05.265] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:08.770] E (3029996) ESPNOW: esp now not init!
+[2026-04-29T09:25:08.770] E (3029997) ESPNOW: esp now not init!
+[2026-04-29T09:25:08.770] E (3029997) ESPNOW: esp now not init!
+[2026-04-29T09:25:08.770] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:12.289] E (3033514) ESPNOW: esp now not init!
+[2026-04-29T09:25:12.289] E (3033515) ESPNOW: esp now not init!
+[2026-04-29T09:25:12.289] E (3033515) ESPNOW: esp now not init!
+[2026-04-29T09:25:12.289] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:15.816] E (3037033) ESPNOW: esp now not init!
+[2026-04-29T09:25:15.816] E (3037033) ESPNOW: esp now not init!
+[2026-04-29T09:25:15.816] E (3037033) ESPNOW: esp now not init!
+[2026-04-29T09:25:15.816] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:19.314] E (3040551) ESPNOW: esp now not init!
+[2026-04-29T09:25:19.314] E (3040552) ESPNOW: esp now not init!
+[2026-04-29T09:25:19.314] E (3040552) ESPNOW: esp now not init!
+[2026-04-29T09:25:19.314] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:22.857] E (3044070) ESPNOW: esp now not init!
+[2026-04-29T09:25:22.857] E (3044071) ESPNOW: esp now not init!
+[2026-04-29T09:25:22.857] E (3044071) ESPNOW: esp now not init!
+[2026-04-29T09:25:22.857] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:26.372] E (3047589) ESPNOW: esp now not init!
+[2026-04-29T09:25:26.372] E (3047590) ESPNOW: esp now not init!
+[2026-04-29T09:25:26.372] E (3047590) ESPNOW: esp now not init!
+[2026-04-29T09:25:26.372] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:29.885] E (3051107) ESPNOW: esp now not init!
+[2026-04-29T09:25:29.885] E (3051108) ESPNOW: esp now not init!
+[2026-04-29T09:25:29.885] E (3051108) ESPNOW: esp now not init!
+[2026-04-29T09:25:29.885] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:33.400] E (3054625) ESPNOW: esp now not init!
+[2026-04-29T09:25:33.401] E (3054626) ESPNOW: esp now not init!
+[2026-04-29T09:25:33.401] E (3054626) ESPNOW: esp now not init!
+[2026-04-29T09:25:33.401] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:36.928] E (3058144) ESPNOW: esp now not init!
+[2026-04-29T09:25:36.928] E (3058145) ESPNOW: esp now not init!
+[2026-04-29T09:25:36.928] E (3058145) ESPNOW: esp now not init!
+[2026-04-29T09:25:36.928] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:40.441] E (3061662) ESPNOW: esp now not init!
+[2026-04-29T09:25:40.441] E (3061663) ESPNOW: esp now not init!
+[2026-04-29T09:25:40.441] E (3061663) ESPNOW: esp now not init!
+[2026-04-29T09:25:40.441] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:43.971] E (3065181) ESPNOW: esp now not init!
+[2026-04-29T09:25:43.971] E (3065182) ESPNOW: esp now not init!
+[2026-04-29T09:25:43.971] E (3065182) ESPNOW: esp now not init!
+[2026-04-29T09:25:43.971] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:47.483] E (3068699) ESPNOW: esp now not init!
+[2026-04-29T09:25:47.483] E (3068700) ESPNOW: esp now not init!
+[2026-04-29T09:25:47.483] E (3068700) ESPNOW: esp now not init!
+[2026-04-29T09:25:47.483] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:51.000] E (3072218) ESPNOW: esp now not init!
+[2026-04-29T09:25:51.000] E (3072219) ESPNOW: esp now not init!
+[2026-04-29T09:25:51.000] E (3072219) ESPNOW: esp now not init!
+[2026-04-29T09:25:51.000] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:54.511] E (3075737) ESPNOW: esp now not init!
+[2026-04-29T09:25:54.511] E (3075738) ESPNOW: esp now not init!
+[2026-04-29T09:25:54.511] E (3075738) ESPNOW: esp now not init!
+[2026-04-29T09:25:54.511] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:25:58.043] E (3079261) ESPNOW: esp now not init!
+[2026-04-29T09:25:58.043] E (3079261) ESPNOW: esp now not init!
+[2026-04-29T09:25:58.043] E (3079261) ESPNOW: esp now not init!
+[2026-04-29T09:25:58.043] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:01.558] E (3082779) ESPNOW: esp now not init!
+[2026-04-29T09:26:01.558] E (3082780) ESPNOW: esp now not init!
+[2026-04-29T09:26:01.558] E (3082780) ESPNOW: esp now not init!
+[2026-04-29T09:26:01.558] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:05.086] E (3086298) ESPNOW: esp now not init!
+[2026-04-29T09:26:05.086] E (3086299) ESPNOW: esp now not init!
+[2026-04-29T09:26:05.086] E (3086299) ESPNOW: esp now not init!
+[2026-04-29T09:26:05.086] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:08.599] E (3089816) ESPNOW: esp now not init!
+[2026-04-29T09:26:08.599] E (3089817) ESPNOW: esp now not init!
+[2026-04-29T09:26:08.599] E (3089817) ESPNOW: esp now not init!
+[2026-04-29T09:26:08.599] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:12.114] E (3093335) ESPNOW: esp now not init!
+[2026-04-29T09:26:12.114] E (3093336) ESPNOW: esp now not init!
+[2026-04-29T09:26:12.114] E (3093336) ESPNOW: esp now not init!
+[2026-04-29T09:26:12.114] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:15.629] E (3096855) ESPNOW: esp now not init!
+[2026-04-29T09:26:15.629] E (3096855) ESPNOW: esp now not init!
+[2026-04-29T09:26:15.629] E (3096855) ESPNOW: esp now not init!
+[2026-04-29T09:26:15.629] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:19.157] E (3100373) ESPNOW: esp now not init!
+[2026-04-29T09:26:19.157] E (3100374) ESPNOW: esp now not init!
+[2026-04-29T09:26:19.157] E (3100374) ESPNOW: esp now not init!
+[2026-04-29T09:26:19.157] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:22.668] E (3103891) ESPNOW: esp now not init!
+[2026-04-29T09:26:22.668] E (3103892) ESPNOW: esp now not init!
+[2026-04-29T09:26:22.668] E (3103892) ESPNOW: esp now not init!
+[2026-04-29T09:26:22.668] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:26.187] E (3107409) ESPNOW: esp now not init!
+[2026-04-29T09:26:26.187] E (3107410) ESPNOW: esp now not init!
+[2026-04-29T09:26:26.187] E (3107410) ESPNOW: esp now not init!
+[2026-04-29T09:26:26.187] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:29.714] E (3110927) ESPNOW: esp now not init!
+[2026-04-29T09:26:29.714] E (3110928) ESPNOW: esp now not init!
+[2026-04-29T09:26:29.714] E (3110928) ESPNOW: esp now not init!
+[2026-04-29T09:26:29.714] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:33.217] E (3114445) ESPNOW: esp now not init!
+[2026-04-29T09:26:33.217] E (3114446) ESPNOW: esp now not init!
+[2026-04-29T09:26:33.217] E (3114446) ESPNOW: esp now not init!
+[2026-04-29T09:26:33.217] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:36.752] E (3117963) ESPNOW: esp now not init!
+[2026-04-29T09:26:36.752] E (3117964) ESPNOW: esp now not init!
+[2026-04-29T09:26:36.752] E (3117964) ESPNOW: esp now not init!
+[2026-04-29T09:26:36.752] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:40.259] E (3121482) ESPNOW: esp now not init!
+[2026-04-29T09:26:40.259] E (3121483) ESPNOW: esp now not init!
+[2026-04-29T09:26:40.259] E (3121483) ESPNOW: esp now not init!
+[2026-04-29T09:26:40.259] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:43.783] E (3125000) ESPNOW: esp now not init!
+[2026-04-29T09:26:43.783] E (3125001) ESPNOW: esp now not init!
+[2026-04-29T09:26:43.783] E (3125001) ESPNOW: esp now not init!
+[2026-04-29T09:26:43.783] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:47.295] E (3128518) ESPNOW: esp now not init!
+[2026-04-29T09:26:47.295] E (3128519) ESPNOW: esp now not init!
+[2026-04-29T09:26:47.295] E (3128519) ESPNOW: esp now not init!
+[2026-04-29T09:26:47.295] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:50.826] E (3132037) ESPNOW: esp now not init!
+[2026-04-29T09:26:50.826] E (3132038) ESPNOW: esp now not init!
+[2026-04-29T09:26:50.826] E (3132038) ESPNOW: esp now not init!
+[2026-04-29T09:26:50.826] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:54.338] E (3135557) ESPNOW: esp now not init!
+[2026-04-29T09:26:54.338] E (3135557) ESPNOW: esp now not init!
+[2026-04-29T09:26:54.338] E (3135557) ESPNOW: esp now not init!
+[2026-04-29T09:26:54.338] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:26:57.867] E (3139078) ESPNOW: esp now not init!
+[2026-04-29T09:26:57.867] E (3139079) ESPNOW: esp now not init!
+[2026-04-29T09:26:57.867] E (3139079) ESPNOW: esp now not init!
+[2026-04-29T09:26:57.867] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:01.379] E (3142597) ESPNOW: esp now not init!
+[2026-04-29T09:27:01.379] E (3142598) ESPNOW: esp now not init!
+[2026-04-29T09:27:01.379] E (3142598) ESPNOW: esp now not init!
+[2026-04-29T09:27:01.379] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:04.892] E (3146115) ESPNOW: esp now not init!
+[2026-04-29T09:27:04.892] E (3146116) ESPNOW: esp now not init!
+[2026-04-29T09:27:04.892] E (3146116) ESPNOW: esp now not init!
+[2026-04-29T09:27:04.892] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:08.423] E (3149634) ESPNOW: esp now not init!
+[2026-04-29T09:27:08.423] E (3149635) ESPNOW: esp now not init!
+[2026-04-29T09:27:08.423] E (3149635) ESPNOW: esp now not init!
+[2026-04-29T09:27:08.423] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:11.939] E (3153153) ESPNOW: esp now not init!
+[2026-04-29T09:27:11.939] E (3153153) ESPNOW: esp now not init!
+[2026-04-29T09:27:11.939] E (3153153) ESPNOW: esp now not init!
+[2026-04-29T09:27:11.939] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:15.452] E (3156671) ESPNOW: esp now not init!
+[2026-04-29T09:27:15.452] E (3156672) ESPNOW: esp now not init!
+[2026-04-29T09:27:15.452] E (3156672) ESPNOW: esp now not init!
+[2026-04-29T09:27:15.452] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:18.967] E (3160189) ESPNOW: esp now not init!
+[2026-04-29T09:27:18.967] E (3160190) ESPNOW: esp now not init!
+[2026-04-29T09:27:18.967] E (3160190) ESPNOW: esp now not init!
+[2026-04-29T09:27:18.967] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:22.495] E (3163708) ESPNOW: esp now not init!
+[2026-04-29T09:27:22.495] E (3163709) ESPNOW: esp now not init!
+[2026-04-29T09:27:22.495] E (3163709) ESPNOW: esp now not init!
+[2026-04-29T09:27:22.495] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:26.005] E (3167227) ESPNOW: esp now not init!
+[2026-04-29T09:27:26.005] E (3167228) ESPNOW: esp now not init!
+[2026-04-29T09:27:26.005] E (3167228) ESPNOW: esp now not init!
+[2026-04-29T09:27:26.005] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:29.535] E (3170746) ESPNOW: esp now not init!
+[2026-04-29T09:27:29.535] E (3170747) ESPNOW: esp now not init!
+[2026-04-29T09:27:29.535] E (3170747) ESPNOW: esp now not init!
+[2026-04-29T09:27:29.535] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:33.049] E (3174265) ESPNOW: esp now not init!
+[2026-04-29T09:27:33.049] E (3174266) ESPNOW: esp now not init!
+[2026-04-29T09:27:33.049] E (3174266) ESPNOW: esp now not init!
+[2026-04-29T09:27:33.049] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:36.661] E (3177883) ESPNOW: esp now not init!
+[2026-04-29T09:27:36.661] E (3177884) ESPNOW: esp now not init!
+[2026-04-29T09:27:36.661] E (3177884) ESPNOW: esp now not init!
+[2026-04-29T09:27:36.661] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:40.090] E (3181301) ESPNOW: esp now not init!
+[2026-04-29T09:27:40.090] E (3181302) ESPNOW: esp now not init!
+[2026-04-29T09:27:40.090] E (3181302) ESPNOW: esp now not init!
+[2026-04-29T09:27:40.090] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:43.606] E (3184820) ESPNOW: esp now not init!
+[2026-04-29T09:27:43.606] E (3184821) ESPNOW: esp now not init!
+[2026-04-29T09:27:43.606] E (3184821) ESPNOW: esp now not init!
+[2026-04-29T09:27:43.606] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:47.117] E (3188339) ESPNOW: esp now not init!
+[2026-04-29T09:27:47.118] E (3188340) ESPNOW: esp now not init!
+[2026-04-29T09:27:47.118] E (3188340) ESPNOW: esp now not init!
+[2026-04-29T09:27:47.118] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT
+[2026-04-29T09:27:50.647] E (3191860) ESPNOW: esp now not init!
+[2026-04-29T09:27:50.647] E (3191860) ESPNOW: esp now not init!
+[2026-04-29T09:27:50.648] E (3191861) ESPNOW: esp now not init!
+[2026-04-29T09:27:50.648] [ESP-NOW Ranging] Beacon send failed: ESP_ERR_ESPNOW_NOT_INIT

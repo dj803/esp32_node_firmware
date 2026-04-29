@@ -4163,3 +4163,855 @@ Next steps (operator decision):
     validation pending / partial fix / deferred). Closure of #85
     pending 2-3 sessions of validation that the script catches
     real gaps without re-introducing false positives.
+
+86. ESP-NOW calibration sample collection silent failure
+    DISCOVERED: 2026-04-28 evening, Phase 2 R1b verification attempt.
+    Bravo↔Foxtrot rover sweep blocked at the very first step.
+
+    OBSERVATION:
+       1. Published `cmd/espnow/calibrate {"cmd":"clear"}` to Bravo —
+          `{"calib":"cleared","points":0}` returned immediately.
+       2. Published `cmd/espnow/calibrate {"cmd":"measure_at",
+          "peer_mac":"28:05:A5:32:50:44","distance_m":6.5,"samples":15}`
+          to Bravo (Foxtrot's MAC, uppercase).
+       3. `{"calib":"started","cmd":"measure_at","peer_mac":
+          "28:05:A5:32:50:44","samples":15,"points":0}` returned
+          immediately. State machine entered MEASURING_AT.
+       4. ZERO samples collected over the full 120 s
+          ESPNOW_CALIBRATION_TIMEOUT_MS window. No `progress`
+          messages. Final response: `{"calib":"error","msg":
+          "timeout waiting for peer"}`.
+
+    CONCURRENTLY, Bravo's `/espnow` telemetry confirmed Foxtrot was
+    a live peer at -79 dBm rssi_ema (~6.5 m raw distance). So
+    Foxtrot's frames WERE reaching Bravo's ESP-NOW receive path,
+    but were NOT being routed to `_enrCalibrateCollect`.
+
+    POSSIBLE CAUSES (ranked):
+       a) Regression introduced by the version updates that disabled
+          ESP-NOW (operator confirmed it was turned off in past
+          updates — see #88). Re-enabling via cmd/espnow/ranging
+          may not fully restore the receive-side observe path that
+          calls `_enrCalibrateCollect`.
+       b) Frame-type filter — `espnowRangingObserve` is called from
+          `espnow_responder.h:597` for ALL incoming frames before
+          the type switch. Calibration collect therefore should run
+          on beacons, credential responses, and all other types.
+          Unless _rangingEnabled or some other gate silently filters.
+       c) `_rangingEnabled` flag mismatch — beacons are being sent
+          (peer telemetry shows mutual sightings) but the receive
+          observe path may be gated by a DIFFERENT flag than the
+          transmit path.
+       d) MAC string case mismatch — ruled out by code inspection
+          (mac_utils.h::macToString is uppercase, peer_mac sent
+          uppercase, _calibPeerMac stored uppercase).
+
+    INVESTIGATION STEPS:
+       1. Add a serial log line to `_enrCalibrateCollect` that
+          fires on every call (not just sample-counted ones) so
+          we can see whether it's being called at all.
+       2. Add a one-time log on `cmd/espnow/calibrate measure_at`
+          confirming `_calibPeerMac` value post-strncpy.
+       3. Bench-test with a USB-attached device (Alpha on COM4)
+          where serial output is available. Repeat the measure_at
+          and watch the trace.
+       4. Verify `_rangingEnabled` is true after the retained
+          cmd/espnow/ranging "1" message — possibly add a status
+          field publishing the flag in the heartbeat.
+
+    IMPACT: HIGH — blocks #47 hardware verification, blocks #39
+    multi-point linreg validation, and effectively blocks closure
+    of all of Group B (ESP-NOW ranging) until resolved. The
+    calibration command surface is shipped (v0.4.07/v0.4.09) but
+    not exercisable on hardware.
+
+    SEVERITY: HIGH. Latent regression masquerading as a successful
+    feature ship — the unit-test coverage of calibLinreg() passes
+    (host-side, no MQTT), the command-handler logs the start, but
+    no actual samples collect. Classic symptom of asymmetric
+    testing: the inputs and the outputs work, the middle is broken.
+
+    PRIORITY: HIGH — should be the first item picked up next session.
+    Worth a serial-attached-device deep-dive, NOT another fleet OTA
+    until root cause is in hand.
+
+    UPDATE 2026-04-28 evening (autonomous-mode follow-on, post-cascade):
+    Bravo retest after power-cycle and ~45 min steady-state uptime —
+    `cmd/espnow/calibrate measure_at` now collects samples normally.
+    Sequence captured:
+       clear → cleared, points:0
+       measure_at samples=5 → started, points:0
+       progress → collected:5/5
+       done → rssi_median=-89, points:1
+
+    This DEMOTES #86 from HIGH to LOW priority. The bug is NOT a
+    code-level Bravo-specific branch (code review confirmed no such
+    branch exists). It's most likely **heap-corruption residue from
+    a prior #78-class panic** — Bravo had crashed earlier in the day,
+    leaving subtle RAM state that broke `_enrCalibrateCollect` (or
+    one of its preconditions) silently. Reboots from panic don't
+    clear all the state — `_calibState` and `_calibPeerMac` are
+    BSS-zero-initialized but other state may persist via NVS or get
+    re-corrupted by lingering bad-pointer access. **Full power-cycle
+    is what cleared it.**
+
+    REVISED INTERPRETATION:
+    - #86 the symptom is a STATE issue, recoverable by power-cycle
+    - The underlying cause is #78 (heap corruption surface) — fixing
+      that fixes #86 as a side-effect
+    - "If calibration goes silent on a specific device, power-cycle
+      that device" becomes the operational workaround until #78 is
+      patched. Document in operator install guide #40.
+
+    REMAINING DIAGNOSTIC VALUE:
+    - If we see #86 reproduce on a fresh-boot device, then there IS
+      a code-level issue and the diagnosis can resume from the
+      original investigation steps above.
+    - Until then, treat #86 as a documented manifestation of #78's
+      latent-corruption surface, NOT a separate bug.
+
+87. Calibration UX: silent during sample-collection waiting period
+    DISCOVERED: 2026-04-28 evening, while triaging #86.
+
+    OBSERVATION: `_enrCalibrateCollect` only publishes `progress`
+    messages when a sample is collected (`if (_calibCount % 5 == 0
+    || _calibCount == _calibTarget)`). When the underlying receive
+    path is silent (e.g. peer offline, frame-type-filter bug like
+    #86), the operator and any agent driving the calibration sit
+    blind for the full 120 s ESPNOW_CALIBRATION_TIMEOUT_MS before
+    any error appears. For a 30-sample step at 3 s beacon, the
+    expected wall-clock is 90 s, so legitimate slow collection is
+    indistinguishable from a stuck collector for the first 90 s.
+
+    FIX:
+       1. Wallclock-based heartbeat: every 10 s during a non-IDLE
+          calibration state, publish `{"calib":"waiting",
+          "samples_so_far":N,"elapsed_s":T,"timeout_s":120}`. Even
+          if N stays 0, the operator sees the calibration is alive
+          and can recognise "stuck" state in 20 s instead of 120 s.
+       2. (Optional follow-on) Surface the missing-peer condition:
+          when N==0 after 30 s, publish a one-shot `{"calib":
+          "stalled","msg":"no frames from peer X yet — verify
+          peer is broadcasting and within range"}` so the cause
+          is named, not just the symptom.
+
+    EFFORT: ~15 lines in `_enrCalibrateCollect` + a millis()-based
+    heartbeat. ~30 min including unit-test coverage of the new
+    response shape.
+
+    PRIORITY: MEDIUM. Pairs naturally with #86's diagnosis work
+    (the heartbeat would have surfaced the bug in 30 s instead of
+    120 s) and naturally with #38/#42 since those touch the same
+    state-machine surface.
+
+88. ESP-NOW ranging defaults to OFF / persistence relies on retained MQTT
+    DISCOVERED: 2026-04-28 evening, Phase 2 R1 setup.
+
+    OBSERVATION: Bench devices Bravo/Delta/Echo/Foxtrot were not
+    publishing `/espnow` telemetry despite being on v0.4.26. Probe
+    of retained `cmd/espnow/ranging` topics revealed:
+       - Alpha (32925666-...): retained "1" → enabled
+       - Old Bravo UUID (6cfe177f-..., now retired): retained "0"
+         (artefact, cleared this session)
+       - Bravo/Delta/Echo/Foxtrot (current UUIDs): NO retained
+         message → `_rangingEnabled` defaults to false at boot.
+
+    Operator confirmed: ESP-NOW was intentionally turned off in
+    past version updates and the retained-message-driven re-enable
+    pattern was never re-published for the rotated/new UUIDs.
+
+    ROOT CAUSE: The ranging-enabled state lives on the broker as
+    a retained MQTT command, not in NVS. When a device's UUID
+    rotates (e.g. NVS wipe per #50) or when a new device is
+    bootstrapped, there's no mechanism to inherit the previously-
+    chosen enabled state. The fleet-wide enable thus needs to be
+    manually republished per UUID.
+
+    OPTIONS:
+       a) Persist `_rangingEnabled` in NVS via AppConfig. Default
+          to ON. cmd/espnow/ranging writes both the flag and NVS.
+          Survives reboots, UUID rotations, and re-flashes.
+          (~15 lines: app_config field + load/save plus 2 callers.)
+       b) Default to ON in firmware (don't touch retained MQTT
+          state). cmd/espnow/ranging "0" can still disable it
+          but a fresh boot with no retained state ranges by
+          default. (Smaller change, but the semantic of retained-
+          MQTT-as-source-of-truth is preserved.)
+       c) Ship the bootstrap protocol's credential bundle with
+          a `ranging_enabled` field (similar to #49's OTA URL
+          inheritance). Inheritance via siblings, not the broker.
+
+    RECOMMENDATION: option (a) — NVS persistence with default ON.
+    Same pattern as the per-peer cal table (#41.7) and the calib
+    constants. Aligns with the principle that fleet-wide feature
+    enable/disable should survive reboots without operator
+    re-touch.
+
+    IMPACT: Operationally embarrassing. A fleet that is "supposed
+    to be ranging" can silently drift off-state across version
+    updates and UUID rotations. Phase 2 verification was blocked
+    on this for the first ~10 minutes of the session before the
+    cause surfaced.
+
+    PRIORITY: MEDIUM. Pairs well with the #38/#42 firmware bundle
+    (same NVS-persistence pattern as runtime intervals + mode
+    state). Could also reach into #49's bootstrap-bundle scope
+    if option (c) is chosen.
+
+89. ESP-NOW calibration multi-point buffer is RAM-only — lost on reboot
+    DISCOVERED: 2026-04-28 evening, mid Delta-anchor sweep. Operator
+    physically repositioned Delta (USB cable jiggle → power-cycle).
+    Delta rebooted between the 2 m and 4 m measurement steps. The
+    just-completed (2.0 m, -77 dBm) point in `_calibPoints[]` was
+    LOST — `_calibPointCount` reset to 0 — invalidating the sweep
+    in progress.
+
+    OBSERVATION:
+       - `_calibPoints[ESPNOW_CALIB_MAX_POINTS]` is a static C array
+         in espnow_ranging.h:116; not NVS-backed.
+       - `_calibPointCount` is a static uint8_t at line 117.
+       - On reboot, BSS zero-init resets both, wiping the buffer.
+       - Confirmed empirically: the `started` response after Delta's
+         restart reported `points:0` despite a successful `measure_at`
+         + `done` having published `points:1` ~6 minutes earlier.
+
+    OPERATIONAL IMPACT: any multi-point sweep that spans more than
+    a few seconds is at risk of partial loss. With 30-sample steps
+    at 3 s beacons, each step is ~90 s; a 4-point sweep = ~6
+    minutes. Power glitch / panic / cmd/restart anywhere in that
+    window invalidates everything captured so far. Operator and
+    agent get NO indication of the loss — the new `started`
+    response just shows `points:0` instead of the expected count.
+
+    OPTIONS:
+       a) NVS-backed point buffer. AppConfig.cal_points_pending +
+          AppConfigStore::save() after each `_enrCalibPushPoint`.
+          ~50 lines. Survives reboots cleanly.
+       b) Persist only AFTER commit (current behaviour). But add a
+          warning when `started` is invoked while
+          `last_known_points > 0` and `_calibPointCount == 0`,
+          surfacing the buffer-was-cleared condition (e.g. via
+          `{"calib":"warning","msg":"buffer cleared since last
+          step — likely reboot, restart sweep"}`).
+       c) Heartbeat-publish `_calibPointCount` so a watcher (Node-
+          RED, agent) can detect drops between steps.
+
+    RECOMMENDATION: option (b) — visibility first. Per-step
+    persistence (option a) adds NVS write cost on every
+    measure_*_done; not worth the wear for a tens-of-bytes buffer
+    that's rarely populated and only matters during active
+    operator-driven calibration.
+
+    PRIORITY: MEDIUM. Pairs naturally with #87 (calibration UX)
+    and #88 (NVS-persist ranging-enabled). All three are
+    "calibration session resilience" themed and can ship as one
+    bundle.
+
+    SESSION CONTEXT: Phase 2 R1b cautious-retry post-cascade
+    DID complete successfully on Delta after the buffer reset
+    issue surfaced — sweep was redone from scratch, captured
+    (1.0, -75) / (4.0, -78) / (7.5, -91), commit produced
+    tx_power_dbm=-73 / path_loss_n=1.61 / R²=0.718 / RMSE=3.69
+    via linreg, written to peer_cal_table[Foxtrot]. /espnow
+    telemetry then showed `calibrated:true` on Foxtrot. Pipeline
+    end-to-end PROVEN. Acceptance criteria from #47 (R²≥0.95,
+    n∈[2,4], tx∈[-65,-45], RMSE<2.0) all violated due to indoor
+    multipath in this room — non-monotonic curve from 1m→4m→7.5m.
+    Real environmental finding, not a pipeline issue.
+
+90. Device PCB mounting orientation has large RF impact — needs systematic test
+    DISCOVERED: 2026-04-28 evening, mid Phase 2 R1 baseline re-capture.
+    After physically relocating the bench rig (Delta moved to Echo's
+    old triangle vertex, then everything replaced into the same 1 m
+    triangle shape), RSSI on the same-distance pairs dropped 14-21 dB
+    vs. the original baseline — even though distances were unchanged.
+
+    OBSERVATION (1 m pairs, calibrated:false, default constants):
+       Pair                Original baseline     Re-capture    Delta
+       ─────────────────   ─────────────────    ───────────   ─────
+       Bravo→Delta @ 1 m   -73 dBm              -92 dBm       -19 dB
+       Delta→Bravo @ 1 m   -71 dBm              -83 dBm       -12 dB
+       Bravo→Echo  @ 1 m   -88 dBm              -85 dBm        +3 dB
+       Echo→Bravo  @ 1 m   -82 dBm              -83 dBm        -1 dB
+
+    The Bravo↔Delta pair shows the largest swing — 19 dB asymmetric
+    drop. Bravo↔Echo barely moved. This is consistent with:
+       a) Antenna orientation changed when devices were picked up and
+          replaced (the WROOM PCB trace antenna is asymmetric — its
+          "figure-of-8" pattern means small rotations = big RSSI deltas)
+       b) Ground-plane coupling — devices currently mounted "pins
+          down, chip up" → antenna face is oriented toward the bench
+          surface → strong reflection / coupling. Operator hypothesis:
+          "pins forward, chip back, antennas on top" should improve RF
+          significantly by getting the antenna into open space.
+
+    PROPOSED EXPERIMENT:
+       1. Document the current "pins down, chip up" mount as baseline.
+       2. Re-orient one device (e.g. Foxtrot) to "pins forward, chip
+          back, antennas on top". Re-capture /espnow for 45 s. Compare
+          asymmetry on all peer pairs.
+       3. Repeat with each device individually re-oriented.
+       4. Finally, all devices re-oriented to the new pose.
+       5. Capture per-pair RSSI and asymmetry deltas.
+
+    EXPECTED OUTCOME: 5-10 dB improvement in RSSI for the re-oriented
+    device's pairs, lower asymmetry. If confirmed, **install guide
+    (#40) needs an update** to specify recommended antenna orientation,
+    AND #37 root cause #2 gets a quantified mitigation factor.
+
+    CONNECTS TO:
+       - #37 root cause #2 (antenna pattern) — directly informs
+       - #40 operator install guide — should add orientation guidance
+       - #41 (RESOLVED) — RFID-RC522 antenna distortion finding;
+         orientation testing should also note RFID coil presence
+
+    PRIORITY: MEDIUM-HIGH. ~30 min experiment time on a stable bench;
+    high-leverage finding because every install in the field benefits
+    if there's a clearly-better orientation. Data feeds directly into
+    install-guide field validation (#40 closure path).
+
+    SESSION NOTE: This finding emerged ORGANICALLY from the post-
+    cascade triangle re-capture — NOT a planned experiment. Underlines
+    the value of capturing baseline data before/after physical
+    handling, and the importance of treating the bench rig as a
+    controlled-variable experiment rather than a "static" reference.
+
+    QUICK ANTENNAS-UP TEST (2026-04-28 evening, same session):
+       Operator re-oriented all 5 devices to "antennas in the air"
+       (PCB pose: pins forward, chip back, antenna toward ceiling)
+       and re-formed the triangle at ~1.5 m sides (rough, unmeasured).
+       30 s /espnow capture compared against the pins-down 1 m
+       triangle baseline (5 same-room pair-directions covered):
+
+         Pair              pins-down  antennas-up  delta
+         ─────────────     ─────────  ───────────  ─────
+         Bravo→Delta       -87 dBm    -78 dBm      +9 dB
+         Delta→Bravo       -84 dBm    -78 dBm      +6 dB
+         Alpha→Echo        -92 dBm    -84 dBm      +8 dB
+         Alpha→Bravo       -87 dBm    -83 dBm      +4 dB
+         (others within ±2 dB)
+
+         Mean RSSI delta:  +3.0 dB across 10 directions
+
+       Note: this is the *raw* delta. The antennas-up triangle was
+       1.5 m sides vs. 1 m for pins-down — a 50% distance increase
+       which, at default n=2.5, predicts a 4.4 dB attenuation
+       penalty. Adding that back implies a same-distance equivalent
+       improvement of approximately +7-8 dB. That's a substantial,
+       deployment-relevant finding.
+
+       Foxtrot pairs missing from this comparison — Foxtrot's
+       beacons did not appear consistently during the 30 s window
+       (likely positioned out of useful RF reach during the
+       rearrangement; not a firmware issue).
+
+    UPGRADE FROM HYPOTHESIS TO QUANTIFIED FINDING: orientation
+    matters substantially. Recommended action: codify "antennas
+    up" as the default install pose in the operator install guide
+    (#40). Adds a tangible variable for installers who currently
+    have no orientation guidance.
+
+    SYSTEMATIC 4-ROTATION TEST (2026-04-28 evening, Echo only):
+       Echo was rotated through 0° / 90° / 180° / 270° with all
+       other devices (Bravo, Delta, Alpha, Foxtrot) held stationary.
+       30 s /espnow capture per rotation. Echo's TX strength as
+       observed by each peer:
+
+         Observer        0°    90°   180°  270°  range   mean
+         ─────────       ───   ───   ───   ───   ─────   ────
+         Bravo→Echo      -79   -86   -78   -77   9 dB    -80
+         Delta→Echo      -93   -81   -79   -80   14 dB   -83
+         Alpha→Echo      -84   -84   -84   -84   0 dB    -84
+         Foxtrot→Echo    -87   -81   -86   -90   9 dB    -86
+
+       INTERPRETATION:
+       1. Echo's hardware IS NOT structurally weak. The original
+          baseline observation "Echo TX is 3-6 dB below others"
+          was an unlucky orientation snapshot. At a more-favourable
+          rotation Echo reads -77 to -81 dBm (i.e. in line with
+          the rest of the fleet).
+       2. The figure-of-8 antenna pattern is the DOMINANT factor
+          for in-room ranging asymmetry: a 14 dB swing on a single
+          device just from rotating it. Per-device calibration
+          (#41.7) cannot fix this — calibration constants assume
+          a fixed orientation.
+       3. Through-wall paths (Alpha → Echo) AVERAGE over lobes
+          via multipath: 0 dB rotation range, the path completely
+          desensitised to antenna pose. Implication for
+          deployment: figure-of-8 issues mostly bite in
+          clean-line-of-sight pairs; through-obstacle pairs are
+          more forgiving.
+
+       This data feeds three downstream decisions:
+       - #40 install guide: at minimum, "after install, observe
+         /espnow asymmetry per pair; if > 6 dB, rotate one device
+         90° and re-check before calling the install good."
+       - #91 external-antenna investigation: a 14 dB rotation
+         lottery is precisely what an external omni dipole would
+         eliminate. Strengthens the case.
+       - #37 root cause #2: now QUANTIFIED at 9-14 dB amplitude,
+         not just qualitatively documented.
+
+    SESSION NOTE: Echo was wrongly suspected of having weak TX
+    earlier in the session based on the original baseline (where
+    rssi medians showed Echo consistently 3-6 dB below others).
+    The 4-rotation test EXONERATES Echo's hardware. Filed here
+    for future-self: "consistently low RSSI in baseline ≠ weak
+    radio; could be unlucky-orientation lottery. Always rotation-
+    test before suspecting hardware."
+
+91. Investigate ESP32 variants with external antenna (U.FL / IPEX)
+    DISCOVERED: 2026-04-28 evening, while triaging #37/#41/#90 (all
+    of which point at the WROOM PCB trace antenna as a root-cause
+    contributor to ranging asymmetry, install-orientation sensitivity,
+    and RFID-coil RF coupling).
+
+    PROPOSAL: Source 1-2 ESP32-WROOM-32U modules (the variant with
+    a U.FL/IPEX connector instead of the PCB trace antenna) and run
+    a head-to-head bench comparison against the current WROOM-32
+    fleet. Same firmware (v0.4.26+), same room, same protocol, same
+    distances. Capture:
+       a) Per-pair RSSI medians at 1 m / 2 m / 4 m / 7.5 m
+       b) Asymmetry deltas (A→B vs B→A)
+       c) Effect of orientation (antennas-up / sideways / inverted)
+       d) RFID-coil interaction (mount the U.FL device on a breakout
+          with RC522 attached — does the coil-distortion pattern from
+          #41 disappear when the antenna is physically off-PCB?)
+
+    ANTENNA OPTIONS WORTH TESTING:
+       - Cheap PCB patch antenna (~$1-2) — most field-realistic
+       - 2.4 GHz dipole / "rubber duck" (~$3-5) — most omni-uniform
+       - Higher-gain panel antenna (5-7 dBi, ~$10) — directional
+         deployments / fixed-position installs
+
+    EXPECTED WINS (if hypothesis holds):
+       - +5 to +15 dB RSSI improvement at the same distance
+       - Lower asymmetry (no figure-of-8 lobes if dipole)
+       - Decoupling from RFID coil distortion (#41 mitigation)
+       - Less orientation-sensitive installs (#90 mitigation)
+       - More predictable per-peer calibration (#37 mitigation)
+
+    EXPECTED COSTS:
+       - Module BOM cost: ~$1-2 more per node for WROOM-32U vs WROOM-32
+       - Antenna cost: $1-10 per node depending on choice
+       - Regulatory: some external antennas need re-cert (FCC/CE/ICASA)
+         — needs check before any production deployment in SA market
+       - Form factor: external connector + cable adds bulk; affects
+         enclosure design
+
+    OPEN QUESTIONS FOR THE EXPERIMENT:
+       1. Does a single external-antenna node in a mixed fleet still
+          benefit, or do BOTH ends of a pair need to be external for
+          asymmetry to drop? (Critical for staged deployment plans.)
+       2. Does the per-peer calibration model (#41.7) hold up better
+          with external antennas? (Higher R² in linreg, cleaner slope.)
+       3. Can a directional/panel antenna meaningfully extend the
+          ranging usable distance for sites > 10 m apart?
+
+    PRIORITY: MEDIUM-HIGH. Cheap experiment (~$15-30 in parts +
+    a few hours of bench time). Direct path to closure of #37
+    (asymmetry root cause #2) AND a deployment-relevant finding.
+    If results are strong, this could shift the recommended hardware
+    BOM for new installs. Deferred to a session where new modules
+    have arrived; queue procurement now.
+
+    LINKS:
+       - #37 root cause #2 (antenna pattern) — directly informs
+       - #41 (RESOLVED) — RFID-RC522 antenna distortion finding
+       - #90 — PCB mounting orientation
+       - #40 — operator install guide updates flow downstream
+
+92. Power-restoration reconnect storm reproduces #78 — 2026-04-29 morning event
+    CONFIRMS: the WiFi-AP-disturbance → fleet-reconnect-storm pattern is the
+    primary trigger for #78-class cascades. Second independent occurrence in
+    24 hours (first was 2026-04-28 evening USB power-cycle event).
+
+    EVENT TIMELINE:
+       2026-04-28 23:08 SAST  Session ended. Operator left bench powered up:
+                              - Charlie + Alpha on laptop USB power
+                              - Bravo + Echo + Delta on battery (deployment-
+                                like operating mode, NEW data point)
+                              - Foxtrot on mains
+                              - Router on mains
+                              - All 5 in-room devices ranging
+       (overnight)            Power failure. Router and Foxtrot lose power.
+                              Battery devices (Bravo/Echo/Delta) keep running
+                              but lose Wi-Fi association. Charlie + Alpha
+                              kept running on laptop USB but lose Wi-Fi too.
+       (morning)              Power restored. Router boots. Fleet attempts
+                              simultaneous Wi-Fi reconnect.
+       2026-04-29 ~08:30      Reconnect storm → fleet-wide cascade panic.
+                              4 of 5 in-room devices crash near-simultaneously
+                              with FOUR distinct exc_task signatures.
+       2026-04-29 08:35       Operator agent overnight check captures the
+                              post-cascade state: 4 devices uptime=3s,
+                              Foxtrot offline (LWT), Charlie offline (LWT).
+
+    CORE DUMPS CAPTURED (retained, post-cascade):
+       Device   exc_task    exc_pc       exc_cause              boot_reason
+       ──────   ─────────   ──────────   ────────────────────   ───────────
+       Alpha    async_tcp   0x00000019   InstFetchProhibited    panic
+       Bravo    wifi        0x401d2c66   LoadProhibited         panic
+       Delta    tiT         0x4008ec34   IllegalInstruction     int_wdt   *
+       Echo     loopTask    0x4008ec34   IllegalInstruction     int_wdt   *
+       Foxtrot  loopTask    0x4008a9f2   LoadProhibited         (offline) *
+       Charlie  async_tcp   0x3f409271   InstructionFetchError  (offline) *
+
+       (* same coredumps as last night's session — likely retained from
+          the previous cascade. Only Alpha and Bravo show NEW exc_pc
+          values from the morning event.)
+
+    NEW FINDINGS FROM THIS EVENT:
+    1. **WiFi task is now in the bug surface.** Bravo's morning crash is in
+       the IDF wifi driver task — a 4th task family added to async_tcp /
+       tiT / loopTask. This is the lowest-level networking task that can
+       crash; corruption is reaching the bottom of the stack.
+    2. **int_wdt (interrupt watchdog) is a new failure mode.** Delta and
+       Echo rebooted via int_wdt rather than panic. int_wdt fires when
+       an ISR runs too long — typically because a corrupted lwIP free-list
+       (or similar) causes an interrupt-context walker to spin. Same
+       general-corruption story, just a different observable.
+    3. **Cascade trigger is REPRODUCIBLE.** Two independent occurrences
+       within 24 hours, both correlated with WiFi/network disruption
+       events (USB power-cycle of devices on day 1, AP/power restoration
+       on day 2). This makes the bug bench-tractable: kill + restore the
+       AP, observe the cascade, attach serial, capture the panic in the
+       act.
+    4. **Battery operation tested incidentally.** Bravo + Echo + Delta
+       were on battery during the overnight outage. They survived the
+       power event (battery held), lost Wi-Fi, then crashed during the
+       AP reconnect — same as the USB-powered devices. **Battery
+       operation does not help the cascade resilience.** Operationally
+       relevant: deployments planning to use battery backup will see
+       the same #78 issue when the AP cycles, regardless of device
+       power source.
+    5. **NVS-backed calibration data PERSISTED across the cascade.**
+       Delta's `peer_cal_table[Foxtrot]` (tx=-73, n=1.61, written
+       2026-04-28 evening) survived the crash + reboot. /espnow
+       telemetry confirms `cal_entries:1`. Validates the NVS persistence
+       path for #41.7 against panic/reboot.
+
+    REPRODUCTION RECIPE (now confirmed):
+       1. Bring fleet up steady-state (all devices ranging, MQTT-connected)
+       2. Kill the AP for 30+ seconds (long enough that WiFi connections
+          drop and reconnect attempts back off)
+       3. Restore the AP
+       4. Watch for fleet-wide cascade within ~30s of AP recovery
+
+    REPRODUCTION REFINEMENT (2026-04-29 morning, post-cold-swap test):
+       Operator cold-swapped Bravo / Echo / Delta from battery to mains
+       (USB unplug → mains plug, three devices in sequence ~30 s apart).
+       Each device rebooted with `boot_reason: poweron`. NO cascade
+       fired — coredump count stayed at 6, no new panics across any
+       device including the in-room peers that stayed running.
+
+       This refines the trigger: the cascade is NOT "any power event"
+       and NOT "any device reboot". It is specifically **fleet-wide
+       synchronous WiFi/AP loss → simultaneous reconnect attempts**.
+       A single device reconnecting solo threads the needle without
+       hitting the race window. Multiple devices hitting AsyncTCP /
+       lwIP / WiFi-driver cleanup paths concurrently is what surfaces
+       the corruption.
+
+       Implications for the fix hypothesis:
+       - The bug is in a SHARED-STATE / contention path, not a per-
+         connection state machine
+       - Likely candidates: lwIP's PCB allocator, AsyncTCP's event
+         queue dispatch, WiFi driver's TX-cleanup queue — anywhere
+         multiple connections converge on shared mutable state
+       - A solo reconnect doesn't exercise the contention; that's
+         why field deployments rarely cascade until a major Wi-Fi
+         event hits them all
+
+       Implications for the reproduction recipe:
+       - Killing the AP is the simplest way to force synchronized
+         reconnect (recipe above stands)
+       - ALTERNATIVE recipe for bench debug without AP control:
+         simultaneously cmd/restart all in-room devices via a fan-out
+         script. Each device reconnects solo on a different time
+         offset from when their MQTT-restart-handler runs, so this
+         may NOT reproduce reliably. Prefer the AP-cycle recipe.
+
+    DIAGNOSTIC NEXT STEPS:
+       a) Reproduce in-bench with serial attached to Bravo or Delta
+          (BOTH have shown new exc_pcs — attaching one will catch
+          the next event). Operator's bench has Charlie on COM
+          today; rotating Bravo/Delta onto serial would be the
+          highest-yield diagnostic step.
+       b) Symbolize the new exc_pcs against the v0.4.26 ELF artifact
+          from CI. The Bravo wifi 0x401d2c66 and Alpha 0x00000019
+          (essentially a null jump) are concrete signatures to root-
+          cause.
+       c) Hypothesis to test: AsyncTCP's `_error` path may be passing
+          a freed/dangling pointer to the lower-level WiFi/lwIP layers,
+          and the corruption manifests in whichever task next walks
+          that data structure. If so, a defensive null-out + barrier
+          in AsyncTCP::_error would prevent the propagation.
+
+    PRIORITY: HIGH and now ACTIONABLE. The reproduction recipe takes
+    ~5 minutes to execute, makes #78 bench-debuggable for the first
+    time. Operationally critical: every customer deployment's WiFi
+    AP restart event will trigger this — the bug WILL surface in the
+    field. Until fixed, document the operator workaround: "after any
+    AP power-cycle or known WiFi outage, expect a brief fleet
+    cascade within 30 s — devices auto-recover, ride it out."
+
+    LINKS:
+       - #78 — same bug, broadens the surface
+       - #46 — adds int_wdt failure mode to the panic/wdt vocabulary
+       - #54 — Charlie was on canary v0.4.20.0 with stack-canary build;
+         Charlie went offline this morning. If Charlie hit a stack
+         overflow during reconnect, that closes #54 with positive
+         evidence that #78 is NOT a stack overflow. Operator should
+         pull Charlie's serial log to check.
+       - #86 — yesterday's #86 was likely a manifestation of #78
+         heap corruption residue; this morning's data strengthens
+         that interpretation.
+
+93. Production firmware is SERIAL-SILENT — decide whether to instrument
+    DISCOVERED: 2026-04-29 morning, while pulling Charlie's canary
+    serial backlog and Alpha's production serial as part of #54
+    disposition (see docs/SESSIONS/CHARLIE_CANARY_SERIAL_2026_04_29.md
+    + ALPHA_SERIAL_2026_04_29.md).
+
+    OBSERVATION: A 45-second no-reset serial capture on BOTH a v0.4.26
+    production device AND a v0.4.20.0 canary device (with
+    CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2) yielded ZERO bytes. Steady-
+    state operation does not emit any debug output. The only time a
+    serial-attached operator sees data is during:
+       a) Boot-time prints (banner, ESP-NOW init, WiFi/MQTT connect)
+       b) Active LOG_W / LOG_E output (panic, WDT, abnormal events)
+       c) Custom debug builds with LOG_D enabled
+
+    This is intentional design — production builds shouldn't flood
+    serial in normal ops. But it has a real cost for forensics:
+
+    COST OF SILENCE:
+       - "Pull the serial backlog" yields nothing actionable
+       - Stack watermarks aren't visible until a violation fires
+       - Heap fragmentation evolution isn't observable on serial
+       - Cascade investigations (#78) require continuous logging
+         BEFORE the event because the panic print is the only
+         interesting line emitted in the 24+ hours of soak around it
+       - Periodic-state debugging requires reflashing a debug variant
+
+    DECISION REQUIRED — pick one:
+
+    OPTION A — STATUS QUO (do nothing)
+       Production stays silent. Operators must run `pio device monitor`
+       continuously to capture event-driven prints. Acceptable if we
+       trust MQTT telemetry as the primary observability channel.
+
+    OPTION B — Periodic heartbeat-to-serial in production
+       Add a LOG_I line every 60 s with: uptime, free heap, largest
+       contiguous heap, mqtt_disconnects, wifi_channel, peer_count.
+       Single line, ~120 bytes. Negligible cost; serves as continuous
+       baseline for any future serial-attached debug session. Pairs
+       well with the existing MQTT heartbeat — same data, different
+       channel for resilience.
+
+    OPTION C — Per-task stack watermark print in canary builds only
+       Production stays silent. Canary builds add a periodic
+       uxTaskGetStackHighWaterMark() print per task (every 5 min,
+       so ~12/hour). Keeps watermark surveillance for #54-style
+       investigations without burdening production. Only pays the
+       cost on dedicated soak-canary devices.
+
+    OPTION D — On-demand `cmd/diag/serial_dump` MQTT command
+       New MQTT command triggers a one-shot serial dump of current
+       stats (per-task watermarks, heap stats, recent reconnects,
+       calibration buffer). Best of both worlds: silent production +
+       on-demand forensics. Roughly 50 lines of new firmware code +
+       a Node-RED button. Opens the door to a richer per-device
+       diagnostic surface over time.
+
+    RECOMMENDED: B + D bundled.
+       - B (cheap, always-on baseline) makes serial useful for any
+         future ad-hoc connection
+       - D (richer on-demand snapshot) gives MQTT-side operators a
+         dump button without serial-attached hardware
+
+       C (canary-only) is also worthwhile if we keep running canary
+       soaks; pairs with the #54-class surveillance use case.
+       Recommend bundling C with the canary build only IF a future
+       canary investigation surfaces.
+
+    PRIORITY: LOW-MEDIUM. Not a stability bug. Worth doing as part
+    of the broader diagnostic-tooling theme alongside #87 (calibration
+    UX silence) and #88 (NVS-persisted ranging). All three are
+    "make the firmware self-document its state" themed and could
+    ship as one bundle.
+
+    LINKS:
+       - #54 / docs/SESSIONS/CHARLIE_CANARY_SERIAL_2026_04_29.md
+       - #87 — calibration UX silence (related theme)
+       - #88 — ranging-enabled-flag persistence (related theme)
+       - #78 / #92 — bench-debug session strategy benefits from B
+         (continuous baseline before triggering AP cycle)
+
+94. ESP-NOW reinit on WiFi reconnect + LED state-machine MQTT_LOST event
+    SHIPPED 2026-04-29 (build verified clean; flash + soak validation
+    pending). Two related firmware patches addressing failure modes
+    surfaced during the bench-debug AP-cycle session.
+
+    DISCOVERED: 2026-04-29 morning. Continuous serial logging on Alpha
+    (v0.4.26 production) and Charlie (v0.4.20.0 canary) through an
+    operator-induced router power-cycle caught two distinct bugs:
+
+       (a) Alpha's ESP-NOW driver entered an uninitialized state after
+           WiFi reconnected. Every subsequent ranging beacon failed
+           with `ESP_ERR_ESPNOW_NOT_INIT`, repeating every ~3.5 s.
+           Charlie (v0.4.20.0) survived the same WiFi cycle with
+           ESP-NOW intact — pinpointing this as a v0.4.20→v0.4.26
+           regression, NOT a permanent ESP-IDF bug.
+       (b) Alpha's WS2812 strip stayed in MQTT_HEALTHY (green
+           breathing) state even after MQTT dropped. The LED
+           state-machine had a one-way transition: MQTT_HEALTHY was
+           set on connect but no MQTT_LOST event existed to
+           transition off when the connection dropped. Operator
+           visually misled into thinking MQTT was healthy.
+
+    See docs/SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md for the
+    full event timeline + reproduction recipe.
+
+    PATCH 1 — ESP-NOW reinit on WiFi-up event:
+       File: src/main.cpp around line 697 (the
+             "Wi-Fi reconnected after %u ms outage" branch)
+       Change: after the existing ledSetPattern(WIFI_CONNECTED) call,
+               invoke esp_now_deinit() (safe no-op if not initialized)
+               then espnowResponderStart() to re-init the ESP-NOW
+               driver and re-register the receive dispatch callback.
+       Effect: every subsequent WiFi reconnect (whether from BEACON_
+               TIMEOUT, AP power-cycle, manual disconnect+begin, or
+               any other path that fires the wifiConnected
+               transition) now restores ESP-NOW to a usable state.
+
+    PATCH 2 — LedEventType::MQTT_LOST:
+       Files:
+         - include/ws2812.h: added LedEventType::MQTT_LOST enum
+           value + handler that transitions _ledState (and
+           _ledPreviousState if applicable) from MQTT_HEALTHY back
+           to IDLE (the documented "WiFi up, MQTT not yet
+           connected" state with slow blue breathing).
+         - include/mqtt_client.h: posted the MQTT_LOST event from
+           onMqttDisconnect() symmetric to the existing MQTT_HEALTHY
+           post in mqttHeartbeat().
+       Effect: when MQTT drops while WiFi remains up, the WS2812
+               strip transitions off green and back to slow blue
+               breathing — visually matches the GPIO2 LED's
+               LedPattern::WIFI_CONNECTED behaviour already in
+               onMqttDisconnect.
+
+    BUILD VERIFICATION:
+       2026-04-29 09:35 SAST — `pio run -e esp32dev` succeeded in
+       101.5 s. Memory usage post-patch: RAM 22.3%, Flash 83.7%.
+       No new warnings introduced (the warnings emitted are all
+       pre-existing in broker_discovery.h, ota.h's ESP32OTAPull
+       library, and rfid.h — not in the patched files).
+
+    VALIDATION STILL NEEDED:
+       1. Flash the patches to one or two bench devices
+          (USB-flash since OTA hasn't been bumped).
+       2. Run the AP-cycle reproduction recipe from #92.
+       3. Verify the patched device:
+          - Logs "ESP-NOW reinitialized after WiFi reconnect" after
+            the WiFi-up event
+          - Resumes publishing /espnow telemetry within ~5 s of
+            reconnect (vs. the silent-broken state observed today)
+          - WS2812 (if equipped — Alpha currently) transitions
+            green→blue-breathing when MQTT drops, then back to
+            green when MQTT reconnects
+       4. After 10+ minutes of clean post-cycle operation, tag a
+          v0.4.27 release and OTA the fleet.
+
+    NOT FIXED BY THESE PATCHES:
+       - The underlying #78 heap-corruption that produces the
+         panic-cascade variant of the same trigger. Patch 1 fixes
+         the silent ESP-NOW failure but a panic-cascade can still
+         occur on AP-cycle if heap state is unfavorable. Two
+         separate bugs sharing one trigger.
+       - #87 calibration UX silence
+       - #88 NVS-persisted ranging-enabled flag
+       - #89 RAM-only calibration buffer
+       - #90 / #91 antenna / orientation work
+
+    PRIORITY: HIGH for validation+ship; this is the highest-leverage
+    fix from the bench-debug session and addresses two visible
+    operator-facing bugs.
+
+95. PIO upload hangs / errors with UnicodeEncodeError on Windows console
+    DISCOVERED: 2026-04-29 morning, while flashing the v0.4.27
+    candidate to Alpha for #94 validation.
+
+    OBSERVATION: `pio run -e esp32dev -t upload --upload-port COM4`
+    appeared to hang for 23+ minutes with no console output (just
+    the leading "[flashing Alpha …]" header in the captured output).
+    Investigation showed:
+       - Build phase completed cleanly (firmware.bin generated within
+         ~60 s of starting)
+       - esptool.exe process was alive but not writing flash
+       - The actual end-of-output revealed:
+            UnicodeEncodeError: 'charmap' codec can't encode
+            characters in position 23-52: character maps to <undefined>
+            *** [upload] Error 1
+       - The PIO `_safe_echo()` wrapper around click.secho hit Python's
+         default `sys.stdout.encoding == 'cp1252'` on this Windows
+         console, and pio's progress output contains box-drawing /
+         CJK / em-dash characters that cp1252 can't represent.
+       - Bash chain (`| tail -40`) silently absorbed the non-zero
+         exit; the captured output looked like a clean run that
+         was still in progress until 23+ minutes had passed.
+       - esptool.exe survived the parent pio.exe death and held
+         COM4 hostage. taskkill /F was unable to terminate it
+         ("operation attempted is not supported"). Required a
+         physical USB unplug+replug of the device to release.
+
+    ROOT CAUSE: PlatformIO's stdout-line-callback path doesn't set
+    PYTHONIOENCODING=utf-8 nor switch the console to cp65001 (UTF-8)
+    before emitting Unicode-laden progress chars. On any Windows
+    install where cp1252 is the default (i.e. virtually all of them
+    by default), this can crash the upload action whenever upstream
+    tools (esptool, ldscripts, etc) emit non-ASCII characters.
+
+    KNOWN-GOOD WORKAROUND: prefix the pio invocation with
+    `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`. Forces pio's child
+    Python interpreter to use UTF-8 for stdout/stderr regardless
+    of the inherited Windows console code page.
+
+    PROPOSED FIXES (in order of preference):
+       a) Add a wrapper `tools/dev/pio-utf8.sh` that sets the env
+          vars and forwards args to pio. Document in CLAUDE.md and
+          recommend operators use it for upload + monitor commands.
+          (~5 lines; immediate.)
+       b) File an upstream bug with PlatformIO referencing the
+          `_safe_echo` path in `__main__.py` line 83 and click
+          termui.py line 698. Suggest defaulting PYTHONIOENCODING
+          if not set.
+       c) Add a CI check that runs `pio run -e esp32dev -t upload
+          --dry-run` (or whatever the equivalent flag is) under
+          a deliberately cp1252-set console to catch any future
+          regression.
+
+    SECONDARY ISSUE — esptool.exe survives parent kill and holds
+    COM port hostage:
+       Even with `taskkill /F /IM esptool.exe`, Windows reported
+       "operation attempted is not supported". Required physical
+       USB unplug+replug to release COM4. Could be:
+       - esptool has a non-killable I/O block (synchronous serial
+         read/write) that's stuck on the kernel driver side
+       - Windows process protection (admin rights or AV interaction)
+       Either way, operationally relevant: when an upload hangs,
+       physical USB cycling is the only reliable recovery.
+
+    IMPACT: any operator hitting this gets a 20+ minute false-hang
+    plus a stuck COM port. Particularly bad on autonomous/CI flows
+    that don't surface the buried error message until manual
+    investigation.
+
+    PRIORITY: MEDIUM. Workaround is one-line (env var prefix) once
+    you know the cause. The real cost is the time-to-diagnose for
+    anyone hitting this fresh. Wrapper + CLAUDE.md note (option a)
+    is the cheap fix.
+
+    LINKS:
+       - Hit during #94 v0.4.27 USB-flash to Alpha 2026-04-29 morning

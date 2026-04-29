@@ -61,6 +61,7 @@ enum class LedEventType : uint8_t {
     OTA_START,       // OTA download beginning → orange chasing
     OTA_DONE,        // OTA failed or no update → restore _previousState
     MQTT_HEALTHY,    // WiFi + MQTT connected → slow green breathing (operational heartbeat)
+    MQTT_LOST,       // (post-#92, 2026-04-29) MQTT dropped while WiFi remains up → revert to IDLE blue breathing
     MQTT_OVERRIDE_TIMED, // (#23) Timed override: color+anim for duration_ms then auto-revert
     MQTT_PIXEL_SET,  // (#19) Set single pixel {index, r, g, b}
     MQTT_PIXEL_COMMIT, // (#19) Switch to MQTT_PIXELS state and freeze _leds[] for direct render
@@ -679,6 +680,30 @@ static void _ws2812HandleEvent(const LedEvent& evt) {
             _ledState         = LedState::MQTT_HEALTHY;
             _ledPreviousState = LedState::MQTT_HEALTHY;
             _ledStateR = 0; _ledStateG = 255; _ledStateB = 0;
+            break;
+
+        case LedEventType::MQTT_LOST:
+            // (post-#92, 2026-04-29) MQTT dropped while WiFi remains up.
+            // Without this transition the strip is stuck on MQTT_HEALTHY's
+            // green breathing (visually claiming healthy MQTT) — caught
+            // 2026-04-29 morning during the bench-debug session, see
+            // docs/SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md.
+            //
+            // Only transition if currently in MQTT_HEALTHY — don't override
+            // active RFID/OTA overlays. After the overlay clears, those
+            // restore _ledPreviousState which we've also pushed to IDLE here
+            // so the post-overlay revert lands on the correct WiFi-up-MQTT-
+            // pending state, not back to a stale MQTT_HEALTHY.
+            if (_ledState == LedState::MQTT_HEALTHY) {
+                _ledState = LedState::IDLE;
+            }
+            if (_ledPreviousState == LedState::MQTT_HEALTHY) {
+                _ledPreviousState = LedState::IDLE;
+            }
+            // IDLE renders as slow blue breathing (4-s period), per the
+            // existing case in _ws2812RenderFrame. Mirrors the GPIO2 LED
+            // already set to LedPattern::WIFI_CONNECTED in onMqttDisconnect.
+            _ledStateR = 0; _ledStateG = 0; _ledStateB = 255;
             break;
     }
 }

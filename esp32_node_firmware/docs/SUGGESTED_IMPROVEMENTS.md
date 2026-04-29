@@ -7,6 +7,8 @@ in SUGGESTED_IMPROVEMENTS_ARCHIVE.md.
 
 Last index sweep: 2026-04-28 evening (post-v0.4.26 — regrouped 29 OPEN items into 7 thematic clusters; verified each is genuinely open).
 
+Phase 2 R1 verification attempt 2026-04-28 evening surfaced 3 new entries (#86 / #87 / #88) all blocking the original B-group items — see "Phase 2 verification blockers" note below the OPEN list.
+
 To add a new entry:
   - Append the full entry to SUGGESTED_IMPROVEMENTS_ARCHIVE.md with a new
     number (continue the sequence).
@@ -32,22 +34,29 @@ session-planning; reorder within a group freely.
   #16   Preset "program this kind of tag" forms
   #17   LF 125 kHz support (HID, EM4100, T5577)
 
-### B. ESP-NOW ranging + bootstrap (6) — needs Bravo/Charlie pair on bench
-  #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations
+### B. ESP-NOW ranging + bootstrap (10) — Phase 2 R1 verified PIPELINE on Delta↔Foxtrot 2026-04-28 evening; numerical acceptance fails due to room multipath (#37 #5/#6 territory)
+  #37   ESP-NOW ranging — A↔B asymmetry causes and mitigations          (asymmetry baseline + systematic Echo 4-rotation test 2026-04-28 evening — root cause ranking REVISED: #2 (antenna pattern) is DOMINANT at 9-14 dB amplitude (was thought Medium); #5 (multipath) confirmed via Delta↔Foxtrot non-monotonic 1m=-75/4m=-78/7.5m=-91 curve; #6 (router 50 cm from Alpha) confirmed; #1 (per-device default mismatch) DOWNGRADED — original "Echo's TX 3-6 dB weak" finding was unlucky-rotation, not hardware. Through-wall pairs naturally average over antenna lobes, so #2 is mostly an LOS-pair problem)
   #38   ESP-NOW ranging — runtime-tunable beacon / publish intervals
-  #39   ESP-NOW calibration — multi-point + arbitrary-distance variants
+  #39   ESP-NOW calibration — multi-point + arbitrary-distance variants  (firmware shipped v0.4.07; pipeline VERIFIED end-to-end 2026-04-28 evening — Delta↔Foxtrot linreg over 3 points produced tx=-73 / n=1.61 / R²=0.718 / RMSE=3.69, all numerically valid but outside #47 acceptance bounds due to multipath)
   #42   ESP-NOW ranging — temporary "active" / "calibrating" / "setup" mode
-  #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration
+  #47   Hardware verification of #39 multi-point + #41.7 per-peer calibration  (PIPELINE VERIFIED 2026-04-28 evening on Delta↔Foxtrot; cal_entries went 0→1, calibrated:true visible in /espnow; numerical acceptance criteria (R²≥0.95 / n∈[2,4] / tx∈[-65,-45] / RMSE<2.0) ALL FAILED due to indoor multipath. Open question: tighten criteria to site-specific bounds OR test in clean RF environment)
   #49   Bootstrap protocol does not propagate OTA URL to new siblings
+  #86   ESP-NOW calibration sample collection silent failure              (BRAVO-SPECIFIC confirmed 2026-04-28; DEMOTED from HIGH to LOW 2026-04-28 evening autonomous follow-on — Bravo's calibration WORKED after power-cycle + 45 min steady-state uptime, ruling out a code-level branch. Most likely a heap-corruption residue from a prior #78 panic; fixing #78 fixes #86. Workaround: "power-cycle the affected device" — document in operator install guide #40)
+  #87   Calibration UX: silent during sample-collection waiting period   (would have surfaced #86 in 30 s instead of 120 s)
+  #88   ESP-NOW ranging defaults to OFF / persistence relies on retained MQTT  (operator-confirmed regression; bench devices needed manual cmd/espnow/ranging "1" republish per UUID)
+  #89   ESP-NOW calibration multi-point buffer is RAM-only — lost on reboot   (caused mid-sweep loss of (2.0m,-77) point when Delta got USB-jiggled while operator repositioned it; visibility-only fix recommended — warn when started reports points:0 after a recent commit/measure)
+  #90   Device PCB mounting orientation has large RF impact — QUANTIFIED 2026-04-28 evening   (pins-down→antennas-up flip: +3 dB mean (~+7-8 dB same-distance equivalent). Echo 4-rotation systematic test shows 9-14 dB rotation swing per peer (LOS), 0 dB through-wall (multipath averages out). Echo HW exonerated — original "weak TX" was unlucky-rotation. Quantifies #37 root cause #2 at 9-14 dB amplitude. #40 install guide should add "if asymmetry > 6 dB, rotate one device 90° before calling install good")
+  #91   Investigate ESP32-WROOM-32U with external antenna (U.FL/IPEX)   (procurement candidate — ~$15-30 in parts; head-to-head bench test against current WROOM-32 fleet. Targets #37 root cause #2 + #41 RFID coupling + #90 orientation sensitivity all at once. Open questions: does a single external-antenna node in mixed fleet still benefit asymmetry, do calibration R² values improve, can directional antennas extend usable range > 10m? Regulatory check (FCC/CE/ICASA) needed before production)
 
 ### C. Boot / OTA safety net (0)
   (parked 2026-04-28 — #25 needs pioarduino log_printf-wrap fix; #26 needs
    8 MB flash module. Both moved to WONT_DO with revisit triggers.)
 
-### D. Open stability investigations (3) — surveillance running
-  #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure)
-  #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)         (Charlie canary soak running, sticky on v0.4.20.0)
-  #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27. Full-fleet coredump decode 2026-04-28: 5/5 panics in async_tcp task across 3 distinct AsyncTCP handlers — pattern points away from single UAF, toward general corruption. Stack overflow ruled out by Charlie canary. Next data point: 24 h post-clear soak)
+### D. Open stability investigations (4) — surveillance running; #78 reproduction recipe now confirmed
+  #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure. SOAK RESET 2026-04-28 evening — Phase 2 R1 cascade event added fresh coredumps. NEW DATA 2026-04-29 morning — int_wdt failure mode observed for first time (Delta + Echo) during the overnight power-failure recovery storm. Adds int_wdt to the panic/wdt vocabulary for #46. Soak inconclusive — interrupted by power event)
+  #54   Stack-canary build (CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2)         (Charlie canary soak running, sticky on v0.4.20.0; 34.6 h sticky uptime as of 2026-04-29 morning, survived TWO independent #78 fleet cascades (2026-04-28 evening + 2026-04-29 morning) WITHOUT firing the canary. Strong POSITIVE evidence that #78 is NOT a stack overflow — corroborates the heap-corruption hypothesis. Recommended action: mark #54 RESOLVED with positive evidence in next session)
+  #78   AsyncTCP _error path race — replace stack or patch library         (was #67 cascade-session; v0.4.16 mitigates, latent bug confirmed 2026-04-27. Coredump signature growing: now async_tcp / tiT / loopTask / wifi (4 distinct task families confirmed across cascades 2026-04-28 evening + 2026-04-29 morning) — definitively NOT AsyncTCP-specific, IS general heap corruption manifesting in whichever task next allocates. CONFIRMED CASCADE TRIGGER: WiFi/network reconnect storms after AP/power loss. Two separate cascades observed 2026-04-28 evening (USB power-cycle during repositioning) AND 2026-04-29 morning (overnight power failure → router restart → fleet reconnect storm). In both cases ALL ranging-active devices crashed within seconds of each other with diverse exc_tasks. Battery operation does NOT mitigate (Bravo/Echo/Delta were on battery during overnight outage, still cascaded on reconnect). See #92 for full event timeline + reproduction recipe. PRIORITY: HIGH — bench-tractable now)
+  #92   Power-restoration reconnect storm reproduces #78 — 2026-04-29 morning event   (second independent cascade in 24h. Reproduction recipe: bring fleet up steady-state, kill the AP for 30+ s, restore — fleet-wide cascade follows within ~30 s of AP recovery. REFINED 2026-04-29 morning: cold-swapping 3 devices from battery to mains DID NOT cascade — confirms trigger is specifically synchronized fleet-wide WiFi loss, NOT individual device power events. Bug lives in shared-state / contention paths (lwIP PCB allocator, AsyncTCP event-queue dispatch, WiFi driver TX cleanup) — anywhere multiple connections converge on shared mutable state. Solo reconnects thread the needle without hitting it. Bench-debuggable: attach serial to Bravo or Delta before the next AP cycle. Battery does NOT help. Calibration NVS persistence confirmed across cascade)
 
 ### E. CI / security gates (0)
   (all closed — #27 RESOLVED, #63 RESOLVED, #68 WONT_DO)
@@ -55,13 +64,44 @@ session-planning; reorder within a group freely.
 ### F. Hardware bench / variants (1)
   #72   Bench-supply voltage stress testing rig                      (was #59 cascade-session)
 
-### G. Docs / process / long-tail closure (4) — mostly validation-pending, not coding
+### G. Docs / process / long-tail closure (6) — mostly validation-pending, not coding
   #33   Versioned MQTT topic prefixes                                  (design doc shipped 2026-04-28 as docs/TOPIC_VERSIONING_DESIGN.md; implementation deferred to v1.0 / fleet > 10 / first breaking schema change)
-  #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; entry kept open until field-validated)
+  #40   Operator install guide — ESP32-WROOM antenna orientation       (doc shipped 2026-04-28 as docs/OPERATOR_INSTALL_GUIDE.md; updated 2026-04-29 with cascade-recovery / antenna-orientation / #86 power-cycle notes; entry kept open until field-validated)
   #76   Recovery + reporting hardening — restart policy redesign     (was #65 cascade-session; all sub-items A/B/C/D/E/F/G/H/I now code-shipped — full closure pending v0.4.24+ fleet-validation soak)
   #85   End-of-session doc-sweep tooling                              (partial fix 2026-04-28: A + C shipped via CLAUDE.md + AUTONOMOUS_PROMPT_TEMPLATE; B sub-tool prototype shipped 2026-04-28 PM as tools/dev/end-of-session-sweep.sh — closure pending 2-3 sessions of validation that the 4 checks catch real gaps without false positives)
+  #93   Production firmware is SERIAL-SILENT — decide whether to instrument   (2026-04-29 morning serial captures of Charlie + Alpha both produced 0 bytes during steady-state. Decision required: status quo (A), periodic heartbeat-to-serial (B, recommended), canary-only watermark prints (C), or on-demand cmd/diag/serial_dump (D, recommended bundled with B). Theme alignment with #87 + #88 + #89 — "make firmware self-document its state". Cost-benefit cheap; impact is on diagnostic ergonomics not stability)
+  #94   ESP-NOW reinit on WiFi reconnect + LED state-machine MQTT_LOST event   (PATCHED 2026-04-29 morning, build verified clean — pending flash + soak validation. Targets 2 distinct bugs surfaced by bench-debug AP-cycle session: (a) silent ESP-NOW driver breakage post-WiFi-reconnect (Alpha repeating ESP_ERR_ESPNOW_NOT_INIT — v0.4.20→v0.4.26 regression), (b) LED state-machine stuck on MQTT_HEALTHY when MQTT drops while WiFi up. Patch 1: main.cpp:697 adds esp_now_deinit() + espnowResponderStart() in WiFi-reconnect branch. Patch 2: new LedEventType::MQTT_LOST + handler in ws2812.h, posted from onMqttDisconnect in mqtt_client.h. v0.4.27 release candidate; does NOT fix the panic-cascade variant of #78)
+  #95   PIO upload hangs with UnicodeEncodeError on Windows cp1252 console   (caught during v0.4.27 flash to Alpha 2026-04-29 — pio's _safe_echo path crashes on non-ASCII progress chars when stdout encoding is cp1252. Manifests as 23+ min "hang" with no console output + buried UnicodeEncodeError in trapped output + stuck esptool.exe holding COM port (requires physical USB cycle to release). Workaround: prefix pio invocations with PYTHONIOENCODING=utf-8 PYTHONUTF8=1. Proposed fix: tools/dev/pio-utf8.sh wrapper + CLAUDE.md note)
 
-  Total open: 20  (A6 + B6 + C0 + D3 + E0 + F1 + G4)
+  Total open: 30  (A6 + B12 + C0 + D4 + E0 + F1 + G7) — +6 from Phase 2 R1 2026-04-28 evening (#86 / #87 / #88 / #89 / #90 / #91); +1 from morning power-restoration cascade event 2026-04-29 (#92); +1 from serial-silence design question 2026-04-29 (#93); +1 from autonomous-mode firmware patch 2026-04-29 (#94 — patches staged, validation pending); +1 from PIO upload Unicode bug 2026-04-29 (#95)
+
+  Phase 2 R1 verification 2026-04-28 evening — outcome:
+    Goal was no-flash verification of #47 / #39 against the operator's
+    bench rig (1 m triangle + Foxtrot at 6.5/6.5/7.5 m). Pre-flight
+    surfaced #88 (ranging off on bench devices); manual republish of
+    cmd/espnow/ranging "1" got /espnow flowing. Asymmetry baseline
+    captured cleanly and feeds #37 (#1/#2/#5/#6 root causes confirmed).
+
+    Bravo as anchor → #86 surfaced (silent zero-sample collection).
+    Switch to Delta as anchor → calibration pipeline WORKED. After a
+    mid-sweep cascade event (5 fresh coredumps across the fleet —
+    Alpha panic, Bravo/Delta/Echo/Foxtrot async_tcp/tiT/loopTask in
+    various combinations; recovery via operator power-cycle), the
+    cautious retry on Delta succeeded:
+      Buffer:   (4.0m, -78) → (1.0m, -75) → (7.5m, -91)
+      Linreg:   tx_power_dbm=-73, path_loss_n=1.61
+                R²=0.718, RMSE=3.69 dB
+      Per-peer: cal_entries 0→1, calibrated:true on Foxtrot in /espnow
+
+    Pipeline VERIFIED end-to-end (#39 firmware + #47 procedure ✓).
+    Numerical acceptance bounds from #47 ALL violated due to indoor
+    multipath (non-monotonic curve) — environmental finding, not a
+    pipeline issue. #47 needs disposition decision: accept this rig
+    as documented site-specific failure, OR re-run in cleaner RF
+    environment, OR loosen the acceptance criteria to site-aware
+    bounds. Pairs naturally with #37(c) Node-RED asymmetry badge —
+    a per-pair quality indicator would surface this kind of
+    environmental issue without requiring acceptance criteria.
 
 ────────────────────────────────────────────────────────────
 

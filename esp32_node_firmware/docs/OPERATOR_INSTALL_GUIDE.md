@@ -169,3 +169,69 @@ RC522 polarity first** before assuming a software / RF issue.
 - Not a substitute for in-place RF measurement. RSSI is the ground
   truth; this guide is rules of thumb to get close to a good starting
   point.
+
+
+## Operational notes (added 2026-04-29)
+
+### Wi-Fi AP restart causes a brief fleet cascade — ride it out
+
+Documented as #78 / #92. After ANY of:
+- AP power-cycle (e.g. firmware update on the router)
+- Mains power-failure that reboots the AP
+- Site-wide network maintenance that drops Wi-Fi
+- Manual `disconnect; reconnect` on the AP for any reason
+
+…expect a **fleet-wide cascade panic within ~30 s of AP recovery**. Most
+or all devices will reboot once with mixed `boot_reason` values: `panic`,
+`int_wdt`. They auto-recover and rejoin. **Do not power-cycle anything
+manually unless a device fails to come back.** Until a firmware fix for
+#78 lands, this is expected behaviour, not a deployment failure.
+
+NVS-backed state survives the cascade cleanly:
+- Per-peer ESP-NOW calibration
+- Credentials, OTA URL, AppConfig settings
+- LED scenes / schedules / overrides
+
+So once devices come back, they resume operation with all configuration
+intact. Verify with `tools/fleet_status.sh` after any AP cycle.
+
+### Battery operation does NOT prevent the cascade
+
+If a device is on battery during an AP outage and stays running, it
+will still cascade-crash when the AP comes back. The trigger is the
+Wi-Fi association cycle, not the power event itself. Don't expect
+battery-backup to insulate a fleet from #78.
+
+### Antenna orientation — codified guidance (added 2026-04-29 from #90)
+
+Mount devices **antennas-up** (PCB pose: pins forward, chip back, antenna
+toward ceiling — NOT pins-down with the antenna face touching the
+mounting surface). Quantified in #90: ~+7-8 dB same-distance equivalent
+RSSI improvement vs. pins-down on the same triangle. Ground-plane
+coupling on a "pins-down, chip up" mount kills RSSI on the side facing
+the surface.
+
+After install, run a quick asymmetry check: subscribe to
+`<UUID>/espnow` for each device pair. **If asymmetry between A→B and
+B→A > 6 dB on a clean LOS pair, rotate one device 90°** around the
+vertical axis and re-check before calling the install good. The figure-
+of-8 antenna pattern means a 90° rotation can swing RSSI by 9-14 dB on
+a single pair.
+
+For through-wall pairs, multipath averages the antenna lobes — asymmetry
+is typically smaller and rotation has less effect. Skip the rotation
+check for through-wall pairs.
+
+### If a single device's calibration goes silent, power-cycle it (#86 workaround)
+
+Symptom: `cmd/espnow/calibrate measure_*` issued to a specific device,
+"started" response received, but no `progress` messages and no
+`measure_*_done`. Eventually times out at 120 s with
+`{"calib":"error","msg":"timeout waiting for peer"}`.
+
+If the device's `/espnow` telemetry IS still publishing (peer table
+populated, distances calculating), then calibration is a state-only
+issue per #86 — likely heap-corruption residue from a prior #78
+panic that didn't fully clear on the panic-reboot. **Full power-cycle
+of just that device** restores calibration sample collection. Reboots
+from panic do NOT clear the residue; only a full power-cycle does.

@@ -1660,6 +1660,18 @@ static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     responderSetHealthFlag(1, false);
     ledSetPattern(LedPattern::WIFI_CONNECTED);   // slow 2s/2s blink — Wi-Fi up, MQTT reconnecting
 
+    // (post-#92 LED state-machine fix, 2026-04-29) WS2812 strip needs to
+    // come off MQTT_HEALTHY too. Without this post, the strip stays
+    // green-breathing while MQTT is actually down — discovered during
+    // the bench-debug AP-cycle session (Alpha showed green-pulsing while
+    // MQTT was stuck offline). Symmetric with the MQTT_HEALTHY post in
+    // mqttHeartbeat. See docs/SESSIONS/BENCH_DEBUG_AP_CYCLE_2026_04_29.md.
+    {
+        LedEvent e{};
+        e.type = LedEventType::MQTT_LOST;
+        ws2812PostEvent(e);
+    }
+
     // (#44 / #51 v0.4.10.1) BOOT_STATE "wifi" ws2812 post DISABLED for the same
     // reason documented in onMqttConnect above. Posting from the async_tcp
     // disconnect callback is the most likely watchdog-trigger path.

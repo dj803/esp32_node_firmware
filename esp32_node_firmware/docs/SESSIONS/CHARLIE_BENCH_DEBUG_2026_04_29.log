@@ -1,0 +1,16 @@
+# logger started 2026-04-29T09:17:49 port=COM5 baud=115200 (no-reset open)
+[2026-04-29T09:21:23.907] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 1000 ms
+[2026-04-29T09:21:23.907] [I][WiFi] Disconnected (reason=200)
+[2026-04-29T09:21:23.907] [W][Loop] Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)
+[2026-04-29T09:21:23.907] [I][Loop] WiFi reconnect attempt (next backoff step 15000 ms)
+[2026-04-29T09:21:23.907] E (126613274) wifi:sta is connecting, return error
+[2026-04-29T09:21:38.917] [I][Loop] WiFi reconnect attempt (next backoff step 30000 ms)
+[2026-04-29T09:21:38.917] E (126628275) wifi:sta is connecting, return error
+[2026-04-29T09:22:08.909] [I][Loop] WiFi reconnect attempt (next backoff step 60000 ms)
+[2026-04-29T09:22:08.909] E (126658276) wifi:sta is connecting, return error
+[2026-04-29T09:23:08.944] [I][Loop] WiFi reconnect attempt (next backoff step 120000 ms)
+[2026-04-29T09:23:08.944] [W][Loop] WiFi.reconnect() failed 3 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T09:23:08.944] [126706072][E][STA.cpp:530] disconnect(): STA disconnect failed! 0x3002: ESP_ERR_WIFI_NOT_STARTED
+[2026-04-29T09:23:08.944] [126706082][E][STA.cpp:347] connect(): STA connect failed! 0x3002: ESP_ERR_WIFI_NOT_STARTED
+[2026-04-29T09:23:26.685] [I][WiFi] Connected - IP: 192.168.10.203
+[2026-04-29T09:23:26.685] [I][Loop] Wi-Fi reconnected after 122786 ms outage
