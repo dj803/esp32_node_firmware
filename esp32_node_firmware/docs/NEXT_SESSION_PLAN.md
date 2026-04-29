@@ -83,21 +83,30 @@ unchanged in [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
 Bravo is already off-bench and ready to receive the new hardware.
 
 ### B. v0.4.28 fleet soak + #46 close
-**Acceptance:** ≥24 h sustained heartbeats from all 6 devices, no
-new coredump signatures, no `mqtt_unrecoverable` events. If clean,
-mark **#46** RESOLVED (the soak that's been blocked on cascade
-events). Lightweight session — mostly monitoring + closure paperwork.
+**Acceptance:** Sustained heartbeats from all 6 devices, no new
+coredump signatures with fresh `app_sha_prefix`, no `mqtt_unrecoverable`
+events. **Soak length per CLAUDE.md "Soak windows" guidance:** 8-12 h
+overnight is the sweet spot for v0.4.28 — the fix is targeted, the
+failure mode is well-understood, and bench validation has been
+thorough. Recommended start: ~17:00 SAST, results at morning standup.
+24 h+ only if a daily-cycle effect (NTP, daily-health) is suspected.
+If clean, mark **#46** RESOLVED (the soak that's been blocked on
+cascade events). Lightweight session — mostly monitoring + closure
+paperwork.
 
 ### C. #91 ESP32-WROOM-32U + external antenna procurement
 **Owner:** operator orders parts (~$15-30). Bench test against
 current WROOM-32 fleet for asymmetry / RF range / orientation
 sensitivity. Could weeks out depending on procurement lead time.
 
-### D. #87 / #88 / #89 ranging UX bundle
-"Make the firmware self-document its state" theme. All small
-firmware additions: visible-when-collecting indicator (#87),
-NVS-persisted ranging-enabled flag (#88), persistence for
-RAM-only calibration buffer (#89). Could ship as v0.4.29.
+### D. #87 / #88 / #89 / #97 ranging UX + OTA-recovery bundle
+"Make the firmware self-document its state" theme + post-cascade
+OTA gating. All small firmware additions: visible-when-collecting
+indicator (#87), NVS-persisted ranging-enabled flag (#88),
+persistence for RAM-only calibration buffer (#89), and
+auto-OTA-during-cascade-recovery gate (#97 — `otaCheckNow()` skips
+if inside a 5 min post-disconnect window, mirrors the v0.4.28
+cascade-window guard pattern). Could ship as v0.4.29.
 
 ### E. #93 production-serial-instrument decision (B + D)
 60 s heartbeat-to-serial line + cmd/diag/serial_dump on-demand

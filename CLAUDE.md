@@ -116,6 +116,43 @@ overnight runs, Phase B-style diagnostics), arm both watchers:
 Without the silent watcher, deadlock-class failures (#51 failure mode (b))
 go unnoticed until someone eyeballs the LEDs.
 
+## Soak windows — what length, when to start
+
+Codified 2026-04-29 after v0.4.28 close. Default soaks run overnight on
+the operator's bench (no continuous attendance). Recommend the
+appropriate length, AND recommend starting it at end-of-day so the
+operator walks back in to results, not partway through. If a session
+finishes mid-day with a soak still owing, suggest "start at ~17:00 SAST,
+results at morning standup".
+
+| Soak  | When                                               | What it catches                                                 |
+|-------|----------------------------------------------------|-----------------------------------------------------------------|
+| **4 h**   | Targeted bug fix, well-understood failure mode, symbolic root-cause + bench-validated recovery (e.g. v0.4.28 #78 + #96). | Quick heap-leak sanity, immediate post-fix regression. Doesn't catch slow-drift or rare-trigger bugs. |
+| **8-12 h** (overnight default) | Most production releases. Multi-task interaction fixes. New feature additions where the bug surface is uncertain. | Heap leak detection (slow drift), MQTT reconnect-cycle behaviour over the natural broker-keepalive timing, sustained ranging health. |
+| **24 h+** | Library / framework swaps (AsyncTCP, NimBLE, ESP-IDF). Partition / OTA / bootloader changes. Pre-customer-deployment readiness. After a field near-miss. | Daily-cycle effects (NTP re-sync, daily-health summary, dawn/dusk RF effects). Multi-cycle WiFi reconnect storm survival. |
+
+**Operator's pattern**: starts soaks in the evening, reads results in the
+morning. Match the recommendation to that cadence:
+- It's morning / midday → suggest a 4 h smoke if the change is targeted,
+  OR park the soak until evening if longer.
+- It's late afternoon / early evening → suggest the appropriate-length
+  soak now (8-12 h hits the sweet spot of "overnight + back at desk by
+  morning").
+- It's the weekend → 24 h+ soaks are easier to justify.
+
+**Soak watchers to arm at start** (per "Monitoring sessions" above):
+silent_watcher.sh (LWT + abnormal boot reasons), MQTT cascade monitor
+(/diag/coredump + boot_reason filter), and a heap-largest tracker if
+checking for fragmentation.
+
+**Closure criteria template:**
+- No new `/diag/coredump` payloads with fresh `app_sha_prefix`
+- No `silent_watcher.sh` LWT-or-panic alerts
+- `heap_largest` stable (no monotonic decline > 5%/hour)
+- `mqtt_disconnects` not climbing during the window
+- Boot announcement at end shows expected `restart_cause` (empty for
+  clean uptime; OTA-pending only on validated upgrades)
+
 ## Canary build (#54 stack-overflow surveillance)
 The `[env:esp32dev_canary]` PIO env enables `CONFIG_FREERTOS_CHECK_STACKOVERFLOW=2`
 plus `OTA_DISABLE` (so the canary build doesn't auto-OTA up to release —
