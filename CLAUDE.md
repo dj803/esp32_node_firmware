@@ -17,7 +17,7 @@
 - **Always verify which device is on COMx BEFORE flashing** — see "COM port assignments are NOT fixed" in Device Fleet below.
 - **Windows console PIO Unicode bug (#95):** if `pio run -t upload` appears to hang for >2 min with no progress output, kill it (the esptool.exe child will hold the COM port — a physical USB cycle is required to release) and re-run via the wrapper at `tools/dev/pio-utf8.sh ...` (or prefix any pio command with `PYTHONIOENCODING=utf-8 PYTHONUTF8=1`). Root cause: cp1252 console + non-ASCII progress chars in esptool output crashing pio's `_safe_echo`.
 
-## Device Fleet (firmware v0.4.29 fleet-wide post-rollout 2026-04-29 PM; canary closed 2026-04-29 with #54 RESOLVED)
+## Device Fleet (firmware v0.4.31 fleet-wide post-rollout 2026-04-29 evening; canary closed 2026-04-29 with #54 RESOLVED)
 - ESP32-Alpha   — UUID `32925666-155a-4a67-bf50-27c1ffa22b11`, MAC `84:1F:E8:1A:CC:98`
 - ESP32-Alpha   — currently fitted with 8 WS2812 LEDs (visual MQTT_HEALTHY validation 2026-04-27). **Bench-attached on COM4 since 2026-04-28 afternoon swap** — primary serial-accessible LED-equipped device for LED-feature work (#19/#20/#21/#22/#23).
 - ESP32-Bravo   — UUID `ece1ed31-4096-488b-a083-d5880002c223`, MAC `F4:2D:C9:73:D3:CC` (LED strip moved to Alpha; Bravo currently no LEDs). UUID rotated 2026-04-27 ~22:00 SAST when the #50 erase-flash test wiped NVS; previous UUID `6cfe177f-92eb-4699-a9a6-8a3603aae175` is retained-only and should be retired from hardcoded lookups. **Off-bench since 2026-04-28 afternoon swap** — operator will re-attach for the v0.5.0 relay + Hall hardware bring-up session.
