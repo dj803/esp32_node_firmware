@@ -5435,3 +5435,110 @@ Next steps (operator decision):
        - Pairs thematically with #93 (firmware-serial-instrument decision)
          and #88/#89/#87 (#98's "self-document state" cluster from v0.4.29)
 
+
+
+100. ota-rollout.sh — speed up beyond adaptive timeout
+     DISCOVERED: 2026-04-29 PM during the v0.4.30 fleet rollout
+     immediately after this afternoon's #98 incident. The 6-device
+     rollout took 12 min 34 s wall clock with the existing
+     fixed-300 s-per-device-timeout. Operator flagged: most of that
+     time was waiting, not OTAing. Concrete data captured:
+
+         Device     Duration   Note
+         Delta      ~60 s      script-driven OTA from 0.4.28
+         Echo       ~60 s      script-driven OTA from 0.4.28
+         Charlie    ~240 s     slowest OTA — heap-recovery boot path?
+         Alpha      ~60 s      already on 0.4.30 (self-OTA via periodic check)
+         Foxtrot    ~60 s      script-driven OTA from 0.4.28
+         Bravo      ~480 s     already on 0.4.30 (self-OTA via periodic check) —
+                               but the 480 s reflects the script waiting through
+                               its 300 s timeout deadline + safety gap before
+                               recognizing a healthy heartbeat
+         Total      754 s      6 × ~60-480 s sequential + 5 × 15 s safety gaps
+
+     PARTIAL FIX SHIPPED 2026-04-29 PM — adaptive timeout (#2 below).
+     After first device succeeds, subsequent timeouts drop to
+     ADAPTIVE_FACTOR × first-observed-duration, floored at
+     TIMEOUT_FLOOR_S = 90 s. Per-device wall-clock duration now
+     captured in JSONL log + end-of-run summary so future runs have
+     real data to tune by.
+
+     REMAINING IMPROVEMENT OPTIONS (priority order):
+
+     (1) PHASED PARALLEL ROLLOUT — biggest win. Operator suggestion:
+         "OTA 1 device, check, then 2 more, then check, then 3 more,
+         then check..." First device is the canary — if it succeeds
+         we know the binary boots. Then fire 2 more in parallel,
+         validate both. Then 3, etc. Doubling cadence accelerates
+         logarithmically while keeping a kill-switch at each phase.
+         Today's 12.5 min rollout would compress to ~3 min:
+              Phase 1 (canary, 1 device):    ~60 s
+              Phase 2 (2 in parallel):       ~60 s
+              Phase 3 (3 in parallel):       ~60 s + 15 s gaps
+         The tricky bit: parallel rollout needs concurrent
+         heartbeat-watchers (one per device or a single multi-topic
+         subscribe + per-UUID dispatch). ~50 lines of bash, or
+         straightforward in Python.
+
+     (2) ADAPTIVE TIMEOUT — SHIPPED 2026-04-29 PM. After 1st device,
+         drop timeout to max(TIMEOUT_FLOOR_S, ADAPTIVE_FACTOR × 1st-obs).
+         Today's data: would have dropped 300 s → ~120 s for devices
+         2-6, saving ~3 × 240 s = 12 min IF something hung. Today
+         everything was healthy so the win is purely signal-on-failure.
+
+     (3) SKIP ALREADY-UP-TO-DATE DEVICES. Pre-flight version snapshot
+         per UUID; if device's last retained heartbeat shows the
+         target version, mark skip and log it. Today this would
+         have skipped Alpha + Bravo (both self-OTA'd via periodic
+         check before the rollout reached them) — saving ~480 s of
+         Bravo's wait alone. ~30 lines in the discovery section.
+
+     (4) PERSISTENT HEARTBEAT SUBSCRIPTION instead of per-iteration
+         5-second poll. Open a single mosquitto_sub on
+         `+/status` once at script start; pipe to a per-UUID
+         multiplexer that sets a "device_X_healthy" flag on each
+         qualifying heartbeat. Saves up to 5 s × N devices on
+         polling overhead, plus avoids the 5-s race where a
+         heartbeat lands just after a poll iteration finishes.
+
+     (5) OVERLAPPED SAFETY GAP. Currently 15 s gap is sequential
+         after each device's success. Could fire next device's
+         cmd/ota_check during the gap (overlapping the broker
+         publish + AsyncTCP queue with the previous device's
+         post-OTA settle period). Saves 15 s × (N-1) on a healthy
+         fleet — small but free.
+
+     (6) PRE-VALIDATE BROKER + MANIFEST REACHABLE before rolling out.
+         A 2-second TCP probe to broker:1883 + an HTTPS HEAD on
+         the gh-pages OTA manifest. Fail fast if either is unreachable
+         instead of letting the first device hit its 300-s timeout
+         and bail mid-rollout. ~10 lines.
+
+     Recommended bundle for v0.4.31's ota-rollout improvement:
+     (1) phased parallel + (3) skip-already-current as a single PR.
+     Conservative path: ship (3) first as a safe single-line
+     pre-check, then (1) as a separate larger refactor.
+
+     PRIORITY: MEDIUM. Not stability-critical, but every release
+     benefits and the data point from today's incident makes the
+     case concrete. Pairs with #84 (verify-after-action discipline)
+     since faster rollout means faster verify cycle.
+
+     LINKS:
+        - 2026-04-29 PM v0.4.30 rollout (12.5 min wall clock)
+        - tools/dev/ota-rollout.sh (current implementation)
+        - tools/dev/ota-monitor.sh (the cousin script — also benefits
+          from the persistent-subscribe pattern in #4)
+        - #84 verify-after-action discipline (faster rollout = faster
+          verify)
+
+
+     STATUS: PARTIAL FIX SHIPPED 2026-04-29 PM in tools/dev/ota-rollout.sh —
+     items (2) adaptive timeout, (3) skip-already-current,
+     (5) skip-safety-gap-on-last-device, (6) pre-validate broker +
+     manifest. Bench-validated against the v0.4.30 fleet immediately:
+     a no-op rollout to the same target version completed in 14 s
+     instead of 12.5 min. Items (1) phased parallel and (4) persistent
+     heartbeat subscription remain OPEN — they want each other and are
+     best paired in a single bash → python refactor for v0.4.31
+     tooling.

@@ -27,9 +27,24 @@ TARGET_VERSION="${1:?usage: ota-rollout.sh <target_version>}"
 BROKER="${MQTT_BROKER:-192.168.10.30}"
 TOPIC_BASE='Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox'
 HEALTHY_UPTIME_S=30
-TIMEOUT_PER_DEVICE_S=300   # bumped 180→300 2026-04-28 — Echo timing-race during v0.4.25 rollout (OTA download + reboot + reconnect + heartbeat-cadence collision)
+# (#100, 2026-04-29 PM) Adaptive timeout. Starts at TIMEOUT_INITIAL_S for
+# the first device (and any retry — the wide ceiling is the safety net).
+# After each device succeeds, subsequent devices get a tighter
+# timeout = max(TIMEOUT_FLOOR_S, ADAPTIVE_FACTOR × first_device_duration).
+# Rationale: the v0.4.30 rollout (2026-04-29) showed Delta + Echo finishing
+# in ~60 s, Charlie in ~240 s. A fleet that's all in similar shape lands
+# within the same band, so 2× the first observation is a tight-but-safe
+# ceiling — fast feedback when one device hangs, no false-positive trips
+# on healthy outliers. Keep TIMEOUT_INITIAL_S liberal so a slow first
+# device doesn't doom the whole run; the second device onward feels the
+# adaptive squeeze.
+TIMEOUT_INITIAL_S=${TIMEOUT_INITIAL_S:-300}      # liberal for first device
+TIMEOUT_FLOOR_S=${TIMEOUT_FLOOR_S:-90}           # never drop below this
+ADAPTIVE_FACTOR=${ADAPTIVE_FACTOR:-2}            # multiplier on first observation
+TIMEOUT_PER_DEVICE_S=$TIMEOUT_INITIAL_S          # current per-device deadline
 SAFETY_GAP_S=15
 LOG="${LOG:-./ota-rollout-$(date +%Y%m%d-%H%M%S).jsonl}"
+ROLLOUT_START_S=$(date +%s)
 
 log_event() {
     printf '{"ts":"%s","%s":%s}\n' \
@@ -37,6 +52,41 @@ log_event() {
 }
 
 log_event start "{\"target\":\"$TARGET_VERSION\",\"broker\":\"$BROKER\"}"
+
+# ── 0. Pre-flight: broker + OTA manifest reachability (#100 #6) ──────────────
+# Fail fast if either broker:1883 or the gh-pages OTA manifest URL is
+# unreachable. Without this we don't notice a misconfigured manifest /
+# offline broker until the FIRST device hits its TIMEOUT_INITIAL_S
+# (300 s by default) — wasting 5 min before the operator can retry.
+# Skip pre-flight via SKIP_PREFLIGHT=1 if needed (e.g. operator knows
+# the manifest is fresh and just wants to push to a single offline-
+# during-flight device).
+if [ -z "${SKIP_PREFLIGHT:-}" ]; then
+    echo "Pre-flight: probing broker ${BROKER}:1883..."
+    if ! timeout 3 bash -c "echo > /dev/tcp/${BROKER}/1883" 2>/dev/null; then
+        echo "  ✗ Broker ${BROKER}:1883 unreachable. Aborting."
+        log_event preflight_fail "{\"stage\":\"broker\"}"
+        exit 1
+    fi
+    echo "  ✓ broker reachable"
+
+    OTA_MANIFEST_URL="${OTA_MANIFEST_URL:-https://dj803.github.io/esp32_node_firmware/ota.json}"
+    echo "Pre-flight: probing OTA manifest ${OTA_MANIFEST_URL}..."
+    MANIFEST_VERSION=$(timeout 8 curl -fsSL "$OTA_MANIFEST_URL" 2>/dev/null \
+                        | python -c "import sys, json; d = json.load(sys.stdin); print(d['Configurations'][0]['Version'])" 2>/dev/null || echo "")
+    if [ -z "$MANIFEST_VERSION" ]; then
+        echo "  ✗ OTA manifest unreachable or malformed. Aborting."
+        log_event preflight_fail "{\"stage\":\"manifest\"}"
+        exit 1
+    fi
+    if [ "$MANIFEST_VERSION" != "$TARGET_VERSION" ]; then
+        echo "  ✗ Manifest version (${MANIFEST_VERSION}) does not match TARGET_VERSION (${TARGET_VERSION}). Aborting."
+        echo "    Either wait for CI/gh-pages to publish ${TARGET_VERSION}, OR retarget."
+        log_event preflight_fail "{\"stage\":\"version_mismatch\",\"manifest\":\"$MANIFEST_VERSION\",\"target\":\"$TARGET_VERSION\"}"
+        exit 1
+    fi
+    echo "  ✓ manifest at v${MANIFEST_VERSION}"
+fi
 
 # ── 1. Discover fleet UUIDs ──────────────────────────────────────────────────
 if [ -n "${FLEET_UUIDS:-}" ]; then
@@ -85,11 +135,77 @@ fi
 echo "Fleet: ${#UUIDS[@]} device(s)"
 log_event fleet "[$(printf '"%s",' "${UUIDS[@]}" | sed 's/,$//')]"
 
+# ── 1.5. Skip devices already on target version (#100 #3) ────────────────────
+# Pre-flight version snapshot per UUID: subscribe to retained heartbeats
+# and read the last-known firmware_version. Devices already on the target
+# are removed from the rollout list — they self-OTA'd via the periodic
+# 1-hour check and don't need a redundant trigger. Today's v0.4.30
+# rollout would have skipped Alpha + Bravo (both self-OTA'd before the
+# script reached them), saving ~480 s on Bravo's wait alone.
+# Skip via SKIP_VERSIONCHECK=1 (e.g. forcing a re-OTA after a partial
+# failure where the device reports the version but the validation didn't
+# complete cleanly).
+if [ -z "${SKIP_VERSIONCHECK:-}" ]; then
+    echo "Pre-flight: checking which devices are already on v${TARGET_VERSION}..."
+    declare -A _CURRENT_VERSION
+    # 4-second passive sub captures retained boot announcements from every
+    # subscribed UUID. -R discards retained (we want LIVE retained on
+    # subscribe — but not retained-flag-set, which is the reverse). Use
+    # the default behaviour without -R so we DO see retained.
+    while IFS= read -r LINE; do
+        [ -z "$LINE" ] && continue
+        UUID_FROM_TOPIC=$(echo "$LINE" | awk -F/ '{print $(NF-1)}')
+        VER=$(echo "$LINE" | python -c "
+import sys, json
+for ln in sys.stdin:
+    parts = ln.split(' ', 1)
+    if len(parts) < 2: continue
+    try: d = json.loads(parts[1])
+    except: continue
+    print(d.get('firmware_version','?'))
+    break" 2>/dev/null || echo "")
+        # Only first version per UUID wins
+        if [ -n "$VER" ] && [ -z "${_CURRENT_VERSION[$UUID_FROM_TOPIC]:-}" ]; then
+            _CURRENT_VERSION[$UUID_FROM_TOPIC]=$VER
+        fi
+    done < <(timeout 4 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/+/status" -F '%t %p' 2>/dev/null || true)
+
+    SKIPPED=()
+    REMAINING=()
+    for u in "${UUIDS[@]}"; do
+        cur="${_CURRENT_VERSION[$u]:-?}"
+        if [ "$cur" = "$TARGET_VERSION" ]; then
+            echo "  skip ${u:0:8} (already on v${cur})"
+            SKIPPED+=( "$u" )
+        else
+            REMAINING+=( "$u" )
+        fi
+    done
+    if [ ${#SKIPPED[@]} -gt 0 ]; then
+        log_event skipped "[$(printf '"%s",' "${SKIPPED[@]}" | sed 's/,$//')]"
+    fi
+    UUIDS=( "${REMAINING[@]}" )
+    if [ ${#UUIDS[@]} -eq 0 ]; then
+        echo
+        echo "=== All ${#SKIPPED[@]} discovered device(s) already on v${TARGET_VERSION} — nothing to do. ==="
+        log_event complete "{\"count\":0,\"skipped\":${#SKIPPED[@]},\"total_s\":$(($(date +%s) - ROLLOUT_START_S))}"
+        exit 0
+    fi
+    echo "  ${#UUIDS[@]} device(s) need OTA, ${#SKIPPED[@]} already current"
+fi
+
 # ── 2. Per-device rollout ────────────────────────────────────────────────────
+DEVICE_DURATIONS=()  # (#100) per-device wall-clock seconds, for end-of-run summary
+FIRST_OBSERVED_S=0   # adaptive-timeout reference
+
+DEVICE_INDEX=0
+TOTAL_DEVICES=${#UUIDS[@]}
 for UUID in "${UUIDS[@]}"; do
+    DEVICE_INDEX=$((DEVICE_INDEX + 1))
     echo
-    echo "=== Rolling out to ${UUID:0:8} ==="
-    log_event device_start "\"$UUID\""
+    echo "=== Rolling out to ${UUID:0:8} (${DEVICE_INDEX}/${TOTAL_DEVICES}, timeout ${TIMEOUT_PER_DEVICE_S}s) ==="
+    log_event device_start "{\"uuid\":\"$UUID\",\"timeout_s\":${TIMEOUT_PER_DEVICE_S}}"
+    DEVICE_START_S=$(date +%s)
 
     # Trigger OTA
     mosquitto_pub -h "$BROKER" -t "$TOPIC_BASE/$UUID/cmd/ota_check" -m '{}' \
@@ -97,7 +213,7 @@ for UUID in "${UUIDS[@]}"; do
     echo "  ota_check triggered, waiting up to ${TIMEOUT_PER_DEVICE_S}s for heartbeat at v${TARGET_VERSION} uptime>${HEALTHY_UPTIME_S}s..."
 
     # Wait for healthy heartbeat
-    DEADLINE=$(($(date +%s) + TIMEOUT_PER_DEVICE_S))
+    DEADLINE=$((DEVICE_START_S + TIMEOUT_PER_DEVICE_S))
     SUCCESS=false
 
     while [ "$(date +%s)" -lt "$DEADLINE" ]; do
@@ -130,9 +246,29 @@ for line in sys.stdin:
 " 2>/dev/null || true)
 
         if echo "$OUT" | grep -q '^HEALTHY'; then
-            echo "  ✓ $OUT"
-            log_event device_ok "{\"uuid\":\"$UUID\",\"info\":\"$OUT\"}"
+            DEVICE_DURATION_S=$(( $(date +%s) - DEVICE_START_S ))
+            echo "  ✓ $OUT (took ${DEVICE_DURATION_S}s)"
+            DEVICE_DURATIONS+=( "${UUID:0:8}=${DEVICE_DURATION_S}s" )
+            log_event device_ok "{\"uuid\":\"$UUID\",\"info\":\"$OUT\",\"duration_s\":${DEVICE_DURATION_S}}"
             SUCCESS=true
+
+            # (#100, 2026-04-29 PM) Adaptive timeout — after the first device
+            # succeeds, tighten subsequent timeouts to ADAPTIVE_FACTOR ×
+            # observed duration (floored at TIMEOUT_FLOOR_S). Healthy fleet
+            # = healthy first device, so 2× the first observation gives
+            # tight feedback on outliers without false-positive trips.
+            if [ "$FIRST_OBSERVED_S" -eq 0 ]; then
+                FIRST_OBSERVED_S=$DEVICE_DURATION_S
+                NEW_TIMEOUT=$(( ADAPTIVE_FACTOR * FIRST_OBSERVED_S ))
+                if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_FLOOR_S" ]; then
+                    NEW_TIMEOUT=$TIMEOUT_FLOOR_S
+                fi
+                if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_PER_DEVICE_S" ]; then
+                    echo "  → adaptive timeout: ${TIMEOUT_PER_DEVICE_S}s → ${NEW_TIMEOUT}s for remaining devices"
+                    log_event adaptive_timeout "{\"old_s\":${TIMEOUT_PER_DEVICE_S},\"new_s\":${NEW_TIMEOUT},\"first_observed_s\":${FIRST_OBSERVED_S}}"
+                    TIMEOUT_PER_DEVICE_S=$NEW_TIMEOUT
+                fi
+            fi
             break
         elif echo "$OUT" | grep -q '^ABNORMAL'; then
             echo "  ✗ $OUT"
@@ -151,10 +287,18 @@ for line in sys.stdin:
         exit 2
     fi
 
-    echo "  Safety gap ${SAFETY_GAP_S}s before next device..."
-    sleep "$SAFETY_GAP_S"
+    # (#100 #5) Skip safety gap on the LAST device — no "next device" to
+    # protect from broker-side burst, and the gap delays the rollout
+    # complete signal pointlessly. Save 15 s per rollout.
+    if [ "$DEVICE_INDEX" -lt "$TOTAL_DEVICES" ]; then
+        echo "  Safety gap ${SAFETY_GAP_S}s before next device..."
+        sleep "$SAFETY_GAP_S"
+    fi
 done
 
+ROLLOUT_END_S=$(date +%s)
+TOTAL_S=$(( ROLLOUT_END_S - ROLLOUT_START_S ))
 echo
-echo "=== Rollout complete: ${#UUIDS[@]}/${#UUIDS[@]} on v${TARGET_VERSION} ==="
-log_event complete "{\"count\":${#UUIDS[@]}}"
+echo "=== Rollout complete: ${#UUIDS[@]}/${#UUIDS[@]} on v${TARGET_VERSION} in ${TOTAL_S}s ==="
+echo "Per-device durations: ${DEVICE_DURATIONS[*]}"
+log_event complete "{\"count\":${#UUIDS[@]},\"total_s\":${TOTAL_S},\"durations\":\"${DEVICE_DURATIONS[*]}\"}"

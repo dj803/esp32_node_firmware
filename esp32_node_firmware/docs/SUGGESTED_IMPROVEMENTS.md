@@ -71,7 +71,10 @@ session-planning; reorder within a group freely.
 ### H. LED / visual diagnostics (1) — new group filed 2026-04-29 PM
   #99   Status-LED blink patterns are not diagnostic — make them more useful   (filed 2026-04-29 PM; same incident as #98 — all 6 devices had heartbeat blink even when 4 were MQTT-stuck. Proposed: distinct patterns for boot/pre-WiFi (10Hz), WiFi-up-MQTT-down (1Hz), MQTT_HEALTHY (slow breathing), AP_MODE (double-blink). led.h already has the state slots — just need distinct waveforms. MEDIUM priority; pairs with #98 "self-document state" theme)
 
-  Total open: 26  (A6 + B9 + C0 + D3 + E0 + F1 + G6 + H1) — net delta 2026-04-29 PM: -5 from v0.4.29 (#87/#88/#89/#95/#97 RESOLVED), +2 from incident (#98 D-group, #99 H-group), #98 partial-fix in v0.4.30. Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+### I. Tooling speed / ergonomics (1) — new group filed 2026-04-29 PM
+  #100  ota-rollout.sh — speed up beyond adaptive timeout                    (PARTIAL FIX SHIPPED 2026-04-29 PM — adaptive timeout (#2), skip already-up-to-date devices (#3), pre-validate broker+manifest (#6), skip safety gap on last device (#5 partial). Test on v0.4.30 fleet went from 12.5 min → 14 s for a no-op rollout. REMAINING: phased parallel rollout (#1, biggest theoretical win — 1→2→3 wave pattern from operator suggestion) + persistent heartbeat subscription (#4). Bundle for v0.4.31 tooling release. MEDIUM priority)
+
+  Total open: 27  (A6 + B9 + C0 + D3 + E0 + F1 + G6 + H1 + I1) — net delta 2026-04-29 PM: -5 from v0.4.29 (#87/#88/#89/#95/#97 RESOLVED), +3 from incidents (#98 D, #99 H, #100 I), #98 + #100 partial-fixed in v0.4.30 + tooling. Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
 
   Phase 2 R1 verification 2026-04-28 evening — outcome:
     Goal was no-flash verification of #47 / #39 against the operator's
