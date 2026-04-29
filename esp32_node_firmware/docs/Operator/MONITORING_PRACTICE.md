@@ -45,6 +45,30 @@ Checks:
 - `heap_free` not monotonically declining vs yesterday's snapshot.
 - No new `/diag/coredump` retained payload.
 
+**Cadence.** Run **once a day**. Skipping a day is fine; skipping a
+week loses the granularity of regression detection (the script compares
+"today's snapshot" against "the most recent prior snapshot" — if that's
+8 days ago, gradual drift is harder to attribute). If automated via a
+Windows scheduled task or `/loop 24h /daily-health`, no manual action
+is needed.
+
+**What happens if the report folder gets big?** Each report is ~3 KB
+of Markdown; even a year of daily reports is ~1 MB. The folder is
+**effectively never a disk-space issue.** No auto-pruning is needed.
+The only secondary concern is that a Glob over thousands of `.md`
+files becomes slightly slower, which doesn't affect daily-health
+itself (it only reads the two newest reports). If you want to tidy
+up by hand: `rm ~/daily-health/2025-*.md` (keep the current year, prune
+older).
+
+**Auto-resolver gotcha.** Pre-2026-04-29 the `expected_firmware`
+field in `daily_health_config.json` was hardcoded — every release
+shipped a stale config and 9 false-yellows. Resolved 2026-04-29 PM:
+the script now reads the latest GitHub tag at runtime and uses that
+as the expected version. Set `expected_firmware` explicitly in the
+config only for canary scenarios. **No config edit should be needed
+for routine releases.**
+
 ### 2. Live snapshot — `/fleet-status`
 
 Slash command. Subscribes to `+/status` for ~5 s, prints retained boot
