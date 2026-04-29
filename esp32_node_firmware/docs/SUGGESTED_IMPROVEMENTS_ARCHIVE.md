@@ -5375,3 +5375,63 @@ Next steps (operator decision):
     during the 600 s wait, short-circuiting on availability — would
     have ended this incident cleanly. Bundle in the next stability
     release as a high-confidence one-shot win.
+
+
+99. Status-LED blink patterns are not diagnostic — make them more useful
+    DISCOVERED: 2026-04-29 PM during the same router-power-failure recovery
+    incident that produced #98. Operator observed: "all 6 devices had
+    heartbeat status-LED blinking even when only 2 were online to MQTT".
+    This made it impossible to tell from the LEDs alone which devices were
+    healthy vs which were stuck in WiFi/MQTT-recovery limbo.
+
+    OBSERVATION:
+       - The onboard GPIO 2 status LED (`STATUS_LED_PIN` in config.h:428)
+         is currently driven by a simple loop()-tick blink pattern. It
+         signals "firmware is running" — useful only as a "totally dead
+         vs alive" indicator. Worthless for distinguishing the four
+         operational states a device can be in:
+           a) booting / pre-WiFi
+           b) WiFi connected, MQTT disconnected
+           c) WiFi + MQTT both healthy
+           d) AP_MODE (configuration portal active)
+       - The WS2812 strip (Alpha-only as of 2026-04-29) DOES distinguish
+         these via colour (e.g. green-pulsing for MQTT_HEALTHY per
+         v0.4.13). But devices without WS2812 strips are blind.
+       - Bench validation today: the four stuck devices (Bravo, Charlie,
+         Echo, Foxtrot) had identical heartbeat blink to the two
+         healthy devices (Alpha, Delta) for 16+ minutes. The operator
+         had no way to tell from across the room which were stuck.
+
+    PROPOSED PATTERNS (for STATUS_LED_PIN, no hardware change needed):
+       - **Boot / pre-WiFi**: rapid blink (~10 Hz) — "I'm alive but not
+         connected to anything yet"
+       - **WiFi connected, MQTT down**: slow blink (~1 Hz, 50% duty) —
+         "WiFi is up but I can't talk to the broker"
+       - **MQTT_HEALTHY**: long-on, short-off "breathing" pattern (e.g.
+         950 ms on / 50 ms off) — "I'm steady-state operational"; the
+         brief off-pulse confirms the firmware is still processing
+         loop() ticks (today's heartbeat semantics, just inverted)
+       - **AP_MODE**: double-blink pattern (2 quick on-off, then 1 s
+         pause) — distinct from any of the above, signals "I need
+         operator attention via the captive portal"
+
+    These patterns are visually distinguishable across a benchful of
+    devices without instrumentation. Each is implementable as a simple
+    state-machine in led.h; today's `LedPattern` enum already has the
+    state slots for each (BOOT / WIFI_CONNECTING / MQTT_HEALTHY /
+    AP_MODE) — we just need to actually map distinct waveforms to each
+    instead of the current "blink whenever loop runs" default.
+
+    PRIORITY: MEDIUM. Not a stability issue, but a meaningful diagnostic
+    improvement that pairs naturally with #98's "firmware self-documents
+    its state" theme. Visible to the operator the moment they walk
+    into the bench room — no MQTT subscribe required.
+
+    LINKS:
+       - Filed by operator 2026-04-29 PM after observing all 6 status
+         LEDs blinking despite 4 being MQTT-stuck (#98)
+       - include/led.h::LedPattern enum (already has the state slots)
+       - config.h:428 STATUS_LED_PIN
+       - Pairs thematically with #93 (firmware-serial-instrument decision)
+         and #88/#89/#87 (#98's "self-document state" cluster from v0.4.29)
+
