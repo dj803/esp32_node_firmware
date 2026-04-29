@@ -26,7 +26,12 @@ YOU MAY (without asking)
     explicitly under DO NOT below.
   • Build, flash (COM4/COM5), USB-flash, OTA stagger
   • Bump version + tag + push (release pipeline end-to-end)
-  • Trigger broker blips via tools/blip-watcher.ps1
+  • Trigger broker blips: `echo N > C:\ProgramData\mosquitto\blip-trigger.txt`
+    (writes an N-second blip — file-trigger watcher in operator's elevated
+    PS picks it up within 500 ms and runs net stop/sleep/start mosquitto.
+    Watcher must already be armed — see tools/blip-watcher.ps1 +
+    "Start Blip Watcher.bat". Don't try Stop-Service / net stop directly
+    — non-elevated sessions get access-denied.)
   • Push Node-RED flows via /flows API
   • Disable/enable ESP-NOW + BLE per device
   • Run /daily-health on demand
@@ -50,6 +55,11 @@ CONSTRAINTS
   • Keep responses ≤3 sentences unless I ask for detail
   • Prefer event-driven via watchers over /loop wakeups
   • Stop a watcher before flashing the COM port it holds
+  • Confirm blip-watcher is armed before scheduling chaos work — probe
+    `Test-Path C:\ProgramData\mosquitto\blip-trigger.txt` then write
+    a tiny 1-second blip and check `blip.log` for the entry. If silent,
+    ask operator to start it via "Start Blip Watcher.bat" rather than
+    falling back to "ask operator to run blips manually" each time.
   • Use tools/dev/ota-rollout.sh for staggers (ack-driven, not fixed-interval)
   • Commit and push after every meaningful change so progress is visible
   • Verify-within-N-minutes after every state-changing action (#84). Flash:
