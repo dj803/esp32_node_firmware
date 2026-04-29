@@ -19,6 +19,7 @@
 #include "device_id.h"
 #include "wifi_recovery.h"   // apStaScanShouldRun() — background STA scan gate
 #include "prefs_quiet.h"     // (v0.4.03) prefsTryBegin — silent on missing namespace
+#include "restart_history.h"  // (#96 sub-A) push non-mqtt_unrecoverable cause on AP-portal restart
 #if AP_CAPTIVE_DNS_ENABLED
 #include <DNSServer.h>                 // (#34) captive-portal DNS hijack — must come after config.h
 #endif
@@ -997,6 +998,15 @@ void apPortalStart(const CredentialBundle* staBundle = nullptr) {
 
         if (_apShouldExit && (int32_t)(now - _apExitAtMs) >= 0) {
             LOG_I("AP Portal", "STA reconnected — restarting to resume OPERATIONAL");
+            // (#96 sub-A, 2026-04-29) Push a non-mqtt_unrecoverable entry to
+            // the RestartHistory ring so the post-reboot OPERATIONAL boot
+            // doesn't see a trailing streak of mqtt_unrecoverable and bounce
+            // straight back into AP mode. Without this, a long network
+            // outage that drove us into AP mode keeps us trapped here even
+            // after WiFi credentials successfully reconnect — observed
+            // 2026-04-29 fleet-wide after a 12.6 min outage. See
+            // docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md.
+            RestartHistory::push("ap_recovered");
             delay(200);            // let any in-flight HTTPS response drain
             ESP.restart();
         }

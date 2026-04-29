@@ -691,6 +691,13 @@ void loop() {
             _wifiBackoffIdx     = 0;
             _wifiNextAttemptMs  = 0;
             _wifiAuthFailCycles = 0;
+            // (#78 cascade-window guard, 2026-04-29) Re-stamp on reconnect.
+            // Most cascade panics fire DURING/AFTER reconnect, when AsyncTCP
+            // is re-establishing and AsyncMqttClient is reconnecting through
+            // the WiFi driver's just-restored TX path. The original WiFi-lost
+            // stamp will have aged out during the outage; re-stamp so the
+            // quiet window covers the reconnect-race phase too.
+            mqttMarkNetworkDisconnect();
             CredentialStore::clearWifiOutageCount();   // outage survived → clear budget
             LOG_I("Loop", "Wi-Fi reconnected after %u ms outage", (unsigned)outageMs);
             ledSetPattern(LedPattern::WIFI_CONNECTED);
@@ -713,6 +720,14 @@ void loop() {
                 _wifiNextAttemptMs  = 0;
                 _wifiOutageStartMs  = millis();
                 _wifiAuthFailCycles = 0;
+                // (#78 cascade-window guard, 2026-04-29) Stamp the WiFi-lost
+                // moment so mqttPublish drops telemetry for CASCADE_QUIET_MS.
+                // The MQTT-side disconnect callback will fire seconds later
+                // when AsyncTCP notices the TCP teardown — by that point the
+                // race window is already wide open. Stamp here so the guard
+                // engages at the earliest possible moment. See
+                // docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md.
+                mqttMarkNetworkDisconnect();
                 LOG_W("Loop", "Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)");
                 ledSetPattern(LedPattern::WIFI_CONNECTING);
             }

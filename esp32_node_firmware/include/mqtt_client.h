@@ -223,6 +223,65 @@ static String mqttBroadcastLedTopic() {
 
 // ── Publish helpers ────────────────────────────────────────────────────────────
 
+// (#78 root-cause fix, 2026-04-29)  Cascade-window publish guard.
+//
+// Decoded six retained /diag/coredump payloads against v0.4.26 ELF
+// (docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md): all five v0.4.26
+// cascade panics share `mqttPublish` ← `espnowRangingLoop` as common
+// caller. Race window is WiFi-disconnect → AsyncTCP _async_service_task
+// running _handle_async_event → AsyncClient::_s_error freeing the
+// AsyncClient. Concurrently loopTask runs espnowRangingLoop →
+// mqttPublish → AsyncMqttClient::publish → enqueues into the freed/
+// freeing AsyncClient. Manifests as freed-vtable jump (Alpha 0x19),
+// std::terminate-from-bad_alloc-allocation (Delta/Echo), strlen on
+// freed payload (Foxtrot), or WiFi-driver TX-queue corruption (Bravo).
+//
+// _mqttClient.connected() is stale across the disconnect — by the time
+// it reflects the drop, AsyncTCP has already begun teardown. The
+// existing v0.4.22 try/catch can NOT catch the std::terminate path
+// because the exception object's own allocation fails before any catch
+// frame is reached.
+//
+// Fix: track the timestamp of the most recent disconnect (WiFi or
+// MQTT) and refuse publishes for CASCADE_QUIET_MS after. Closes the
+// race window directly. Cost: drop ~5 s of telemetry per network
+// event — the next heartbeat tick re-publishes once the window clears.
+//
+// Set by onMqttDisconnect (in this file) and by main.cpp's WiFi-lost
+// branch (via mqttMarkNetworkDisconnect()). Read by mqttPublish.
+//
+// volatile because the writer (onMqttDisconnect runs in async_tcp task,
+// Core 0) and reader (mqttPublish runs in loopTask, Core 1) are on
+// different cores. 32-bit aligned uint32_t writes are atomic on ESP32
+// so we don't need a mutex; volatile prevents the compiler from
+// caching the value.
+static volatile uint32_t _lastNetworkDisconnectMs = 0;
+
+// CASCADE_QUIET_MS: how long after a disconnect to silently drop
+// publishes. 5000 ms is chosen because the AP-cycle reproduction recipe
+// shows the cascade fires within ~30 s of AP recovery; the corruption
+// window itself is only 1-3 s wide based on the panic timestamps in
+// the 2026-04-28 evening + 2026-04-29 morning events. 5 s is 2-3x that
+// window with margin.
+#ifndef CASCADE_QUIET_MS
+#define CASCADE_QUIET_MS 5000
+#endif
+
+static inline void mqttMarkNetworkDisconnect() {
+    _lastNetworkDisconnectMs = millis();
+}
+
+// Returns true if we are still inside the post-disconnect cascade-quiet
+// window and should drop the publish.
+static inline bool _mqttInCascadeWindow() {
+    if (_lastNetworkDisconnectMs == 0) return false;
+    uint32_t now = millis();
+    // millis() can wrap at ~49.7 days. The unsigned subtraction handles
+    // the wrap correctly — (now - last) reads as a positive elapsed
+    // even across the boundary.
+    return (now - _lastNetworkDisconnectMs) < CASCADE_QUIET_MS;
+}
+
 // Low-level publish — silently drops messages if the client is not connected
 // OR if the heap is too fragmented to safely allocate the publish buffer.
 //
@@ -265,6 +324,13 @@ static inline bool _mqttPubSkipWarn(uint32_t heapMax) {
 
 static void mqttPublish(const char* prefix, const String& payload,
                         uint8_t qos = 0, bool retain = false) {
+    // (#78 cascade-window guard, 2026-04-29) Drop publishes for
+    // CASCADE_QUIET_MS after any WiFi/MQTT disconnect. Closes the race
+    // between AsyncTCP's _error-path free and AsyncMqttClient's publish-
+    // path enqueue. See decode session note for root-cause analysis.
+    // MUST come before _mqttClient.connected() because that flag is stale
+    // across the cascade window.
+    if (_mqttInCascadeWindow()) return;
     if (!_mqttClient.connected()) return;   // Do nothing if not connected
     // Guard 1: gate the topic-build allocations on a healthy heap. If
     // we can't afford the topic String, we definitely can't afford the
@@ -1643,6 +1709,12 @@ static const char* mqttDisconnectReasonStr(AsyncMqttClientDisconnectReason reaso
 }
 
 static void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+    // (#78 cascade-window guard, 2026-04-29) Stamp the disconnect time so
+    // mqttPublish drops queued telemetry for CASCADE_QUIET_MS while AsyncTCP
+    // tears down the AsyncClient. Without this, espnowRangingLoop's next
+    // mqttPublish enqueues into the freed/freeing AsyncClient and the
+    // cascade fires. See docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md.
+    mqttMarkNetworkDisconnect();
     _mqttConnectStartMs = 0;   // Callback fired — client is not hung, just disconnected
     _mqttReconnectCount++;
     _mqttDisconnectTotal++;                        // (#55) cumulative for heartbeat surface
@@ -1916,6 +1988,17 @@ bool mqttIsConnected() { return _mqttClient.connected(); }
 // IMPORTANT: do NOT call from a TWDT-subscribed task (OTA, mbedTLS keygen).
 // Only from the main loop / async_tcp callbacks.
 static void mqttScheduleRestart(const char* reason, uint32_t deferMs) {
+    // (#96 sub-B, 2026-04-29) Idempotent: if a deferred restart is already
+    // scheduled, bail out without re-publishing or re-pushing to
+    // RestartHistory. Without this, callers that fire on every loop tick
+    // (notably the mqtt_unrecoverable check in main.cpp's MQTT recovery
+    // logic) push hundreds of identical entries into the 8-slot ring within
+    // milliseconds, all from a SINGLE outage event. The next boot then sees
+    // "8 consecutive mqtt_unrecoverable" and bounces to AP mode — a phantom
+    // restart-loop signature where really only ONE restart actually fired.
+    // Triggered the 2026-04-29 fleet-wide AP-mode loop after a 12.6 min AP
+    // outage; see docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md.
+    if (_mqttRestartAtMs != 0) return;
     char extra[256];
     int n = snprintf(extra, sizeof(extra),
         "\"restart_cause\":\"%s\","

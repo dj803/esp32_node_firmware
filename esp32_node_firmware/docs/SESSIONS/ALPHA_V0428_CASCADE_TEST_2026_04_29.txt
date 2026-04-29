@@ -1,0 +1,684 @@
+# logger started 2026-04-29T11:05:52 port=COM4 baud=115200 (no-reset open)
+[2026-04-29T11:06:50.957] [I][MQTT] Healthy uptime reached — restart-loop streak cleared
+[2026-04-29T11:26:20.873] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 807 ms (base 1000 ± 200)
+[2026-04-29T11:26:20.873] [I][WiFi] Disconnected (reason=200)
+[2026-04-29T11:26:20.873] [W][Loop] Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)
+[2026-04-29T11:26:20.873] [I][Loop] WiFi reconnect attempt (next backoff step 15000 ms)
+[2026-04-29T11:26:20.873] E (1477974) wifi:sta is connecting, return error
+[2026-04-29T11:26:35.883] [I][Loop] WiFi reconnect attempt (next backoff step 30000 ms)
+[2026-04-29T11:26:35.883] E (1492975) wifi:sta is connecting, return error
+[2026-04-29T11:27:05.880] [I][Loop] WiFi reconnect attempt (next backoff step 60000 ms)
+[2026-04-29T11:27:05.880] E (1522976) wifi:sta is connecting, return error
+[2026-04-29T11:28:05.887] [I][Loop] WiFi reconnect attempt (next backoff step 120000 ms)
+[2026-04-29T11:28:05.887] [W][Loop] WiFi.reconnect() failed 3 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T11:28:54.734] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T11:28:54.734] [I][Loop] Wi-Fi reconnected after 153845 ms outage
+[2026-04-29T11:28:54.734] [I][Responder] Listening on Wi-Fi channel 6
+[2026-04-29T11:28:54.734] [I][Loop] ESP-NOW reinitialized after WiFi reconnect
+[2026-04-29T11:29:20.506] [I][MQTT] Broker probe OK — calling connect()
+[2026-04-29T11:29:20.506] [I][MQTT] Connected to broker
+[2026-04-29T11:29:20.506] [I][MQTT] Online announcement published (reconnect)
+[2026-04-29T11:29:20.506] [I][MQTT] ESP-NOW ranging enabled via MQTT
+[2026-04-29T11:32:45.938] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 816 ms (base 1000 ± 200)
+[2026-04-29T11:32:45.938] [I][WiFi] Disconnected (reason=200)
+[2026-04-29T11:32:45.938] [W][Loop] Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)
+[2026-04-29T11:32:45.938] [I][Loop] WiFi reconnect attempt (next backoff step 15000 ms)
+[2026-04-29T11:32:45.938] E (1863029) wifi:sta is connecting, return error
+[2026-04-29T11:33:00.952] [I][Loop] WiFi reconnect attempt (next backoff step 30000 ms)
+[2026-04-29T11:33:00.952] E (1878030) wifi:sta is connecting, return error
+[2026-04-29T11:33:30.948] [I][Loop] WiFi reconnect attempt (next backoff step 60000 ms)
+[2026-04-29T11:33:30.948] E (1908031) wifi:sta is connecting, return error
+[2026-04-29T11:34:16.614] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T11:34:16.614] [I][Loop] Wi-Fi reconnected after 90667 ms outage
+[2026-04-29T11:34:16.614] [I][Responder] Listening on Wi-Fi channel 6
+[2026-04-29T11:34:16.614] [I][Loop] ESP-NOW reinitialized after WiFi reconnect
+[2026-04-29T11:34:17.476] [I][MQTT] Broker probe OK — calling connect()
+[2026-04-29T11:34:24.359] [I][MQTT] Connected to broker
+[2026-04-29T11:34:24.359] [I][MQTT] Online announcement published (reconnect)
+[2026-04-29T11:34:24.683] [I][MQTT] ESP-NOW ranging enabled via MQTT
+[2026-04-29T11:48:22.876] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 1016 ms (base 1000 ± 200)
+[2026-04-29T11:48:22.876] [I][WiFi] Disconnected (reason=200)
+[2026-04-29T11:48:22.876] [W][Loop] Wi-Fi lost — entering backoff-retry (never restarts for WiFi loss)
+[2026-04-29T11:48:22.876] [I][Loop] WiFi reconnect attempt (next backoff step 15000 ms)
+[2026-04-29T11:48:22.876] E (2799943) wifi:sta is connecting, return error
+[2026-04-29T11:48:37.875] [I][Loop] WiFi reconnect attempt (next backoff step 30000 ms)
+[2026-04-29T11:48:37.875] E (2814944) wifi:sta is connecting, return error
+[2026-04-29T11:49:07.888] [I][Loop] WiFi reconnect attempt (next backoff step 60000 ms)
+[2026-04-29T11:49:07.888] E (2844945) wifi:sta is connecting, return error
+[2026-04-29T11:50:07.892] [I][Loop] WiFi reconnect attempt (next backoff step 120000 ms)
+[2026-04-29T11:50:07.892] [W][Loop] WiFi.reconnect() failed 3 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T11:52:08.044] [I][Loop] WiFi reconnect attempt (next backoff step 300000 ms)
+[2026-04-29T11:52:08.044] [W][Loop] WiFi.reconnect() failed 4 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T11:57:08.212] [I][Loop] WiFi reconnect attempt (next backoff step 600000 ms)
+[2026-04-29T11:57:08.212] [W][Loop] WiFi.reconnect() failed 5 times — switching to disconnect+begin (BEACON_TIMEOUT workaround)
+[2026-04-29T12:01:03.103] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:01:03.103] [I][Loop] Wi-Fi reconnected after 758974 ms outage
+[2026-04-29T12:01:03.103] [I][Responder] Listening on Wi-Fi channel 6
+[2026-04-29T12:01:03.103] [I][Loop] ESP-NOW reinitialized after WiFi reconnect
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759066 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759181 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759291 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759402 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759511 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759621 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759731 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759841 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=759951 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=760060 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=760169 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=760278 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.103] [W][Loop] MQTT unrecoverable (fails=1, outage=760387 ms) — scheduling restart
+[2026-04-29T12:01:03.103] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.750] [W][Loop] MQTT unrecoverable (fails=1, outage=760495 ms) — scheduling restart
+[2026-04-29T12:01:03.750] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.750] [W][Loop] MQTT unrecoverable (fails=1, outage=760604 ms) — scheduling restart
+[2026-04-29T12:01:03.750] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.750] [W][Loop] MQTT unrecoverable (fails=1, outage=760712 ms) — scheduling restart
+[2026-04-29T12:01:03.750] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.751] [W][Loop] MQTT unrecoverable (fails=1, outage=760821 ms) — scheduling restart
+[2026-04-29T12:01:03.751] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:03.751] [W][Loop] MQTT unrecoverable (fails=1, outage=760929 ms) — scheduling restart
+[2026-04-29T12:01:03.751] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=762543 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=762654 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=762762 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=762870 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=762978 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763086 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763194 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763302 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763410 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763518 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763710 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763818 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=763926 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=764034 ms) — scheduling restart
+[2026-04-29T12:01:06.752] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:06.752] [W][Loop] MQTT unrecoverable (fails=1, outage=764142 ms) — scheduling restart
+[2026-04-29T12:01:07.281] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:07.281] [W][Loop] MQTT unrecoverable (fails=1, outage=764250 ms) — scheduling restart
+[2026-04-29T12:01:07.281] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:07.281] [W][Loop] MQTT unrecoverable (fails=1, outage=764358 ms) — scheduling restart
+[2026-04-29T12:01:07.281] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:07.281] [W][Loop] MQTT unrecoverable (fails=1, outage=764466 ms) — scheduling restart
+[2026-04-29T12:01:07.281] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766079 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766189 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766297 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766405 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766513 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766621 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766730 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766838 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=766946 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767054 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767163 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767271 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767379 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767489 ms) — scheduling restart
+[2026-04-29T12:01:10.206] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.206] [W][Loop] MQTT unrecoverable (fails=1, outage=767597 ms) — scheduling restart
+[2026-04-29T12:01:10.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.852] [W][Loop] MQTT unrecoverable (fails=1, outage=767705 ms) — scheduling restart
+[2026-04-29T12:01:10.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.852] [W][Loop] MQTT unrecoverable (fails=1, outage=767813 ms) — scheduling restart
+[2026-04-29T12:01:10.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.852] [W][Loop] MQTT unrecoverable (fails=1, outage=767921 ms) — scheduling restart
+[2026-04-29T12:01:10.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:10.852] [W][Loop] MQTT unrecoverable (fails=1, outage=768029 ms) — scheduling restart
+[2026-04-29T12:01:10.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.843] [W][Loop] MQTT unrecoverable (fails=1, outage=769643 ms) — scheduling restart
+[2026-04-29T12:01:13.843] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.843] [W][Loop] MQTT unrecoverable (fails=1, outage=769752 ms) — scheduling restart
+[2026-04-29T12:01:13.843] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.843] [W][Loop] MQTT unrecoverable (fails=1, outage=769860 ms) — scheduling restart
+[2026-04-29T12:01:13.843] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=769968 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770076 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770184 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770374 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770482 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770590 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770698 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770806 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=770915 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=771023 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=771131 ms) — scheduling restart
+[2026-04-29T12:01:13.852] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:13.852] [W][Loop] MQTT unrecoverable (fails=1, outage=771239 ms) — scheduling restart
+[2026-04-29T12:01:14.385] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:14.385] [W][Loop] MQTT unrecoverable (fails=1, outage=771347 ms) — scheduling restart
+[2026-04-29T12:01:14.385] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:14.385] [W][Loop] MQTT unrecoverable (fails=1, outage=771455 ms) — scheduling restart
+[2026-04-29T12:01:14.385] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:14.385] [W][Loop] MQTT unrecoverable (fails=1, outage=771563 ms) — scheduling restart
+[2026-04-29T12:01:14.385] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773177 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773286 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773394 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773502 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773610 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773718 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773826 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=773935 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774043 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774151 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774259 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774367 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774475 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774583 ms) — scheduling restart
+[2026-04-29T12:01:17.302] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.302] [W][Loop] MQTT unrecoverable (fails=1, outage=774691 ms) — scheduling restart
+[2026-04-29T12:01:17.939] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.939] [W][Loop] MQTT unrecoverable (fails=1, outage=774799 ms) — scheduling restart
+[2026-04-29T12:01:17.939] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.939] [W][Loop] MQTT unrecoverable (fails=1, outage=774908 ms) — scheduling restart
+[2026-04-29T12:01:17.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.940] [W][Loop] MQTT unrecoverable (fails=1, outage=775016 ms) — scheduling restart
+[2026-04-29T12:01:17.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:17.940] [W][Loop] MQTT unrecoverable (fails=1, outage=775124 ms) — scheduling restart
+[2026-04-29T12:01:17.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:18.857] [I][Responder] OTA URL sent to requester
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=776738 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=776931 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777039 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777147 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777255 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777363 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777471 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777579 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777687 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777795 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=777904 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=778012 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=778121 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=778229 ms) — scheduling restart
+[2026-04-29T12:01:20.940] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:20.940] [W][Loop] MQTT unrecoverable (fails=1, outage=778337 ms) — scheduling restart
+[2026-04-29T12:01:21.488] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:21.488] [W][Loop] MQTT unrecoverable (fails=1, outage=778445 ms) — scheduling restart
+[2026-04-29T12:01:21.488] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:21.488] [W][Loop] MQTT unrecoverable (fails=1, outage=778553 ms) — scheduling restart
+[2026-04-29T12:01:21.488] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:21.488] [W][Loop] MQTT unrecoverable (fails=1, outage=778662 ms) — scheduling restart
+[2026-04-29T12:01:21.488] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:22.645] [I][MQTT] Broker probe OK — calling connect()
+[2026-04-29T12:01:22.645] [W][Loop] MQTT unrecoverable (fails=1, outage=779215 ms) — scheduling restart
+[2026-04-29T12:01:22.645] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:22.645] [W][Loop] MQTT unrecoverable (fails=1, outage=779325 ms) — scheduling restart
+[2026-04-29T12:01:22.645] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:22.645] [W][Loop] MQTT unrecoverable (fails=1, outage=779433 ms) — scheduling restart
+[2026-04-29T12:01:22.645] [W][MQTT] Scheduling restart (mqtt_unrecoverable) in 300 ms
+[2026-04-29T12:01:22.645] [I][MQTT] Connected to broker
+[2026-04-29T12:01:22.645] [I][MQTT] Online announcement published (reconnect)
+[2026-04-29T12:01:22.645] [I][MQTT] ESP-NOW ranging enabled via MQTT
+[2026-04-29T12:01:22.645] [I][MQTT] Deferred restart firing
+[2026-04-29T12:01:22.646] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:01:22.646] [W][MQTT] Disconnected (TCP_DISCONNECTED) - retrying in 836 ms (base 1000 ± 200)
+[2026-04-29T12:01:22.646] ets Jul 29 2019 12:21:46
+[2026-04-29T12:01:22.646] 
+[2026-04-29T12:01:22.646] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:01:22.646] configsip: 0, SPIWP:0xee
+[2026-04-29T12:01:22.646] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:01:22.646] mode:DIO, clock div:2
+[2026-04-29T12:01:22.646] load:0x3fff0030,len:4640
+[2026-04-29T12:01:22.646] load:0x40078000,len:15660
+[2026-04-29T12:01:22.646] load:0x40080400,len:3164
+[2026-04-29T12:01:22.646] entry 0x4008059c
+[2026-04-29T12:01:24.027] 
+[2026-04-29T12:01:24.027] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:01:24.027] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:01:24.027] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:01:24.027] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:01:24.027] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:01:24.027] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:01:24.027] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:01:24.027] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:01:24.027] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:01:24.027] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:01:24.027] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:01:24.027] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:01:24.027] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:01:24.027] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:01:24.027] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:02:23.326] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:02:24.648] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:02:24.648] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:02:29.988] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:02:29.988] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:02:29.988] ets Jul 29 2019 12:21:46
+[2026-04-29T12:02:29.988] 
+[2026-04-29T12:02:29.988] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:02:29.988] configsip: 0, SPIWP:0xee
+[2026-04-29T12:02:29.988] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:02:29.988] mode:DIO, clock div:2
+[2026-04-29T12:02:29.988] load:0x3fff0030,len:4640
+[2026-04-29T12:02:29.988] load:0x40078000,len:15660
+[2026-04-29T12:02:29.988] load:0x40080400,len:3164
+[2026-04-29T12:02:29.988] entry 0x4008059c
+[2026-04-29T12:02:31.383] 
+[2026-04-29T12:02:31.383] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:02:31.383] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:02:31.383] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:02:31.383] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:02:31.383] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:02:31.383] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:02:31.383] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:02:31.383] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:02:31.383] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:02:31.383] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:02:31.383] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:02:31.383] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:02:31.383] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:02:31.383] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:02:31.383] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:03:30.685] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:03:32.030] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:03:32.030] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:03:37.096] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:03:37.371] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:03:37.371] ets Jul 29 2019 12:21:46
+[2026-04-29T12:03:37.371] 
+[2026-04-29T12:03:37.371] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:03:37.371] configsip: 0, SPIWP:0xee
+[2026-04-29T12:03:37.371] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:03:37.371] mode:DIO, clock div:2
+[2026-04-29T12:03:37.371] load:0x3fff0030,len:4640
+[2026-04-29T12:03:37.371] load:0x40078000,len:15660
+[2026-04-29T12:03:37.371] load:0x40080400,len:3164
+[2026-04-29T12:03:37.371] entry 0x4008059c
+[2026-04-29T12:03:38.751] 
+[2026-04-29T12:03:38.751] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:03:38.751] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:03:38.751] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:03:38.751] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:03:38.751] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:03:38.751] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:03:38.751] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:03:38.751] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:03:38.751] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:03:38.751] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:03:38.751] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:03:38.751] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:03:38.751] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:03:38.751] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:03:38.751] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:04:38.052] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:04:39.381] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:04:39.381] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:04:44.455] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:04:44.730] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:04:44.730] ets Jul 29 2019 12:21:46
+[2026-04-29T12:04:44.730] 
+[2026-04-29T12:04:44.730] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:04:44.730] configsip: 0, SPIWP:0xee
+[2026-04-29T12:04:44.730] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:04:44.730] mode:DIO, clock div:2
+[2026-04-29T12:04:44.730] load:0x3fff0030,len:4640
+[2026-04-29T12:04:44.730] load:0x40078000,len:15660
+[2026-04-29T12:04:44.730] load:0x40080400,len:3164
+[2026-04-29T12:04:44.730] entry 0x4008059c
+[2026-04-29T12:04:46.103] 
+[2026-04-29T12:04:46.103] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:04:46.103] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:04:46.103] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:04:46.103] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:04:46.103] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:04:46.103] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:04:46.103] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:04:46.103] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:04:46.103] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:04:46.103] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:04:46.103] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:04:46.103] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:04:46.103] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:04:46.103] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:04:46.103] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:05:45.407] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:05:46.761] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:05:46.761] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:05:51.815] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:05:52.075] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:05:52.075] ets Jul 29 2019 12:21:46
+[2026-04-29T12:05:52.075] 
+[2026-04-29T12:05:52.075] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:05:52.075] configsip: 0, SPIWP:0xee
+[2026-04-29T12:05:52.075] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:05:52.075] mode:DIO, clock div:2
+[2026-04-29T12:05:52.075] load:0x3fff0030,len:4640
+[2026-04-29T12:05:52.075] load:0x40078000,len:15660
+[2026-04-29T12:05:52.075] load:0x40080400,len:3164
+[2026-04-29T12:05:52.075] entry 0x4008059c
+[2026-04-29T12:05:53.468] 
+[2026-04-29T12:05:53.468] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:05:53.468] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:05:53.468] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:05:53.468] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:05:53.468] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:05:53.468] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:05:53.468] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:05:53.468] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:05:53.468] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:05:53.468] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:05:53.468] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:05:53.468] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:05:53.468] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:05:53.468] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:05:53.468] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:06:52.768] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:06:54.342] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:06:54.342] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:06:59.368] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:06:59.643] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:06:59.643] ets Jul 29 2019 12:21:46
+[2026-04-29T12:06:59.643] 
+[2026-04-29T12:06:59.643] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:06:59.643] configsip: 0, SPIWP:0xee
+[2026-04-29T12:06:59.643] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:06:59.643] mode:DIO, clock div:2
+[2026-04-29T12:06:59.643] load:0x3fff0030,len:4640
+[2026-04-29T12:06:59.643] load:0x40078000,len:15660
+[2026-04-29T12:06:59.643] load:0x40080400,len:3164
+[2026-04-29T12:06:59.643] entry 0x4008059c
+[2026-04-29T12:07:01.021] 
+[2026-04-29T12:07:01.021] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:07:01.021] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:07:01.021] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:07:01.021] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:07:01.021] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:07:01.021] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:07:01.021] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:07:01.021] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:07:01.021] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:07:01.021] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:07:01.021] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:07:01.021] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:07:01.021] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:07:01.021] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:07:01.021] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:08:00.323] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:08:01.617] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:08:01.617] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:08:06.634] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:08:06.908] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:08:06.908] ets Jul 29 2019 12:21:46
+[2026-04-29T12:08:06.908] 
+[2026-04-29T12:08:06.908] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:08:06.908] configsip: 0, SPIWP:0xee
+[2026-04-29T12:08:06.908] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:08:06.908] mode:DIO, clock div:2
+[2026-04-29T12:08:06.908] load:0x3fff0030,len:4640
+[2026-04-29T12:08:06.908] load:0x40078000,len:15660
+[2026-04-29T12:08:06.908] load:0x40080400,len:3164
+[2026-04-29T12:08:06.908] entry 0x4008059c
+[2026-04-29T12:08:08.347] 
+[2026-04-29T12:08:08.347] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:08:08.347] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:08:08.347] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:08:08.347] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:08:08.347] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:08:08.347] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:08:08.347] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:08:08.347] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:08:08.347] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:08:08.347] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:08:08.347] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:08:08.347] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:08:08.347] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:08:08.347] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:08:08.347] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:09:07.573] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:09:08.996] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:09:08.996] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:09:14.068] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:09:14.335] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:09:14.335] ets Jul 29 2019 12:21:46
+[2026-04-29T12:09:14.335] 
+[2026-04-29T12:09:14.335] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:09:14.335] configsip: 0, SPIWP:0xee
+[2026-04-29T12:09:14.335] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:09:14.335] mode:DIO, clock div:2
+[2026-04-29T12:09:14.335] load:0x3fff0030,len:4640
+[2026-04-29T12:09:14.335] load:0x40078000,len:15660
+[2026-04-29T12:09:14.335] load:0x40080400,len:3164
+[2026-04-29T12:09:14.335] entry 0x4008059c
+[2026-04-29T12:09:15.718] 
+[2026-04-29T12:09:15.718] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:09:15.718] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:09:15.718] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:09:15.718] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:09:15.718] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:09:15.718] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:09:15.718] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:09:15.718] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:09:15.718] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:09:15.718] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:09:15.718] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:09:15.718] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:09:15.718] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:09:15.718] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:09:15.718] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:10:15.027] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:10:16.290] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:10:16.290] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:10:21.602] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:10:21.602] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:10:21.602] ets Jul 29 2019 12:21:46
+[2026-04-29T12:10:21.602] 
+[2026-04-29T12:10:21.602] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:10:21.602] configsip: 0, SPIWP:0xee
+[2026-04-29T12:10:21.602] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:10:21.602] mode:DIO, clock div:2
+[2026-04-29T12:10:21.602] load:0x3fff0030,len:4640
+[2026-04-29T12:10:21.602] load:0x40078000,len:15660
+[2026-04-29T12:10:21.602] load:0x40080400,len:3164
+[2026-04-29T12:10:21.602] entry 0x4008059c
+[2026-04-29T12:10:22.982] 
+[2026-04-29T12:10:22.982] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:10:22.982] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:10:22.982] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:10:22.982] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:10:22.982] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:10:22.982] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:10:22.982] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:10:22.982] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:10:22.982] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:10:22.982] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:10:22.982] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:10:22.982] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:10:22.982] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:10:22.982] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:10:22.982] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:11:22.282] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:11:23.559] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:11:23.559] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:11:28.587] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:11:28.869] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:11:28.869] ets Jul 29 2019 12:21:46
+[2026-04-29T12:11:28.869] 
+[2026-04-29T12:11:28.869] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:11:28.869] configsip: 0, SPIWP:0xee
+[2026-04-29T12:11:28.869] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:11:28.869] mode:DIO, clock div:2
+[2026-04-29T12:11:28.869] load:0x3fff0030,len:4640
+[2026-04-29T12:11:28.869] load:0x40078000,len:15660
+[2026-04-29T12:11:28.869] load:0x40080400,len:3164
+[2026-04-29T12:11:28.869] entry 0x4008059c
+[2026-04-29T12:11:30.250] 
+[2026-04-29T12:11:30.250] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:11:30.250] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:11:30.250] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:11:30.250] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:11:30.250] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:11:30.250] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:11:30.250] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:11:30.250] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:11:30.250] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:11:30.250] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:11:30.250] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:11:30.250] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:11:30.250] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:11:30.250] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:11:30.250] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:12:29.545] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:12:31.032] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:12:31.032] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:12:36.055] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:12:36.324] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:12:36.324] ets Jul 29 2019 12:21:46
+[2026-04-29T12:12:36.324] 
+[2026-04-29T12:12:36.324] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:12:36.324] configsip: 0, SPIWP:0xee
+[2026-04-29T12:12:36.324] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:12:36.324] mode:DIO, clock div:2
+[2026-04-29T12:12:36.324] load:0x3fff0030,len:4640
+[2026-04-29T12:12:36.324] load:0x40078000,len:15660
+[2026-04-29T12:12:36.324] load:0x40080400,len:3164
+[2026-04-29T12:12:36.324] entry 0x4008059c
+[2026-04-29T12:12:37.704] 
+[2026-04-29T12:12:37.704] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:12:37.704] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:12:37.704] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:12:37.704] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:12:37.704] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:12:37.704] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:12:37.704] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:12:37.704] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:12:37.704] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:12:37.704] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:12:37.704] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:12:37.704] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:12:37.704] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:12:37.704] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:12:37.704] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:12:55.203] ets Jul 29 2019 12:21:46
+[2026-04-29T12:12:55.203] 
+[2026-04-29T12:12:55.203] rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:12:55.203] configsip: 0, SPIWP:0xee
+[2026-04-29T12:12:55.203] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:12:55.203] mode:DIO, clock div:2
+[2026-04-29T12:12:55.203] load:0x3fff0030,len:4640
+[2026-04-29T12:12:55.203] load:0x40078000,len:15660
+[2026-04-29T12:12:55.203] load:0x40080400,len:3164
+[2026-04-29T12:12:55.203] entry 0x4008059c
+[2026-04-29T12:12:56.576] 
+[2026-04-29T12:12:56.576] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:12:56.576] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:12:56.576] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:12:56.576] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:12:56.576] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:12:56.576] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:12:56.576] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:12:56.576] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:12:56.576] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:12:56.576] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:12:56.576] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:12:56.576] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:12:56.576] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:12:56.576] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:12:56.576] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
+[2026-04-29T12:13:55.893] [I][AP Portal] STA rescan — trying SSID "Enigma"
+[2026-04-29T12:13:57.159] [I][WiFi] Connected - IP: 192.168.10.69
+[2026-04-29T12:13:57.159] [I][AP Portal] STA got IP — scheduling restart in 5000 ms
+[2026-04-29T12:14:02.189] [I][AP Portal] STA reconnected — restarting to resume OPERATIONAL
+[2026-04-29T12:14:02.472] [I][WiFi] Disconnected (reason=8)
+[2026-04-29T12:14:02.472] ets Jul 29 2019 12:21:46
+[2026-04-29T12:14:02.472] 
+[2026-04-29T12:14:02.472] rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[2026-04-29T12:14:02.472] configsip: 0, SPIWP:0xee
+[2026-04-29T12:14:02.472] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[2026-04-29T12:14:02.472] mode:DIO, clock div:2
+[2026-04-29T12:14:02.472] load:0x3fff0030,len:4640
+[2026-04-29T12:14:02.472] load:0x40078000,len:15660
+[2026-04-29T12:14:02.472] load:0x40080400,len:3164
+[2026-04-29T12:14:02.472] entry 0x4008059c
+[2026-04-29T12:14:03.852] 
+[2026-04-29T12:14:03.852] [I][BOOT] ESP32 Credential Bootstrap Firmware v0.4.28.0
+[2026-04-29T12:14:03.852] [I][Heap] after-serial: free=160512 largest=110580
+[2026-04-29T12:14:03.852] [DeviceId] Loaded UUID: 32925666-155a-4a67-bf50-27c1ffa22b11
+[2026-04-29T12:14:03.852] [W][AppConfig] OTA URL is the config.h placeholder — device may have been re-bootstrapped without OTA URL in the credential bundle (see #49)
+[2026-04-29T12:14:03.852] [AppConfig] OTA JSON URL: https://myorg.github.io/esp32-firmware/ota.json
+[2026-04-29T12:14:03.852] [AppConfig] Topic:  Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/...
+[2026-04-29T12:14:03.852] [AppConfig] Node name: ESP32-Alpha
+[2026-04-29T12:14:03.852] [I][OTAValid] Boot partition 'app0' state: -1
+[2026-04-29T12:14:03.852] [W][BOOT] Restart-loop detected: 8 consecutive mqtt_unrecoverable — entering AP mode
+[2026-04-29T12:14:03.852] [I][AP Portal] APSTA mode — will rescan for SSID "Enigma" every 30000 ms
+[2026-04-29T12:14:03.854] [I][AP Portal] SSID: ESP32-Config-27c1ffa22b11  IP: 192.168.4.1
+[2026-04-29T12:14:03.854] [I][AP Portal] Captive DNS hijack active — all queries → 192.168.4.1
+[2026-04-29T12:14:03.854] [I][AP Portal] TLS credentials loaded from NVS (1172 + 1675 chars)
+[2026-04-29T12:14:03.854] [I][AP Portal] Captive HTTP redirector active on :80 → https://192.168.4.1/
+[2026-04-29T12:14:03.854] [I][AP Portal] Waiting for admin — browse to https://192.168.4.1/
