@@ -1,135 +1,127 @@
 # Next session plan
 
-Refreshed 2026-04-29 afternoon after v0.4.28 shipped (#78 cascade-window
-guard + #96 long-outage AP-mode-loop fixes). The previous next-session
-candidate (#78 bench-debug) is now CLOSED — the bug was symbolically
-root-caused, fixed, and validated across the full fleet in one session.
+Refreshed 2026-04-29 PM after v0.4.29 shipped (ranging UX +
+auto-OTA-recovery + PIO wrapper bundle). Previous next-session
+candidate (v0.4.28 #46 soak) is folded into this plan because
+v0.4.29 is the better soak target — same well-understood cascade
+fixes plus new visibility code paths.
 
 ## State at end of session (2026-04-29 ~PM SAST)
 
 | | |
 |---|---|
-| Master HEAD | `db12681` v0.4.28 (CI building + auto-tagging) |
-| Fleet | **6/6 on v0.4.28.0** post mass-USB-reflash, all heartbeating steady |
-| Backlog | OPEN **28**, RESOLVED **56**, WONT_DO **11** (+#96, -#54, -#78, -#96 → -2 net since session start, plus #96 tracked as both opened+resolved same day) |
-| Released | v0.4.27 (#94 — silent-degradation variant of AP-cycle); v0.4.28 (#78 panic-cascade + #96 long-outage AP-mode-loop) |
-| Validation | 3 AP-cycle reproduction tests (~150s, ~?, ~760s outages) — no panics on Alpha v0.4.28; 6/6 self-recovery via #96 sub-A ap_recovered path on first post-flash AP→STA cycle |
+| Master HEAD | v0.4.29 tag (CI building + gh-pages auto-update) |
+| Fleet | 6/6 on v0.4.29 (target, post-OTA-rollout) — soak begins ~20:00 SAST |
+| Backlog | OPEN **24**, RESOLVED **61**, WONT_DO **11** (-5 net this session: #87/#88/#89/#95/#97 RESOLVED) |
+| Released today | v0.4.27 (morning #94), v0.4.28 (#78 + #96), v0.4.29 (#87/#88/#89/#95/#97) — three releases in one day |
+| Validation | Native 105/105; Alpha USB-flash + M2 30s blip PASS via blip-watcher (no reboot, mqtt_disconnects 0→1, heap_largest unchanged 81908) |
 
-## What we shipped today
+## What we shipped today (v0.4.29)
 
-**v0.4.27 (parallel session, morning):**
-- #94: ESP-NOW reinit on WiFi-up + LedEventType::MQTT_LOST event.
-  Targets the silent-degradation variant of the AP-cycle bug
-  (Alpha's `ESP_ERR_ESPNOW_NOT_INIT` post-reconnect + LED stuck on
-  green-breathing after MQTT drop).
+- **#87** — Calibration UX: 1 Hz "calib":"waiting" heartbeat in
+  `espnowRangingLoop` while `_calibState != IDLE`. Surfaces
+  #86-class silence in 1 s instead of 120 s.
+- **#88** — `AppConfig.espnow_ranging_enabled` (NVS key `en_rng`,
+  default 0). Boot-time apply via `espnowRangingSetEnabled()` right
+  after `espnowResponderStart()`. Devices that miss their retained
+  `cmd/espnow/ranging` MQTT message come up in the same on/off
+  state as before reboot.
+- **#89** — `/espnow` JSON adds `cal_points_buffered` and
+  `ranging_enabled` so dashboards can warn on uncommitted points
+  before reboot. Visibility-only fix; full NVS persistence of the
+  multi-point buffer deliberately deferred.
+- **#95** — `tools/dev/pio-utf8.sh` wrapper exporting
+  `PYTHONIOENCODING=utf-8 PYTHONUTF8=1` before exec'ing pio.
+  CLAUDE.md "Build & Test" updated.
+- **#97** — `otaCheckNow()` early-returns
+  `stage:"cascade_quiet"` OTA_FAILED if `mqttGetLastDisconnectMs()`
+  is within `OTA_CASCADE_QUIET_MS` (300_000 ms = 5 min default).
+  Mirrors v0.4.28 publish-guard pattern.
 
-**v0.4.28 (this session, afternoon):**
-- **#78 RESOLVED** — Cascade-window publish guard. All 6 retained
-  v0.4.26 cascade coredumps symbolized; common ancestor is
-  `mqttPublish` ← `espnowRangingLoop`. Fix gates publishes for 5 s
-  after any WiFi/MQTT disconnect or reconnect, closing the AsyncTCP
-  `_error` vs AsyncMqttClient publish race.
-- **#96 sub-A** — AP-portal pushes `"ap_recovered"` to RestartHistory
-  before `ESP.restart()`, breaking the `mqtt_unrecoverable` streak.
-- **#96 sub-B** — `mqttScheduleRestart()` now idempotent, preventing
-  the phantom restart-loop signature where one outage looked like 8
-  failed restarts.
-- **#54 closed** with positive evidence (Charlie canary surviving
-  multiple cascade events without firing).
-
-## Bench state at session end
-
-- All 6 devices flashed with v0.4.28.0, on mains/USB power, MQTT
-  steady-state.
-- Alpha + Bravo currently bench-attached on COM (post-test config).
-- `last_restart_reasons` shows `"ap_recovered"` newest entry on all
-  6 — the self-recovery audit trail of the #96 sub-A fix firing on
-  the first post-flash AP→STA cycle.
-
-## What we learned (deeply forensic)
-
-- **Cascade is non-deterministic.** Three operator-triggered
-  AP-cycles in this session — none produced cascade panics on the
-  unguarded fleet. Same physical trigger ≠ same outcome (per #92).
-  Guard validation is therefore *negative-evidence-supported*: Alpha
-  v0.4.28 was never panicked, never could have panicked because of
-  the guard, and showed visibly cleaner heap fragmentation post-cycle
-  than its unguarded peers (81908 vs 36-43K largest contiguous).
-- **Long outages exposed #96.** A 12.6 minute disconnect put EVERY
-  fleet device into the AP-mode reboot loop simultaneously. NVS-
-  persisted ring buffer can't be cleared by power-cycle. Mass-USB-
-  reflash with the v0.4.28 fix self-recovered the entire fleet on
-  first AP→STA cycle post-flash — a clean validation of the fix.
-- **Phantom signatures are a class of bug.** When a state-tracking
-  ring buffer is written from a code path with no debounce, a single
-  event can saturate the ring with identical entries that look like
-  N distinct events on next read. Worth scanning the codebase for
-  similar patterns elsewhere.
-- **`exc_cause: unknown` IDLE1 coredumps** are forced-abort
-  signatures from another task, not actual hardware exceptions on
-  the IDLE task. Three byte-identical retained payloads from a
-  pre-v0.4.28 firmware (`app_sha_prefix: e4d23b96`, unknown build
-  origin — likely a parallel-session local build) — preserved as
-  forensic history but not actionable.
+Build: 1647024 bytes flash (+280 vs v0.4.28), RAM 22.3 % unchanged.
 
 ## Recommended next session
 
-The #78 + #96 fixes are shipped and validated. Top candidates from
-the remaining backlog:
+Soak begins this evening at ~20:00 SAST and runs overnight. Morning
+session = closure paperwork + decision on next direction.
 
-### A. v0.5.0 hardware bring-up — relay + Hall on Bravo
-**Owner:** depends on operator wiring relay + Hall on Bravo. Plan
-unchanged in [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
-Bravo is already off-bench and ready to receive the new hardware.
+### A. Close #46 if soak is clean
+Per CLAUDE.md "Soak windows" guidance: 8-12 h overnight on v0.4.29
+covers the v0.4.28 cascade-window guard validation that #46 has
+been blocked on since 2026-04-28 evening's Phase 2 R1 cascade
+event reset the soak. Closure criteria (per CLAUDE.md template):
+- No new `/diag/coredump` payloads with fresh `app_sha_prefix`.
+- No `silent_watcher.sh` LWT-or-panic alerts.
+- `heap_largest` stable (no monotonic decline > 5 % / hour).
+- `mqtt_disconnects` not climbing during the window.
+- Boot announcement at end shows expected `restart_cause`
+  (empty for clean uptime).
 
-### B. v0.4.28 fleet soak + #46 close
-**Acceptance:** Sustained heartbeats from all 6 devices, no new
-coredump signatures with fresh `app_sha_prefix`, no `mqtt_unrecoverable`
-events. **Soak length per CLAUDE.md "Soak windows" guidance:** 8-12 h
-overnight is the sweet spot for v0.4.28 — the fix is targeted, the
-failure mode is well-understood, and bench validation has been
-thorough. Recommended start: ~17:00 SAST, results at morning standup.
-24 h+ only if a daily-cycle effect (NTP, daily-health) is suspected.
-If clean, mark **#46** RESOLVED (the soak that's been blocked on
-cascade events). Lightweight session — mostly monitoring + closure
-paperwork.
+If clean → mark **#46 RESOLVED in v0.4.29** (the v0.4.22 + v0.4.28 +
+v0.4.29 bundle finally closes the long-tail abnormal-reboot
+investigation). #92 stays open as the cascade-trigger entry for
+future investigation.
 
-### C. #91 ESP32-WROOM-32U + external antenna procurement
-**Owner:** operator orders parts (~$15-30). Bench test against
-current WROOM-32 fleet for asymmetry / RF range / orientation
-sensitivity. Could weeks out depending on procurement lead time.
+### B. v0.5.0 hardware bring-up — relay + Hall on Bravo
+Plan unchanged at [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
+GPIO assignments worked out; hardware on hand. Bravo currently
+bench-attached on COM5 (per 2026-04-29 PM PnP probe — operator
+re-attached during today's chaos prep). Blocker: #48 UUID drift fix
+must ship first. With #46 closure planned for tomorrow morning,
+this becomes the next logical big session.
 
-### D. #87 / #88 / #89 / #97 ranging UX + OTA-recovery bundle
-"Make the firmware self-document its state" theme + post-cascade
-OTA gating. All small firmware additions: visible-when-collecting
-indicator (#87), NVS-persisted ranging-enabled flag (#88),
-persistence for RAM-only calibration buffer (#89), and
-auto-OTA-during-cascade-recovery gate (#97 — `otaCheckNow()` skips
-if inside a 5 min post-disconnect window, mirrors the v0.4.28
-cascade-window guard pattern). Could ship as v0.4.29.
+### C. #93 production-serial-instrumentation
+Decide between status quo (A), 60 s heartbeat-to-serial (B,
+recommended), canary-only watermark prints (C), or on-demand
+cmd/diag/serial_dump (D, recommended bundled with B). Visibility-only,
+pairs with v0.4.29's "make firmware self-document its state" theme.
+Low-risk shippable as v0.4.30.
 
-### E. #93 production-serial-instrument decision (B + D)
-60 s heartbeat-to-serial line + cmd/diag/serial_dump on-demand
-command. Pairs with the diagnostic-tooling theme (#87/#88/#89).
-Visibility-only, very low risk.
+### D. #91 ESP32-WROOM-32U + external antenna procurement
+Operator orders parts (~$15-30). Bench-test against current WROOM-32
+fleet for asymmetry / RF range / orientation sensitivity. Targets
+#37 root cause #2 + #41 RFID coupling + #90 orientation. Regulatory
+check (FCC/CE/ICASA) needed before production.
+
+### E. Phase 2 ranging cluster — multipath / criteria adjustment
+#37, #38, #39, #42, #47, #49, #86, #90, #91 are all open in this
+group. Most need either bench time, procurement, or environmental
+re-test (clean RF). v0.4.29's #87/#88/#89 visibility wins make any
+future on-bench session smoother. Bundle option: take #38 (runtime-
+tunable beacon intervals) + #42 (active/calibrating/setup mode) as
+a small follow-on after #46 closes.
+
+## Bench state at session end
+
+- Alpha (COM4) on v0.4.29.0 — primary test target, M2 PASS verified
+  pre-rollout.
+- Bravo (COM5) re-attached — was off-bench until v0.5.0; now
+  bench-accessible.
+- Charlie/Delta/Echo/Foxtrot — fleet positions unchanged from v0.4.28
+  morning state. All eligible for v0.4.29 OTA rollout.
+- Charlie canary — closed 2026-04-29 morning with #54 RESOLVED;
+  Charlie is back on release firmware.
 
 ## Won't-do at next-session start
 
-- Trigger another AP-cycle "to see if cascade fires now" — the
-  non-determinism means single trigger can't validate. Long-running
-  fleet soak is the better validation channel.
+- Trigger another cascade-class M3 blip without symbolic-decode
+  apparatus ready (per the v0.4.28 lesson — non-determinism means
+  single trigger can't validate).
 - Open new #78-class investigations without fresh evidence —
-  cascade-window guard is the production mitigation; vendored
-  AsyncTCP patch deferred unless soak surfaces a residual cascade.
-- Touch the `e4d23b96` IDLE1 coredumps further — forensic history,
-  not actionable on v0.4.28.
+  cascade-window guard + auto-OTA-recovery gate are the production
+  mitigations; vendored AsyncTCP patch deferred unless soak surfaces
+  a residual cascade.
+- Mass-flash without checking COM-port assignments (per CLAUDE.md
+  rule). PnP probe before every flash.
 
 ## Open questions for operator
 
-- Did the v0.4.27 OTA delivery during AP-cycle #2 raise any
-  operational concerns (devices auto-OTA'd while in cascade-recovery
-  mode)? May warrant a check on whether OTA-during-disconnect-recovery
-  is a workflow we want to gate.
-- How long do you want the v0.4.28 soak window before closing #46?
-  CLAUDE.md says ≥24 h; if anything richer is wanted (e.g. a 7-day
-  quiet-soak), say so before the soak starts.
+- v0.4.29 is in flight as the soak target. Acceptable to skip a
+  separate v0.4.28 soak window since v0.4.29 is additive over
+  v0.4.28 and validates strictly more code surface?
+- v0.5.0 hardware (Bravo relay + Hall wiring) — ready for
+  tomorrow's session, or operator wiring still pending?
+- The blip-watcher mechanism worked end-to-end this session
+  (memory file `mosquitto_blip_watcher.md` saved). Any preference
+  on auto-running blips during off-hours (with pre-armed silent_watcher
+  for any abnormal boot signature)?

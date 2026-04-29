@@ -42,7 +42,7 @@
 // build to allow operators to distinguish iterations. CI builds get the tag
 // injected via FIRMWARE_VERSION_OVERRIDE = "0.4.20" (no 4th component) so a
 // release is always the cleaner 3-component form.
-#define FIRMWARE_VERSION           "0.4.28.0"
+#define FIRMWARE_VERSION           "0.4.29.0"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 
@@ -227,6 +227,18 @@ static const uint32_t WIFI_BACKOFF_STEPS_MS[] = {
                                            // Default: 1 hour (3 600 000 ms).
                                            // You can also trigger an immediate check
                                            // via MQTT: publish to cmd/ota_check.
+
+// (#97, v0.4.29) Cascade-recovery OTA quiet window. After any
+// WiFi/MQTT disconnect, otaCheckNow() returns early for this many ms.
+// Mirrors the v0.4.28 mqttPublish cascade-window guard
+// (CASCADE_QUIET_MS), but the OTA window is much longer because heap
+// state post-cascade is unknown — we want the device to stabilise on
+// steady-state heap and TCP reconnect before pulling 1.6 MB of new
+// firmware over HTTPS. 5 min (300 s) covers the longest observed
+// AP-recovery storm (12.6 min #96 outage) by an order of magnitude
+// for typical 30-90 s blips, and prevents the v0.4.26 → v0.4.27
+// AP-cycle #2 issue where every device pulled OTA mid-recovery.
+#define OTA_CASCADE_QUIET_MS         300000  // 5 min post-disconnect lockout for OTA fetch
 
 #define OTA_PROGRESS_TIMEOUT_MS      30000 // Per-chunk deadline during the OTA download:
                                            // if no progress callback fires for this long,

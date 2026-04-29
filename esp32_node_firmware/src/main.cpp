@@ -601,6 +601,17 @@ void loop() {
             espnowResponderSetBundle(activeBundle);
             espnowResponderStart();
 
+            // (#88, v0.4.29) Apply persisted ranging on/off state. Without
+            // this, the static `_rangingEnabled = false` default in
+            // espnow_ranging.h means a device that misses its retained
+            // cmd/espnow/ranging "1" comes up silently OFF. NVS state is
+            // loaded by AppConfigStore::load() at the top of setup(); we
+            // just push it into the ranging module here once the
+            // responder is up. The retained MQTT replay (which fires
+            // moments later as soon as MQTT connects) will be a no-op
+            // because the state already matches.
+            espnowRangingSetEnabled(gAppConfig.espnow_ranging_enabled != 0);
+
             // WiFi is confirmed connected. GitHub reachability is assumed until
             // the first OTA check proves otherwise (~1 hour from boot).
             responderSetHealthFlag(0, true);   // bit 0: WiFi connected

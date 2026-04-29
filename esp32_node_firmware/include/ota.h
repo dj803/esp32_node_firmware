@@ -247,6 +247,39 @@ void otaCheckNow(bool isSiblingRetry) {
     LOG_I("OTA", "OTA disabled at compile time (OTA_DISABLE) — skipping check");
     return;
 #endif
+
+    // ── (#97, v0.4.29) Cascade-recovery quiet-window gate ────────────────────
+    // After any WiFi/MQTT disconnect, _lastNetworkDisconnectMs is stamped
+    // by mqttMarkNetworkDisconnect() (the same primitive driving v0.4.28's
+    // CASCADE_QUIET_MS publish guard). For the next OTA_CASCADE_QUIET_MS
+    // we skip the check — pulling 1.6 MB of firmware over HTTPS during
+    // cascade-recovery leaves the device in an unknown heap state and was
+    // the AP-cycle #2 (2026-04-29 morning) finding that promoted #97
+    // from "nice-to-have" to bundled-in-v0.4.29. Sibling-retry path is
+    // also gated since the retry would just re-enter this same quiet
+    // window. Counter is only inspected, not reset, so the next interval
+    // tick (or operator-forced cmd/ota_check) clears the gate naturally
+    // OTA_CASCADE_QUIET_MS after the most recent disconnect.
+    {
+        uint32_t lastDisc = mqttGetLastDisconnectMs();
+        if (lastDisc != 0 && (millis() - lastDisc) < OTA_CASCADE_QUIET_MS) {
+            uint32_t elapsed = millis() - lastDisc;
+            LOG_W("OTA", "Skipping OTA check — inside %lu ms cascade-recovery "
+                          "quiet window (elapsed %lu ms since last disconnect)",
+                  (unsigned long)OTA_CASCADE_QUIET_MS,
+                  (unsigned long)elapsed);
+            char extra[192];
+            snprintf(extra, sizeof(extra),
+                "\"stage\":\"cascade_quiet\","
+                "\"elapsed_ms\":%lu,\"quiet_ms\":%lu,"
+                "\"current_version\":\"" FIRMWARE_VERSION "\"",
+                (unsigned long)elapsed,
+                (unsigned long)OTA_CASCADE_QUIET_MS);
+            mqttPublishStatus(FwEvent::OTA_FAILED, extra);
+            return;
+        }
+    }
+
     // ── OTA URL validation ────────────────────────────────────────────────────
     // Reject obviously broken URLs before handing them to ESP32-OTA-Pull.
     // A blank URL or one that doesn't start with http(s):// will produce a

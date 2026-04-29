@@ -4367,6 +4367,16 @@ Next steps (operator decision):
     120 s) and naturally with #38/#42 since those touch the same
     state-machine surface.
 
+    STATUS: RESOLVED 2026-04-29 in v0.4.29 — espnow_ranging.h's
+    espnowRangingLoop() now publishes a 1 Hz "calib":"waiting"
+    heartbeat to /response while _calibState != IDLE. Payload
+    includes phase, peer_mac, collected/target counts, elapsed_ms,
+    timeout_ms, ranging_enabled, and points (multi-point buffer
+    count). Surfaces #86-class silence in 1 s instead of 120 s.
+    Loop runs above the _rangingEnabled gate so a misconfigured
+    "ranging off" device still surfaces "ranging_enabled:false" to
+    the operator instead of staying silent.
+
 88. ESP-NOW ranging defaults to OFF / persistence relies on retained MQTT
     DISCOVERED: 2026-04-28 evening, Phase 2 R1 setup.
 
@@ -4420,6 +4430,17 @@ Next steps (operator decision):
     (same NVS-persistence pattern as runtime intervals + mode
     state). Could also reach into #49's bootstrap-bundle scope
     if option (c) is chosen.
+
+    STATUS: RESOLVED 2026-04-29 in v0.4.29 — added
+    `uint8_t espnow_ranging_enabled` field to AppConfig (NVS key
+    "en_rng" in esp32cfg namespace) with load() default 0 and
+    save() via NvsPutIfChanged. espnowRangingSetEnabled() now
+    persists the new value when it actually changes (no-op on
+    retained-replay). main.cpp applies gAppConfig.espnow_ranging_enabled
+    via espnowRangingSetEnabled() right after espnowResponderStart(),
+    so a device that misses its retained MQTT message comes up in the
+    same on/off state as before reboot. /espnow JSON also surfaces
+    `ranging_enabled` so operators can confirm.
 
 89. ESP-NOW calibration multi-point buffer is RAM-only — lost on reboot
     DISCOVERED: 2026-04-28 evening, mid Delta-anchor sweep. Operator
@@ -4481,6 +4502,19 @@ Next steps (operator decision):
     n∈[2,4], tx∈[-65,-45], RMSE<2.0) all violated due to indoor
     multipath in this room — non-monotonic curve from 1m→4m→7.5m.
     Real environmental finding, not a pipeline issue.
+
+    STATUS: RESOLVED 2026-04-29 in v0.4.29 (visibility-only fix —
+    buffer is still RAM-only). /espnow JSON now surfaces a new
+    `cal_points_buffered` field reflecting `_calibPointCount`. The
+    operator-facing dashboard can now warn "you have N uncommitted
+    points; commit before rebooting" without requiring buffer
+    persistence (which adds NVS-write pressure and complicates the
+    calibration flow). Combined with #87's 1 Hz cal-waiting
+    heartbeat, the operator now has full visibility into both
+    sample-collection-in-flight AND multi-point buffer state. Full
+    NVS persistence of the buffer was deliberately deferred — the
+    visibility fix was disproportionately cheap and turns the
+    "lost a point" experience from invisible to recoverable.
 
 90. Device PCB mounting orientation has large RF impact — needs systematic test
     DISCOVERED: 2026-04-28 evening, mid Phase 2 R1 baseline re-capture.
@@ -5079,6 +5113,16 @@ Next steps (operator decision):
     LINKS:
        - Hit during #94 v0.4.27 USB-flash to Alpha 2026-04-29 morning
 
+    STATUS: RESOLVED 2026-04-29 in v0.4.29 — added
+    `tools/dev/pio-utf8.sh` wrapper that exports
+    `PYTHONIOENCODING=utf-8 PYTHONUTF8=1` before exec'ing pio.
+    CLAUDE.md "Build & Test" section now points at the wrapper
+    explicitly with a one-liner symptom + recovery note (kill pio,
+    physical USB cycle to release esptool's COM lock, re-run via
+    wrapper). Bench-validated 2026-04-29 PM during v0.4.29.0
+    Alpha flash — wrapper produced clean progress output through
+    100 % write + verify with no UnicodeEncodeError.
+
 96. Long-outage AP-mode loop — phantom restart-loop signature
     DISCOVERED: 2026-04-29 PM during the bench AP-cycle #3 long-
     disconnect test. Fleet-wide 12.6 minute outage put ALL 6 devices
@@ -5237,3 +5281,16 @@ Next steps (operator decision):
        - mqtt_client.h:226-280 (existing _lastNetworkDisconnectMs
          + cascade-window helpers — reuse the same static)
        - include/ota.h (otaCheckNow site)
+
+    STATUS: RESOLVED 2026-04-29 in v0.4.29 — `otaCheckNow()` now
+    early-returns with a `stage:"cascade_quiet"` OTA_FAILED
+    publish if `mqttGetLastDisconnectMs()` is within
+    OTA_CASCADE_QUIET_MS (5 min default in config.h). The
+    accessor is a thin wrapper over the existing volatile static
+    `_lastNetworkDisconnectMs` from v0.4.28's CASCADE_QUIET_MS
+    publish guard, so the same primitive that gates publishes
+    now also gates OTA fetch. Window is much longer than the 5 s
+    publish guard because OTA pulls 1.6 MB of HTTPS — heap state
+    post-cascade is unknown and the conservative wait beats a
+    half-flashed firmware. Sibling-retry path is also gated since
+    the retry would just re-enter the same window.

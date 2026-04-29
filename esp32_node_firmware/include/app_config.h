@@ -121,6 +121,15 @@ struct AppConfig {
     uint8_t espnow_ema_alpha_x100  = ESPNOW_EMA_ALPHA_X100;              // α × 100 (e.g. 30 = 0.30)
     uint8_t espnow_outlier_db      = ESPNOW_OUTLIER_DB;                  // outlier gate (dB)
 
+    // (#88, v0.4.29) Persist ranging on/off across reboots.
+    // Without NVS persistence, a device that misses its retained
+    // cmd/espnow/ranging "1" message comes up with ranging silently OFF.
+    // Operator-confirmed regression on bench devices 2026-04-28 evening.
+    // 0 = off (default for fresh devices); 1 = on. Updated by
+    // espnowRangingSetEnabled() whenever cmd/espnow/ranging changes the
+    // RAM flag.
+    uint8_t espnow_ranging_enabled = 0;
+
     // Anchor role + 3-D position (F5).
     // 0 = mobile node, 1 = fixed anchor. Coordinates in mm (integer) to avoid
     // floating-point NVS serialisation; divide by 1000 for metres.
@@ -220,6 +229,9 @@ public:
             gAppConfig.espnow_path_loss_n_x10 = prefs.getUChar("en_pathN",  (uint8_t)(ESPNOW_PATH_LOSS_N * 10));
             gAppConfig.espnow_ema_alpha_x100  = prefs.getUChar("en_alpha",  ESPNOW_EMA_ALPHA_X100);
             gAppConfig.espnow_outlier_db      = prefs.getUChar("en_outlier", ESPNOW_OUTLIER_DB);
+            // (#88, v0.4.29) Default to 0 (off) for first-boot devices.
+            // Persisted on every cmd/espnow/ranging that changes state.
+            gAppConfig.espnow_ranging_enabled = prefs.getUChar("en_rng",     0);
             gAppConfig.anchor_role            = prefs.getUChar("anc_role",  0);
             gAppConfig.anchor_x_mm            = prefs.getInt("anc_x_mm",   0);
             gAppConfig.anchor_y_mm            = prefs.getInt("anc_y_mm",   0);
@@ -296,6 +308,7 @@ public:
         ok &= NvsPutIfChanged(prefs, "en_pathN",     cfg.espnow_path_loss_n_x10)  > 0;
         ok &= NvsPutIfChanged(prefs, "en_alpha",     cfg.espnow_ema_alpha_x100)   > 0;
         ok &= NvsPutIfChanged(prefs, "en_outlier",   cfg.espnow_outlier_db)       > 0;
+        ok &= NvsPutIfChanged(prefs, "en_rng",       cfg.espnow_ranging_enabled)  > 0;   // (#88, v0.4.29)
         ok &= NvsPutIfChanged(prefs, "anc_role",     cfg.anchor_role)             > 0;
         ok &= NvsPutIfChanged(prefs, "anc_x_mm",     cfg.anchor_x_mm)            >= 4;
         ok &= NvsPutIfChanged(prefs, "anc_y_mm",     cfg.anchor_y_mm)            >= 4;

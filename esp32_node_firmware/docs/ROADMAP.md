@@ -2,11 +2,59 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-29 afternoon (post-v0.4.28 #78 cascade-window guard + #96 AP-mode-loop bundle).
+Last updated: 2026-04-29 evening (post-v0.4.29 ranging UX + auto-OTA-recovery bundle).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.29 — DONE (shipped 2026-04-29 PM — ranging UX + auto-OTA-recovery + PIO wrapper bundle)
+
+Five small, additive items closed end-to-end on top of v0.4.28's
+cascade-window + AP-mode-loop bundle. Theme: "make the firmware
+self-document its state" — visibility wins from the Phase 2 R1 bench
+session, plus the OTA-recovery hardening seen during the v0.4.28
+AP-cycle #2 mid-cascade-OTA event.
+
+- **#87 RESOLVED** — Calibration UX: 1 Hz "calib":"waiting" heartbeat
+  in `espnowRangingLoop` while `_calibState != IDLE`. Surfaces
+  #86-class silence in 1 s instead of 120 s. Payload exposes phase,
+  peer_mac, collected/target counts, elapsed_ms, ranging_enabled,
+  and points (multi-point buffer count).
+- **#88 RESOLVED** — `AppConfig.espnow_ranging_enabled` (NVS key
+  `en_rng`) with boot-time apply via `espnowRangingSetEnabled()`
+  right after `espnowResponderStart()`. Devices that miss their
+  retained `cmd/espnow/ranging` MQTT message come up in the same
+  on/off state as before reboot. Fixes the operator-confirmed
+  bench regression (Bravo/Delta/Echo/Foxtrot needing manual
+  republish per UUID).
+- **#89 RESOLVED** — Visibility-only fix for the multi-point
+  calibration buffer. `/espnow` JSON now publishes
+  `cal_points_buffered` (=`_calibPointCount`) and `ranging_enabled`,
+  letting the dashboard warn "you have N uncommitted points;
+  commit before rebooting." Full NVS persistence of the buffer
+  was deliberately deferred — visibility was disproportionately
+  cheap and turns the "lost a point" experience from invisible
+  to recoverable.
+- **#95 RESOLVED** — `tools/dev/pio-utf8.sh` wrapper exporting
+  `PYTHONIOENCODING=utf-8 PYTHONUTF8=1` before exec'ing pio.
+  Bench-validated 2026-04-29 PM during the v0.4.29.0 Alpha flash —
+  no UnicodeEncodeError, no esptool COM lock, full 100 % progress
+  output. CLAUDE.md "Build & Test" updated with one-liner symptom
+  + recovery note.
+- **#97 RESOLVED** — `otaCheckNow()` early-returns
+  `stage:"cascade_quiet"` OTA_FAILED if
+  `mqttGetLastDisconnectMs()` is within `OTA_CASCADE_QUIET_MS`
+  (300_000 ms = 5 min default). Mirrors the v0.4.28
+  CASCADE_QUIET_MS publish guard pattern but with a much longer
+  window because OTA pulls 1.6 MB over HTTPS — heap state
+  post-cascade is unknown and the conservative wait beats a
+  half-flashed firmware. Sibling-retry path is also gated.
+
+Build: esp32dev clean (1647024 bytes flash, +280 bytes vs v0.4.28;
+RAM 22.3 % unchanged). 105/105 native tests pass. Alpha USB-flashed
++ verified running v0.4.29.0 on COM4 (bench-validated new /espnow
+fields visible, ranging_enabled true, cal_points_buffered 0).
 
 ### v0.4.28 — DONE (shipped 2026-04-29 afternoon — #78 cascade-window guard + #96 long-outage AP-mode-loop fixes)
 

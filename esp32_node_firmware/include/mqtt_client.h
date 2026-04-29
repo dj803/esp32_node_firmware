@@ -282,6 +282,16 @@ static inline bool _mqttInCascadeWindow() {
     return (now - _lastNetworkDisconnectMs) < CASCADE_QUIET_MS;
 }
 
+// (#97, v0.4.29) Public accessor for the cascade-window timestamp.
+// ota.h consumes this to gate otaCheckNow() on a longer
+// OTA_CASCADE_QUIET_MS window — pulling 1.6 MB of firmware over HTTPS
+// during cascade-recovery can leave the device in an unknown heap state.
+// Returns the millis() of the most-recent WiFi or MQTT disconnect, or 0
+// if we have not seen a disconnect since boot.
+inline uint32_t mqttGetLastDisconnectMs() {
+    return _lastNetworkDisconnectMs;
+}
+
 // Low-level publish — silently drops messages if the client is not connected
 // OR if the heap is too fragmented to safely allocate the publish buffer.
 //

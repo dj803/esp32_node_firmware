@@ -53,10 +53,27 @@ static PeerTracker<ESPNOW_MAX_TRACKED> _enrPeers;
 // ── Enable / disable flag ─────────────────────────────────────────────────────
 static bool _rangingEnabled = false;
 
+// (#88, v0.4.29) Persist the new state to NVS whenever it actually
+// changes, so a device that misses its retained cmd/espnow/ranging "1"
+// after a reboot still comes up in the same on/off state. The
+// _rangingEnabled-vs-en short-circuit above means retained-replay on
+// reconnect is a no-op (no NVS write, no flash wear).
 void espnowRangingSetEnabled(bool en) {
     if (en == _rangingEnabled) return;
     _rangingEnabled = en;
     Serial.printf("[ESP-NOW Ranging] ranging %s\n", en ? "ENABLED" : "DISABLED");
+
+    // Persist if AppConfig disagrees with the new state. Done here (in
+    // the setter) rather than at every cmd/espnow/ranging callsite so
+    // any future caller automatically gets the persistence too. Uses
+    // AppConfigStore::save which respects NvsPutIfChanged semantics —
+    // a write of the same value is a free no-op at the flash layer.
+    uint8_t want = en ? 1 : 0;
+    if (gAppConfig.espnow_ranging_enabled != want) {
+        AppConfig copy = gAppConfig;
+        copy.espnow_ranging_enabled = want;
+        AppConfigStore::save(copy);
+    }
 }
 
 
@@ -561,8 +578,45 @@ static void _enrSendBeacon() {
 //   2. Evict peers silent for ESPNOW_STALE_MS
 //   3. Publish peer table to MQTT every ESPNOW_MQTT_PUBLISH_MS
 static uint32_t _enrLastPublish = 0;
+// (#87, v0.4.29) Last calibration-waiting heartbeat publish. While a
+// calibration step is collecting samples we publish a 1 Hz "still
+// waiting" beat to /response so the operator never sees > 1 s of silence
+// during the 30-sample / 90 s window. Phase 2 R1 surfaced #86 in 120 s
+// of silence; with this heartbeat the same condition surfaces in 30 s.
+static uint32_t _enrLastCalWaitingPub = 0;
 
 void espnowRangingLoop() {
+    // (#87, v0.4.29) Run the calibration-waiting heartbeat regardless
+    // of _rangingEnabled. Calibration is operator-initiated and shouldn't
+    // be silenced by an unrelated ranging-off state — though in practice
+    // both must be on for the calibration sample collection to receive
+    // any frames. Putting this above the early-return ensures the
+    // operator sees a "ranging is OFF — calibration cannot complete"
+    // pattern (calib state moves but collected stays 0).
+    if (_calibState != EnrCalibState::IDLE && mqttIsConnected()) {
+        uint32_t nowCal = millis();
+        if (nowCal - _enrLastCalWaitingPub >= 1000) {
+            _enrLastCalWaitingPub = nowCal;
+            const char* phase =
+                (_calibState == EnrCalibState::MEASURING_1M) ? "measure_1m" :
+                (_calibState == EnrCalibState::MEASURING_D)  ? "measure_d"  : "measure_at";
+            char buf[224];
+            snprintf(buf, sizeof(buf),
+                "{\"calib\":\"waiting\",\"phase\":\"%s\","
+                "\"peer_mac\":\"%s\","
+                "\"collected\":%u,\"target\":%u,"
+                "\"elapsed_ms\":%lu,\"timeout_ms\":%lu,"
+                "\"ranging_enabled\":%s,\"points\":%u}",
+                phase, _calibPeerMac,
+                (unsigned)_calibCount, (unsigned)_calibTarget,
+                (unsigned long)(nowCal - _calibStartMs),
+                (unsigned long)ESPNOW_CALIBRATION_TIMEOUT_MS,
+                _rangingEnabled ? "true" : "false",
+                (unsigned)_calibPointCount);
+            mqttPublish("response", String(buf), 1, false);
+        }
+    }
+
     if (!_rangingEnabled) return;
 
     uint32_t now = millis();
@@ -612,6 +666,14 @@ void espnowRangingLoop() {
     doc["node_name"]    = gAppConfig.node_name;
     doc["peer_count"]   = _enrPeers.count();
     doc["cal_entries"]  = gAppConfig.peer_cal_table.count;   // (v0.4.09 / #41.7) per-peer cal coverage
+    // (#89, v0.4.29) Surface the in-flight multi-point buffer count so the
+    // operator can see if a reboot would lose unsaved calibration points.
+    // The buffer itself is RAM-only (lost on reboot) — exposing it lets the
+    // dashboard warn "you have N uncommitted points; commit before
+    // rebooting" without requiring buffer persistence (which adds NVS-write
+    // pressure and complicates the calibration flow).
+    doc["cal_points_buffered"] = _calibPointCount;
+    doc["ranging_enabled"]     = _rangingEnabled;            // (#88) helps diagnose "ranging silently off"
     JsonArray arr = doc["peers"].to<JsonArray>();
 
     _enrPeers.forEach([&arr, globalTxPow, globalPathN](const PeerEntry& p) {
