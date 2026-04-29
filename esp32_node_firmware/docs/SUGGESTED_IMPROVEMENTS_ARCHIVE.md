@@ -20,6 +20,7 @@ of them cheap to bundle in.
    Requires: ST-Link or ESP-Prog debug probe, JTAG pins wired on the dev board
    Benefit:  Step-through debugging via Cortex Debug in VS Code.
    Effort:   ~2h firmware config + hardware provisioning.
+   STATUS: RESOLVED 2026-04-22 — initial-audit closure. Hardware not yet provisioned but the audit-finding scope is closed; promote to a new entry if a stability incident requires JTAG step-through.
 
 3. Reproducible builds                                 (was audit item 21)
    Problem:  FIRMWARE_BUILD_TIMESTAMP in config.h is a literal epoch value
@@ -5657,3 +5658,71 @@ Next steps (operator decision):
           MONITORING_PRACTICE.md)
         - .node-red/settings.js logging section (verify rotation
           config — currently unknown)
+
+
+102. OTA-reboot path doesn't stamp restart_cause reliably
+     DISCOVERED: 2026-04-29 evening daily-health run. Every device's
+     most recent boot announcement showed `boot_reason=software` with
+     `restart_cause=<unknown>` — flagged YELLOW as "SW —
+     uncategorised" by the daily-health script. The boots in question
+     were all the OTA-reboot from v0.4.30 → v0.4.31, so they SHOULD
+     show `restart_cause=ota_reboot` per the v0.4.21 #76 sub-G design.
+
+     Affected devices in the snapshot:
+        ESP32-Alpha    fw=0.4.31  restart_cause=<unknown>
+        ESP32-Bravo    fw=0.4.31  restart_cause=<unknown>
+        ESP32-Charlie  fw=0.4.31  restart_cause=<unknown>
+        ESP32-Delta    fw=0.4.31  restart_cause=<unknown>
+        ESP32-Echo     fw=0.4.31  restart_cause=<unknown>
+        ESP32-Foxtrot  fw=0.4.31  restart_cause=<unknown>
+
+     LIKELY ROOT CAUSE candidates:
+        (a) `RestartCause::set("ota_reboot")` not called before the
+            ESP.restart() in ota.h's success path (line ~593).
+            Quickest hypothesis to verify — grep ota.h for
+            `RestartCause::set` and confirm the call exists with
+            the right tag string.
+        (b) `RestartCause::set` is called but the NVS write doesn't
+            commit before reboot — needs a `delay(50)` between
+            set() and ESP.restart() per the restart_cause.h header
+            usage example.
+        (c) `RestartCause::consume` on the post-OTA boot reads
+            empty because the previous binary's NVS write didn't
+            land — could be an OTA-validation rollback partition
+            issue (low probability).
+        (d) The boot announcement itself isn't including the
+            restart_cause field — formatting bug in mqtt_client.h's
+            anchorSnip composition for boot events.
+
+     INVESTIGATION RECIPE:
+        1. Check ota.h line ~593 (the success path before
+           `ESP.restart()` after `otaValidationArmRollback`):
+              grep -n "RestartCause::set\|ESP\.restart" include/ota.h
+           Verify a call like `RestartCause::set("ota_reboot")` is
+           present BEFORE ESP.restart() in that path. If absent,
+           add it.
+        2. Same check for the OTA failure paths (also rebooting):
+           the failure path may want `restart_cause=ota_failed` or
+           `ota_panic_recovery` depending on the failure reason.
+        3. Verify the next OTA cycle leaves the right value:
+              cmd/ota_check on a known-stale device, watch the post-
+              reboot boot announcement for `restart_cause=ota_reboot`.
+
+     PRIORITY: MEDIUM. Not a stability issue — the OTA itself works.
+     But the missing `restart_cause` annotation defeats the #76
+     sub-G design (correlate every restart with its trigger). Real
+     impact today: every release-day daily-health is YELLOW for
+     ~24 hours until the post-OTA boots roll out of the
+     last_restart_reasons window. Cosmetic but persistent.
+
+     LINKS:
+        - include/ota.h (otaCheckNow's reboot sites — both success
+          and failure paths)
+        - include/restart_cause.h (the NVS persistence wrapper —
+          pattern is documented in the header)
+        - daily-health 2026-04-29 16:20 report (where this surfaced)
+        - #76 sub-G (RESOLVED 2026-04-28 in v0.4.21 — primitive
+          shipped here)
+        - #36 (RESOLVED 2026-04-28 in v0.4.24 — codified
+          monitoring practice that uses restart_cause for
+          categorisation)
