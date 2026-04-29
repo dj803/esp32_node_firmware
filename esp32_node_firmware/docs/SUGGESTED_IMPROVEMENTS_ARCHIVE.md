@@ -5376,6 +5376,16 @@ Next steps (operator decision):
     have ended this incident cleanly. Bundle in the next stability
     release as a high-confidence one-shot win.
 
+    STATUS: RESOLVED 2026-04-29 PM in v0.4.31 — option-(a) SSID probe
+    during the backoff wait shipped in main.cpp's WiFi-disconnected
+    branch. Every WIFI_SSID_PROBE_INTERVAL_MS (default 20 s, in
+    config.h), if the wait has > 5 s remaining, do a synchronous
+    WiFi.scanNetworks() and look for the configured SSID. If found,
+    set _wifiNextAttemptMs = now to fire the reconnect on the same
+    loop iteration. Combined with v0.4.30's schedule compression
+    (option-(c)), this should shrink today's worst-case 16-min stuck
+    window to ~20-25 s post-router-return.
+
 
 99. Status-LED blink patterns are not diagnostic — make them more useful
     DISCOVERED: 2026-04-29 PM during the same router-power-failure recovery
@@ -5434,6 +5444,20 @@ Next steps (operator decision):
        - config.h:428 STATUS_LED_PIN
        - Pairs thematically with #93 (firmware-serial-instrument decision)
          and #88/#89/#87 (#98's "self-document state" cluster from v0.4.29)
+
+    STATUS: RESOLVED 2026-04-29 PM in v0.4.31 — retuned timing constants
+    in include/led.h::_ledTimerCb for visual distinctiveness. The state
+    machine (which already had the right state slots) now produces
+    waveforms that are unmistakable from across the bench:
+       - WIFI_CONNECTING:  200ms ON / 200ms OFF  (2.5 Hz alarm)
+       - WIFI_CONNECTED:   500ms ON / 500ms OFF  (1 Hz moderate)
+       - AP_MODE:          50/50/50/850 ms double-blink-pause
+       - MQTT_CONNECTED:   1900ms ON / 100ms OFF (mostly-on heartbeat)
+       - BOOT, OTA_UPDATE, ERROR, ESPNOW_FLASH, LOCATE: unchanged
+    The original 50ms-pulse-MQTT_CONNECTED looked like a generic blink
+    from a few metres away; "mostly-on with a brief flicker" is the
+    "I'm steadily operational" signal that's clearly different from
+    "I'm trying to reach WiFi (rapid blink)."
 
 
 
@@ -5533,12 +5557,23 @@ Next steps (operator decision):
           verify)
 
 
-     STATUS: PARTIAL FIX SHIPPED 2026-04-29 PM in tools/dev/ota-rollout.sh —
-     items (2) adaptive timeout, (3) skip-already-current,
-     (5) skip-safety-gap-on-last-device, (6) pre-validate broker +
-     manifest. Bench-validated against the v0.4.30 fleet immediately:
-     a no-op rollout to the same target version completed in 14 s
-     instead of 12.5 min. Items (1) phased parallel and (4) persistent
-     heartbeat subscription remain OPEN — they want each other and are
-     best paired in a single bash → python refactor for v0.4.31
-     tooling.
+     STATUS: RESOLVED 2026-04-29 PM in v0.4.31 (tooling). First pass
+     (PARTIAL) shipped earlier today with items (2) adaptive timeout,
+     (3) skip-already-current, (5) skip-safety-gap-on-last-device,
+     (6) pre-validate broker + manifest — bench-validated against the
+     v0.4.30 fleet (no-op rollout 14 s instead of 12.5 min). Second
+     pass shipped with v0.4.31 firmware: items (1) phased parallel
+     rollout (waves of 1 → 2 → 3 → catch-all, configurable via
+     WAVE_SIZES env var) and (4) per-device watcher functions running
+     in parallel via bash background processes (each independent
+     mosquitto_sub for the duration of the wave). Each wave waits for
+     all members to validate before proceeding; failure in any wave
+     pauses with the same operator-action message as before. Item (4)
+     "persistent heartbeat subscription" was implemented as
+     per-watcher subscriptions rather than a single multi-topic
+     subscription with dispatch — simpler and equally effective for
+     up-to-N=10 fleet sizes. Sequential behaviour can be restored
+     via WAVE_SIZES="1" (single-device-per-wave with the catch-all
+     last-entry-reuse making every subsequent wave size 1 too) —
+     same shape as pre-v0.4.31 strict-sequential plus all the
+     first-pass safety improvements.

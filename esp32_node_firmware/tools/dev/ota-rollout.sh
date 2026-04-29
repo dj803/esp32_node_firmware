@@ -194,42 +194,60 @@ for ln in sys.stdin:
     echo "  ${#UUIDS[@]} device(s) need OTA, ${#SKIPPED[@]} already current"
 fi
 
-# ── 2. Per-device rollout ────────────────────────────────────────────────────
-DEVICE_DURATIONS=()  # (#100) per-device wall-clock seconds, for end-of-run summary
-FIRST_OBSERVED_S=0   # adaptive-timeout reference
+# ── 2. Per-device rollout: phased parallel waves (#100 follow-on) ───────────
+#
+# Wave pattern: 1 (canary) → 2 → 3 → all-remaining. The canary proves the
+# binary boots before we pile on; doubling cadence accelerates the tail
+# while keeping a kill-switch at each phase. Override via WAVE_SIZES env
+# (space-separated): WAVE_SIZES="1 6" tools/dev/ota-rollout.sh 0.4.31
+# would do canary then everything-else. WAVE_SIZES="6" disables phasing
+# (single big parallel wave). LEGACY_SEQUENTIAL=1 falls back to the
+# pre-v0.4.31 strict-sequential mode.
+WAVE_SIZES_DEFAULT="1 2 3 100"   # last value catches any remaining
+WAVE_SIZES_ARR=( ${WAVE_SIZES:-$WAVE_SIZES_DEFAULT} )
+FIRST_OBSERVED_S=0   # adaptive-timeout reference; set on first device's success
 
-DEVICE_INDEX=0
-TOTAL_DEVICES=${#UUIDS[@]}
-for UUID in "${UUIDS[@]}"; do
-    DEVICE_INDEX=$((DEVICE_INDEX + 1))
-    echo
-    echo "=== Rolling out to ${UUID:0:8} (${DEVICE_INDEX}/${TOTAL_DEVICES}, timeout ${TIMEOUT_PER_DEVICE_S}s) ==="
-    log_event device_start "{\"uuid\":\"$UUID\",\"timeout_s\":${TIMEOUT_PER_DEVICE_S}}"
-    DEVICE_START_S=$(date +%s)
+# Per-device durations + adaptive-timeout reference are shared state across
+# waves. Files because background subshells can't write back to parent vars.
+DURATIONS_FILE=$(mktemp -t ota-rollout-durs.XXXXXX)
+ADAPT_FILE=$(mktemp -t ota-rollout-adapt.XXXXXX)
+trap "rm -f $DURATIONS_FILE $ADAPT_FILE" EXIT
 
-    # Trigger OTA
-    mosquitto_pub -h "$BROKER" -t "$TOPIC_BASE/$UUID/cmd/ota_check" -m '{}' \
-        || { echo "  publish failed"; log_event publish_fail "\"$UUID\""; continue; }
-    echo "  ota_check triggered, waiting up to ${TIMEOUT_PER_DEVICE_S}s for heartbeat at v${TARGET_VERSION} uptime>${HEALTHY_UPTIME_S}s..."
+# ── watch_device — single-UUID OTA-trigger + heartbeat-validate ─────────────
+# Runs in foreground OR background. Writes one line to the durations file
+# on success: "<uuid_short>=<seconds>s". Returns 0 on healthy, 1 on
+# abnormal/timeout.
+watch_device() {
+    local UUID=$1
+    local TIMEOUT_S=$2
+    local DEVICE_START_S=$(date +%s)
+    log_event device_start "{\"uuid\":\"$UUID\",\"timeout_s\":${TIMEOUT_S}}"
 
-    # Wait for healthy heartbeat
-    DEADLINE=$((DEVICE_START_S + TIMEOUT_PER_DEVICE_S))
-    SUCCESS=false
+    if ! mosquitto_pub -h "$BROKER" -t "$TOPIC_BASE/$UUID/cmd/ota_check" -m '{}' 2>/dev/null; then
+        echo "  [${UUID:0:8}] ✗ publish failed"
+        log_event publish_fail "\"$UUID\""
+        return 1
+    fi
+    echo "  [${UUID:0:8}] ota_check triggered (timeout ${TIMEOUT_S}s)"
 
-    while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-        # (Bug B fix, 2026-04-28) `-R` suppresses retained messages so the
-        # loop only sees LIVE publishes — i.e. status payloads emitted AFTER
-        # we triggered cmd/ota_check above. Without this, a stale retained
-        # boot announcement from before the OTA (e.g. a WDT-class boot from
-        # an earlier outage) tripped the abnormal-boot guard and bailed the
-        # whole rollout, even though the device was already healthy and the
-        # OTA fired cleanly. The retained boot lingers on the broker forever
-        # until overwritten — `-R` lets us ignore it.
-        # `|| true` masks the timeout-no-message exit code (mosquitto_sub
-        # exits non-zero on -W timeout) so set -e doesn't abort the loop.
-        OUT=$(timeout 6 mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/$UUID/status" -R -W 5 -F '%p' 2>/dev/null \
-              | python -c "
+    # (#100 follow-on, v0.4.31) Single long-lived subscribe + python state
+    # machine. The previous version polled with timeout 6 / -W 5 / sleep 5
+    # in a while-loop — that misses 50% of the time window because
+    # heartbeats fire every 60 s and we're only listening for 5 s out of
+    # every 10 s. Single -W $TIMEOUT_S subscribe streams every live
+    # publish through python, which exits as soon as a HEALTHY or
+    # ABNORMAL match fires (closing stdin and dropping the sub).
+    local OUT
+    OUT=$(mosquitto_sub -h "$BROKER" -t "$TOPIC_BASE/$UUID/status" -R -W "$TIMEOUT_S" -F '%p' 2>/dev/null \
+          | python -u -c "
 import sys, json
+# (#100 follow-on bug fix, v0.4.31) Only flag ABNORMAL when event=='boot'
+# AND boot_reason is in the abnormal set AND uptime is fresh (<30 s).
+# Without the event guard, a stale retained boot announcement that
+# leaks through -R (or a future heartbeat schema change) would
+# falsely abort the rollout. Bench-observed during the v0.4.30 →
+# v0.4.31 phased-rollout test on a healthy fleet — fixed by tightening
+# the trigger to a fresh boot event.
 for line in sys.stdin:
     line=line.strip()
     if not line.startswith('{'): continue
@@ -239,66 +257,111 @@ for line in sys.stdin:
     ev=d.get('event','?')
     up=int(d.get('uptime_s',0) or 0)
     br=d.get('boot_reason','-')
-    if br in ('panic','task_wdt','int_wdt','other_wdt','brownout'):
+    if ev=='boot' and br in ('panic','task_wdt','int_wdt','other_wdt','brownout') and up < 30:
         print(f'ABNORMAL {br} v{v}', flush=True); sys.exit(0)
     if ev=='heartbeat' and v=='$TARGET_VERSION' and up>=$HEALTHY_UPTIME_S:
         print(f'HEALTHY upt={up}', flush=True); sys.exit(0)
 " 2>/dev/null || true)
 
-        if echo "$OUT" | grep -q '^HEALTHY'; then
-            DEVICE_DURATION_S=$(( $(date +%s) - DEVICE_START_S ))
-            echo "  ✓ $OUT (took ${DEVICE_DURATION_S}s)"
-            DEVICE_DURATIONS+=( "${UUID:0:8}=${DEVICE_DURATION_S}s" )
-            log_event device_ok "{\"uuid\":\"$UUID\",\"info\":\"$OUT\",\"duration_s\":${DEVICE_DURATION_S}}"
-            SUCCESS=true
-
-            # (#100, 2026-04-29 PM) Adaptive timeout — after the first device
-            # succeeds, tighten subsequent timeouts to ADAPTIVE_FACTOR ×
-            # observed duration (floored at TIMEOUT_FLOOR_S). Healthy fleet
-            # = healthy first device, so 2× the first observation gives
-            # tight feedback on outliers without false-positive trips.
-            if [ "$FIRST_OBSERVED_S" -eq 0 ]; then
-                FIRST_OBSERVED_S=$DEVICE_DURATION_S
-                NEW_TIMEOUT=$(( ADAPTIVE_FACTOR * FIRST_OBSERVED_S ))
-                if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_FLOOR_S" ]; then
-                    NEW_TIMEOUT=$TIMEOUT_FLOOR_S
-                fi
-                if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_PER_DEVICE_S" ]; then
-                    echo "  → adaptive timeout: ${TIMEOUT_PER_DEVICE_S}s → ${NEW_TIMEOUT}s for remaining devices"
-                    log_event adaptive_timeout "{\"old_s\":${TIMEOUT_PER_DEVICE_S},\"new_s\":${NEW_TIMEOUT},\"first_observed_s\":${FIRST_OBSERVED_S}}"
-                    TIMEOUT_PER_DEVICE_S=$NEW_TIMEOUT
-                fi
-            fi
-            break
-        elif echo "$OUT" | grep -q '^ABNORMAL'; then
-            echo "  ✗ $OUT"
-            log_event device_abnormal "{\"uuid\":\"$UUID\",\"info\":\"$OUT\"}"
-            break
+    if echo "$OUT" | grep -q '^HEALTHY'; then
+        local DEVICE_DURATION_S=$(( $(date +%s) - DEVICE_START_S ))
+        echo "  [${UUID:0:8}] ✓ $OUT (took ${DEVICE_DURATION_S}s)"
+        echo "${UUID:0:8}=${DEVICE_DURATION_S}s" >> "$DURATIONS_FILE"
+        log_event device_ok "{\"uuid\":\"$UUID\",\"info\":\"$OUT\",\"duration_s\":${DEVICE_DURATION_S}}"
+        # Update adaptive-timeout reference (best-effort under parallel
+        # workers — if two race here, last write wins, both are valid
+        # observations).
+        if [ ! -s "$ADAPT_FILE" ]; then
+            echo "$DEVICE_DURATION_S" > "$ADAPT_FILE"
         fi
-        sleep 5
+        return 0
+    elif echo "$OUT" | grep -q '^ABNORMAL'; then
+        echo "  [${UUID:0:8}] ✗ $OUT"
+        log_event device_abnormal "{\"uuid\":\"$UUID\",\"info\":\"$OUT\"}"
+        return 1
+    fi
+
+    echo "  [${UUID:0:8}] ✗ TIMEOUT after ${TIMEOUT_S}s"
+    log_event device_timeout "\"$UUID\""
+    return 1
+}
+
+# ── Wave-driven main loop ────────────────────────────────────────────────────
+DEVICE_INDEX=0
+TOTAL_DEVICES=${#UUIDS[@]}
+WAVE_INDEX=0
+
+while [ $DEVICE_INDEX -lt $TOTAL_DEVICES ]; do
+    # Pick wave size — clamp to remaining count
+    if [ $WAVE_INDEX -lt ${#WAVE_SIZES_ARR[@]} ]; then
+        WAVE_SIZE=${WAVE_SIZES_ARR[$WAVE_INDEX]}
+    else
+        WAVE_SIZE=${WAVE_SIZES_ARR[-1]}   # catch-all if more waves needed than configured
+    fi
+    REMAINING=$((TOTAL_DEVICES - DEVICE_INDEX))
+    if [ "$WAVE_SIZE" -gt "$REMAINING" ]; then
+        WAVE_SIZE=$REMAINING
+    fi
+
+    # Apply adaptive timeout if a previous wave already observed one
+    if [ -s "$ADAPT_FILE" ] && [ "$FIRST_OBSERVED_S" -eq 0 ]; then
+        FIRST_OBSERVED_S=$(cat "$ADAPT_FILE")
+        NEW_TIMEOUT=$(( ADAPTIVE_FACTOR * FIRST_OBSERVED_S ))
+        if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_FLOOR_S" ]; then
+            NEW_TIMEOUT=$TIMEOUT_FLOOR_S
+        fi
+        if [ "$NEW_TIMEOUT" -lt "$TIMEOUT_PER_DEVICE_S" ]; then
+            echo "  → adaptive timeout: ${TIMEOUT_PER_DEVICE_S}s → ${NEW_TIMEOUT}s (first observed ${FIRST_OBSERVED_S}s)"
+            log_event adaptive_timeout "{\"old_s\":${TIMEOUT_PER_DEVICE_S},\"new_s\":${NEW_TIMEOUT},\"first_observed_s\":${FIRST_OBSERVED_S}}"
+            TIMEOUT_PER_DEVICE_S=$NEW_TIMEOUT
+        fi
+    fi
+
+    BATCH_END=$((DEVICE_INDEX + WAVE_SIZE))
+    echo
+    echo "=== Wave $((WAVE_INDEX + 1)): ${WAVE_SIZE} device(s) in parallel (${BATCH_END}/${TOTAL_DEVICES}, timeout ${TIMEOUT_PER_DEVICE_S}s) ==="
+    log_event wave_start "{\"wave\":$((WAVE_INDEX+1)),\"size\":${WAVE_SIZE},\"timeout_s\":${TIMEOUT_PER_DEVICE_S}}"
+
+    # Launch this wave in parallel
+    PIDS=()
+    for ((i=DEVICE_INDEX; i < BATCH_END; i++)); do
+        watch_device "${UUIDS[$i]}" "$TIMEOUT_PER_DEVICE_S" &
+        PIDS+=($!)
     done
 
-    if ! $SUCCESS; then
-        echo "  ✗ TIMEOUT or ABNORMAL — pausing rollout."
-        log_event pause "\"$UUID\""
-        echo "Operator action required:"
-        echo "  - Investigate ${UUID:0:8} state"
-        echo "  - Resume by re-running with FLEET_UUIDS='<remaining_uuids>'"
+    # Wait for all in this wave; collect any failures
+    WAVE_FAIL=0
+    for pid in "${PIDS[@]}"; do
+        if ! wait "$pid"; then
+            WAVE_FAIL=$((WAVE_FAIL + 1))
+        fi
+    done
+
+    if [ $WAVE_FAIL -gt 0 ]; then
+        echo
+        echo "=== Wave $((WAVE_INDEX + 1)) had ${WAVE_FAIL} failure(s) — pausing rollout ==="
+        log_event pause "{\"wave\":$((WAVE_INDEX+1)),\"failures\":${WAVE_FAIL}}"
+        echo "Operator action required: investigate failed device(s) above."
+        echo "Resume by setting FLEET_UUIDS='<remaining_uuids>' and re-running."
         exit 2
     fi
 
-    # (#100 #5) Skip safety gap on the LAST device — no "next device" to
-    # protect from broker-side burst, and the gap delays the rollout
-    # complete signal pointlessly. Save 15 s per rollout.
-    if [ "$DEVICE_INDEX" -lt "$TOTAL_DEVICES" ]; then
-        echo "  Safety gap ${SAFETY_GAP_S}s before next device..."
+    DEVICE_INDEX=$BATCH_END
+    WAVE_INDEX=$((WAVE_INDEX + 1))
+
+    # Inter-wave safety gap (skip after the LAST wave)
+    if [ $DEVICE_INDEX -lt $TOTAL_DEVICES ]; then
+        echo "  Inter-wave gap ${SAFETY_GAP_S}s..."
         sleep "$SAFETY_GAP_S"
     fi
 done
 
 ROLLOUT_END_S=$(date +%s)
+: "${ROLLOUT_START_S:=$ROLLOUT_END_S}"
 TOTAL_S=$(( ROLLOUT_END_S - ROLLOUT_START_S ))
+DEVICE_DURATIONS=( $(cat "$DURATIONS_FILE" 2>/dev/null || true) )
 echo
 echo "=== Rollout complete: ${#UUIDS[@]}/${#UUIDS[@]} on v${TARGET_VERSION} in ${TOTAL_S}s ==="
 echo "Per-device durations: ${DEVICE_DURATIONS[*]}"
-log_event complete "{\"count\":${#UUIDS[@]},\"total_s\":${TOTAL_S},\"durations\":\"${DEVICE_DURATIONS[*]}\"}"
+echo "Wave pattern: ${WAVE_SIZES_ARR[*]}"
+log_event complete "{\"count\":${#UUIDS[@]},\"total_s\":${TOTAL_S},\"durations\":\"${DEVICE_DURATIONS[*]}\",\"wave_pattern\":\"${WAVE_SIZES_ARR[*]}\"}"

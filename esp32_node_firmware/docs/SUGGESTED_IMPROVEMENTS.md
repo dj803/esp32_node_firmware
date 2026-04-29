@@ -49,9 +49,8 @@ session-planning; reorder within a group freely.
   (parked 2026-04-28 — #25 needs pioarduino log_printf-wrap fix; #26 needs
    8 MB flash module. Both moved to WONT_DO with revisit triggers.)
 
-### D. Open stability investigations (3) — #78 + #96 SHIPPED in v0.4.28; #97 SHIPPED in v0.4.29; #98 partial in v0.4.30
+### D. Open stability investigations (2) — #78 + #96 SHIPPED in v0.4.28; #97 SHIPPED in v0.4.29; #98 RESOLVED in v0.4.30 + v0.4.31
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure. SOAK RESET 2026-04-28 evening — Phase 2 R1 cascade event added fresh coredumps. NEW DATA 2026-04-29 morning — int_wdt failure mode observed for first time (Delta + Echo) during the overnight power-failure recovery storm. Adds int_wdt to the panic/wdt vocabulary for #46. Soak inconclusive — interrupted by power event)
-  #98   Heartbeat / device-status reconnect needs to be faster after router power failure   (PARTIAL FIX SHIPPED in v0.4.30 — compressed WIFI_BACKOFF_STEPS_MS from saturating at 600s to saturating at 60s. Original schedule fix-option-(c). Followup option-(a) — periodic SSID probe with short-circuit on availability — remains tracked for next stability release. Real-world data point: 4/6 fleet stuck silent for 16+ min post-router-recovery before fix)
   #92   Power-restoration reconnect storm reproduces #78 — 2026-04-29 morning event   (second independent cascade in 24h. Reproduction recipe: bring fleet up steady-state, kill the AP for 30+ s, restore — fleet-wide cascade follows within ~30 s of AP recovery. REFINED 2026-04-29 morning: cold-swapping 3 devices from battery to mains DID NOT cascade — confirms trigger is specifically synchronized fleet-wide WiFi loss, NOT individual device power events. Bug lives in shared-state / contention paths (lwIP PCB allocator, AsyncTCP event-queue dispatch, WiFi driver TX cleanup) — anywhere multiple connections converge on shared mutable state. Solo reconnects thread the needle without hitting it. Bench-debuggable: attach serial to Bravo or Delta before the next AP cycle. Battery does NOT help. Calibration NVS persistence confirmed across cascade)
 
 ### E. CI / security gates (0)
@@ -68,13 +67,11 @@ session-planning; reorder within a group freely.
   #93   Production firmware is SERIAL-SILENT — decide whether to instrument   (2026-04-29 morning serial captures of Charlie + Alpha both produced 0 bytes during steady-state. Decision required: status quo (A), periodic heartbeat-to-serial (B, recommended), canary-only watermark prints (C), or on-demand cmd/diag/serial_dump (D, recommended bundled with B). Theme alignment with v0.4.29 ranging UX bundle — "make firmware self-document its state". Cost-benefit cheap; impact is on diagnostic ergonomics not stability)
   #94   ESP-NOW reinit on WiFi reconnect + LED state-machine MQTT_LOST event   (PATCHED + SHIPPED in v0.4.27 — fleet flashed 2026-04-29 morning. Targets 2 distinct bugs surfaced by bench-debug AP-cycle session: (a) silent ESP-NOW driver breakage post-WiFi-reconnect, (b) LED state-machine stuck on MQTT_HEALTHY when MQTT drops while WiFi up. Open until 24h+ field-soak validation surfaces no regression)
 
-### H. LED / visual diagnostics (1) — new group filed 2026-04-29 PM
-  #99   Status-LED blink patterns are not diagnostic — make them more useful   (filed 2026-04-29 PM; same incident as #98 — all 6 devices had heartbeat blink even when 4 were MQTT-stuck. Proposed: distinct patterns for boot/pre-WiFi (10Hz), WiFi-up-MQTT-down (1Hz), MQTT_HEALTHY (slow breathing), AP_MODE (double-blink). led.h already has the state slots — just need distinct waveforms. MEDIUM priority; pairs with #98 "self-document state" theme)
+### H. LED / visual diagnostics (0) — #99 RESOLVED in v0.4.31
 
-### I. Tooling speed / ergonomics (1) — new group filed 2026-04-29 PM
-  #100  ota-rollout.sh — speed up beyond adaptive timeout                    (PARTIAL FIX SHIPPED 2026-04-29 PM — adaptive timeout (#2), skip already-up-to-date devices (#3), pre-validate broker+manifest (#6), skip safety gap on last device (#5 partial). Test on v0.4.30 fleet went from 12.5 min → 14 s for a no-op rollout. REMAINING: phased parallel rollout (#1, biggest theoretical win — 1→2→3 wave pattern from operator suggestion) + persistent heartbeat subscription (#4). Bundle for v0.4.31 tooling release. MEDIUM priority)
+### I. Tooling speed / ergonomics (0) — #100 RESOLVED in v0.4.31
 
-  Total open: 27  (A6 + B9 + C0 + D3 + E0 + F1 + G6 + H1 + I1) — net delta 2026-04-29 PM: -5 from v0.4.29 (#87/#88/#89/#95/#97 RESOLVED), +3 from incidents (#98 D, #99 H, #100 I), #98 + #100 partial-fixed in v0.4.30 + tooling. Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+  Total open: 24  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0) — net delta 2026-04-29: v0.4.29 -5 (#87/#88/#89/#95/#97), v0.4.30 closes #98 partial (compressed schedule), v0.4.31 closes #98 fully (SSID probe) + #99 (LED patterns) + #100 (phased parallel + adaptive timeout). +1 net from incidents (#92, already in D), +0 net from session — three releases shipped today. Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
 
   Phase 2 R1 verification 2026-04-28 evening — outcome:
     Goal was no-flash verification of #47 / #39 against the operator's
@@ -188,4 +185,8 @@ session-planning; reorder within a group freely.
   #95   PIO upload hangs with UnicodeEncodeError on Windows cp1252 console (resolved 2026-04-29 in v0.4.29 — tools/dev/pio-utf8.sh wrapper + CLAUDE.md note; full text in archive)
   #97   Auto-OTA-during-cascade-recovery gate                              (resolved 2026-04-29 in v0.4.29 — otaCheckNow gates on mqttGetLastDisconnectMs with OTA_CASCADE_QUIET_MS = 300_000 ms; full text in archive)
 
-  Total resolved: 61
+  #98   Heartbeat / device-status reconnect needs to be faster after router power failure  (resolved 2026-04-29 in v0.4.30 partial schedule compression + v0.4.31 SSID probe option-(a); full text in archive)
+  #99   Status-LED blink patterns are not diagnostic — make them more useful  (resolved 2026-04-29 in v0.4.31 — retuned timing constants in led.h for visual contrast; full text in archive)
+  #100  ota-rollout.sh — speed up beyond adaptive timeout                  (resolved 2026-04-29 in v0.4.31 tooling — phased parallel rollout + adaptive timeout + skip-already-current + pre-validate broker; full text in archive)
+
+  Total resolved: 64

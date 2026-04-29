@@ -2,11 +2,59 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-29 evening (post-v0.4.29 ranging UX + auto-OTA-recovery bundle).
+Last updated: 2026-04-29 evening (post-v0.4.31 — three releases shipped today across the
+v0.4.27 → v0.4.31 range, including the v0.4.30 hotfix and the v0.4.31 #98/#99/#100 bundle).
 
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.31 — DONE (shipped 2026-04-29 PM — #98 follow-up + #99 + #100 follow-on)
+
+Three improvements bundled after a real-world router-power-failure
+recovery this afternoon exposed the gaps:
+
+- **#98 RESOLVED** (option-(a) SSID probe). main.cpp's WiFi-disconnected
+  branch now does a synchronous `WiFi.scanNetworks()` every
+  `WIFI_SSID_PROBE_INTERVAL_MS` (default 20 s) during the backoff
+  wait — if the configured SSID is visible, sets
+  `_wifiNextAttemptMs = millis()` to short-circuit the wait and
+  fire the reconnect on the next loop iteration. Combined with
+  v0.4.30's schedule compression, today's worst-case 16-min stuck
+  window collapses to ~20-25 s post-router-return.
+- **#99 RESOLVED**. Retuned timing constants in `include/led.h`
+  for visual distinctiveness from across the bench:
+    - WIFI_CONNECTING:  200 ms ON / 200 ms OFF (2.5 Hz alarm)
+    - WIFI_CONNECTED:   500 ms ON / 500 ms OFF (1 Hz moderate)
+    - AP_MODE:          50/50/50/850 ms double-blink-pause
+    - MQTT_CONNECTED:   1900 ms ON / 100 ms OFF (mostly-on heartbeat)
+  The state machine already had the right state slots — this
+  release just made the patterns unmistakable from a few metres
+  away. Pairs naturally with #98: today's 4 stuck devices were
+  visually identical to the 2 healthy ones; under v0.4.31 the
+  difference is "fast blinking" vs "steady glow."
+- **#100 RESOLVED** (phased parallel + earlier-shipped first pass).
+  `tools/dev/ota-rollout.sh` now does waves of 1 → 2 → 3 → all
+  remaining, with each wave running its members in parallel via
+  bash background processes. Adaptive timeout, skip-already-current,
+  pre-validate broker + manifest, and skip-safety-gap-on-last
+  (all from earlier today's first pass) carry forward. Theoretical
+  best case: 6-device fleet in ~3 phases × 60 s = ~3 min wall
+  clock vs today's 12.5 min sequential. Bench-validated against
+  the v0.4.30 fleet during this commit.
+
+Build: esp32dev clean (1647 KB flash, no size delta vs v0.4.30 —
+LED constants and SSID-probe code are essentially free), 105/105
+native tests pass.
+
+### v0.4.30 — DONE (shipped 2026-04-29 PM — #98 partial: WiFi backoff schedule compression)
+
+After this afternoon's router+power outage recovery showed 4/6 fleet
+devices stuck silent for 16+ min, compressed `WIFI_BACKOFF_STEPS_MS`
+from saturating at 600 s to saturating at 60 s. Same 1-2-4-8 ramp at
+the head, fixed-60 s tier instead of fixed-10-min. WIFI_OUTAGE_RESTART_MAX
+safety net unchanged. Followup option-(a) SSID probe shipped immediately
+in v0.4.31.
 
 ### v0.4.29 — DONE (shipped 2026-04-29 PM — ranging UX + auto-OTA-recovery + PIO wrapper bundle)
 

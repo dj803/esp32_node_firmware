@@ -743,6 +743,52 @@ void loop() {
                 ledSetPattern(LedPattern::WIFI_CONNECTING);
             }
 
+            // (#98 follow-up option-(a), v0.4.31) SSID probe during the
+            // backoff wait. If the configured SSID shows up before
+            // _wifiNextAttemptMs fires, short-circuit the wait so we
+            // reconnect within seconds of router-return instead of
+            // sitting through the rest of the schedule. Closes the
+            // 2026-04-29 PM real-world gap where 4/6 fleet devices were
+            // stuck silent for 16+ min after a brief router-power
+            // outage even though the router was already back up.
+            //
+            // Synchronous scan (~2 s blocking on loop) is fine here —
+            // we're in a backoff window with no MQTT traffic to
+            // process. ESP-NOW beacons may miss during the scan but
+            // the same constraint applies to AP-mode SSID scans
+            // already in production.
+            {
+                static uint32_t _wifiSsidProbeNextMs = 0;
+                uint32_t nowMs = millis();
+                uint32_t remainMs = (_wifiNextAttemptMs > nowMs)
+                                   ? (_wifiNextAttemptMs - nowMs) : 0;
+                // Only probe if we have > 5 s left in the wait (no point
+                // scanning if we'd attempt anyway in a moment) AND the
+                // probe-interval timer has elapsed.
+                if (remainMs > 5000 && nowMs >= _wifiSsidProbeNextMs) {
+                    _wifiSsidProbeNextMs = nowMs + WIFI_SSID_PROBE_INTERVAL_MS;
+                    LOG_I("Loop", "WiFi SSID probe during backoff (%u ms remaining)",
+                          (unsigned)remainMs);
+                    // false=sync, false=show_hidden, false=passive, 100ms per chan
+                    int n = WiFi.scanNetworks(false, false, false, 100);
+                    bool found = false;
+                    if (n > 0) {
+                        for (int i = 0; i < n; i++) {
+                            if (WiFi.SSID(i) == activeBundle.wifi_ssid) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    WiFi.scanDelete();
+                    if (found) {
+                        LOG_I("Loop", "SSID '%s' visible — short-circuiting backoff",
+                              activeBundle.wifi_ssid);
+                        _wifiNextAttemptMs = nowMs;   // fire attempt below
+                    }
+                }
+            }
+
             if (millis() < _wifiNextAttemptMs) return;   // still backing off
 
             // Fire an attempt. Schedule the next one at the current backoff

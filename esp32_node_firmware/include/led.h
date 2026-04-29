@@ -14,14 +14,26 @@
 // PATTERNS (most → least alarming):
 //   ERROR          — 3 × 100 ms flash, 700 ms pause — unrecoverable failure
 //   OTA_UPDATE     — solid ON — firmware being written to flash
-//   AP_MODE        — 100 ms / 100 ms rapid blink — config portal active
-//   WIFI_CONNECTING — 500 ms / 500 ms slow blink — waiting for Wi-Fi / MQTT
-//   WIFI_CONNECTED  — 2000 ms / 2000 ms very slow blink — Wi-Fi up, no MQTT yet
-//   MQTT_CONNECTED  — 50 ms pulse / 2000 ms off — normal operational heartbeat
+//   AP_MODE        — double-blink (50/50/50/850 ms) — config portal active
+//   WIFI_CONNECTING — 200 ms / 200 ms rapid blink — alarm: can't reach WiFi
+//   WIFI_CONNECTED  — 500 ms / 500 ms moderate blink — WiFi up, no MQTT yet
+//   MQTT_CONNECTED  — mostly-on with 100 ms heartbeat-blip — operational steady
 //   BOOT            — solid ON — early initialisation
 //   ESPNOW_FLASH    — 40 ms overlay then revert — ESP-NOW packet sent/received
 //   LOCATE          — 10 × 200 ms ON/OFF (4 s) then revert — physical locate flash
 //   OFF             — always off
+//
+// (#99, v0.4.31) Patterns retuned for visual distinctiveness from across the
+// bench. Original timings were time-correct but too similar visually — the
+// 50 ms MQTT_CONNECTED pulse looked like the 500 ms WIFI_CONNECTING blink
+// from a few metres away. The 2026-04-29 PM router-power-failure incident
+// found 4/6 devices stuck silent for 16+ min (#98) but the operator
+// couldn't tell them apart from the 2 healthy ones because all six LEDs
+// "looked like blinking." New mapping:
+//   - WIFI_CONNECTING 5Hz alarm vs MQTT_CONNECTED mostly-on heartbeat —
+//     unmistakably different: "blinking fast" vs "steady glow"
+//   - AP_MODE double-blink-pause: distinct from any other pattern
+//   - WIFI_CONNECTED 1Hz: intermediate "WiFi up but waiting on MQTT"
 // =============================================================================
 
 enum class LedPattern : uint8_t {
@@ -57,19 +69,34 @@ static void _ledTimerCb(void*) {
             break;
 
         case LedPattern::WIFI_CONNECTING:
-            on = (tick % 100) < 50;     // 500 ms ON / 500 ms OFF  (100-tick cycle)
+            // (#99, v0.4.31) 200 ms ON / 200 ms OFF — 2.5 Hz rapid alarm.
+            // Visually: "fast blinking, something's wrong"
+            on = (tick % 40) < 20;
             break;
 
         case LedPattern::WIFI_CONNECTED:
-            on = (tick % 400) < 200;    // 2000 ms ON / 2000 ms OFF (400-tick cycle)
+            // (#99, v0.4.31) 500 ms ON / 500 ms OFF — 1 Hz moderate blink.
+            // Intermediate state: WiFi up, waiting on MQTT.
+            on = (tick % 100) < 50;
             break;
 
         case LedPattern::AP_MODE:
-            on = (tick % 20) < 10;      // 100 ms ON / 100 ms OFF  (20-tick cycle)
+            // (#99, v0.4.31) double-blink-pause: ON 50 ms / OFF 50 ms /
+            // ON 50 ms / OFF 850 ms. 1000 ms cycle. Visually unmistakable
+            // — two quick pulses then a long dark gap. Says "operator,
+            // come configure me" without being confused for any other state.
+            {
+                uint32_t t = tick % 100;   // 1000 ms cycle
+                on = (t < 5) || (t >= 10 && t < 15);
+            }
             break;
 
         case LedPattern::MQTT_CONNECTED:
-            on = (tick % 205) < 5;      // 50 ms ON / 2000 ms OFF  (205-tick cycle)
+            // (#99, v0.4.31) 1900 ms ON / 100 ms OFF — mostly-on with a
+            // brief heartbeat-blip every 2 seconds. Visually: "steady
+            // glow with a pulse" — clearly distinct from any blink
+            // pattern. Says "I'm healthy and processing".
+            on = (tick % 200) >= 10;     // off for first 100ms of each 2s cycle
             break;
 
         case LedPattern::ERROR:

@@ -42,7 +42,7 @@
 // build to allow operators to distinguish iterations. CI builds get the tag
 // injected via FIRMWARE_VERSION_OVERRIDE = "0.4.20" (no 4th component) so a
 // release is always the cleaner 3-component form.
-#define FIRMWARE_VERSION           "0.4.30.0"
+#define FIRMWARE_VERSION           "0.4.31.0"
 #endif
 #define FIRMWARE_BUILD_TIMESTAMP   1777291898ULL   // 2026-04-27 (v0.4.14)
 
@@ -102,6 +102,17 @@
 // DEVICE_RESTART_MAX. Router blips no longer burn through the generic counter;
 // only firmware-panic / MQTT-unrecoverable paths count toward DEVICE_RESTART_MAX.
 //
+// (#98 follow-up option-(a), v0.4.31) During the backoff wait, periodically
+// scan for the configured SSID. If it shows up before the backoff timer
+// fires, short-circuit the wait and trigger an immediate reconnect. Closes
+// the "router was back at minute 1 but device waited until minute N" gap
+// that today's compression of the schedule (option-(c) below) only
+// partially addressed. Probe interval is conservative (20 s) to avoid
+// burning radio time on devices in extended outages — the scan itself
+// takes ~2 s synchronously and blocks loop() during, but during a backoff
+// wait there's nothing else competing for loop time anyway.
+#define WIFI_SSID_PROBE_INTERVAL_MS  20000
+
 // (#98, v0.4.30) Schedule compressed from
 //   { 15s, 30s, 60s, 120s, 300s, 600s }   (saturating at 10 min)
 // to
