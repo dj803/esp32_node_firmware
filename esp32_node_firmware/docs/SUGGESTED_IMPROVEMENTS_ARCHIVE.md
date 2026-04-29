@@ -27,10 +27,12 @@ of them cheap to bundle in.
              that changes per release, making binary output non-deterministic.
    Fix:      Replace with SOURCE_DATE_EPOCH env var in CI, or drop the field
              entirely and rely on the git SHA embedded in FIRMWARE_VERSION.
+   STATUS: RESOLVED 2026-04-22 — initial-audit closure. The field is currently still a literal epoch but is overwritten by CI on every release tag, so per-release binaries ARE deterministic. Pure-local-build determinism remains a nice-to-have, not done.
 
 4. Dependency SBOM + supply-chain scan                 (was audit item 22)
    Add Dependabot (built-in) and/or Trivy against the platformio.ini lib_deps
    list. Alerts on CVEs in AsyncTCP, async-mqtt-client, NimBLE-Arduino, etc.
+   STATUS: RESOLVED 2026-04-22 — initial-audit closure. Trivy + Dependabot judged low-priority for the trusted-LAN threat model (per WONT_DO.md). Re-open if deployment moves off the private LAN.
 
 5. Local PlatformIO validation                 (addressed 2026-04-22)
    No local `pio run` / `pio test` was ever run during the v0.3.03 migration —
@@ -189,25 +191,30 @@ LED CONTROL — v0.3.18 follow-ups
     control would need a new cmd/led "pixels" schema, a larger event
     payload (or separate topic), and a rework of the Core 1 renderer.
     Ship once a real use case appears (e.g. segment-of-8 progress bar).
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — cmd/led pixel + pixels handlers + LedState::MQTT_PIXELS where renderer skips fill_solid; _leds[] is the source of truth. Auto-commit on cmd/led pixel for one-shot UX.
 
 20. Scene / preset save-to-device
     v0.3.18 presets live only in the Node-RED ui-template. Adding an NVS
     slot on the device would let the MQTT-less AP portal preview a scene
     too, and survive a Node-RED reinstall. Small feature — ~1 day.
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — NVS namespace led_scenes with up to 8 named slots; cmd/led scene_save / scene_load / scene_delete / scene_list. Captures _leds[] + brightness, restores on demand.
 
 21. Group / broadcast LED commands
     UI targets one device at a time. Support a "send to all readers" or
     multi-select — either client-side fan-out in Node-RED or a broadcast
     MQTT topic the firmware subscribes to (mirrors broadcast/cred_rotate).
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — Enterprise/Site/broadcast/led topic mirrors cmd/led semantics. Subscribed in onMqttConnect, routed through handleLedCommand.
 
 22. Scheduled / time-of-day LED automation
     e.g. warm-white at dawn, red-dim at night. Out of scope for v0.3.18 —
     user can wire Node-RED inject nodes themselves if needed.
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — led_schedule.h with NTP-synced minute-poll, 8 NVS-persisted slots, action-as-cmd/led-JSON re-fed at fire time. cmd/led sched_add / sched_remove / sched_list / sched_clear.
 
 23. OTA / heartbeat LED override from Node-RED
     Today only LOCATE can overlay the status LED from outside. A generic
     "force pattern X for Y seconds" command would let Node-RED show
     alarm patterns for app-level events (door left open, sensor fault).
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — cmd/led "override" with auto-revert via _ledOverrideEndMs. New "alarm" + "warn" anim names. duration_ms 0 = untimed.
 
 ────────────────────────────────────────────────────────────────────────────────
 OTA — v0.3.28 follow-ups                                   (flagged 2026-04-22)
@@ -441,6 +448,7 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               for long enough to need explicit feeds).
     PRIORITY: Low — no observed field issue outside OTA, but the
               architectural risk shape is identical.
+    STATUS: RESOLVED 2026-04-28 in v0.4.23 — read-only sweep documented in docs/SESSIONS/WDT_AUDIT_2026_04_28.md. TWDT_POLICY.md captures the per-task subscription model. Specific per-site fixes ship as called out by the audit; no panic regressions attributable to TWDT in fleet history since.
 
 30. AsyncTCP fork swap (marvinroger → mathieucarbou)
     Mathieucarbou's maintained fork has known leak fixes and is what
@@ -461,6 +469,7 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     to Core 1 + RFID to Core 1 frees Core 0 for network. Small change
     but RFID polling timing is sensitive — needs a careful smoke test.
     PRIORITY: Low — would help WiFi/BLE jitter under heavy LED render.
+    STATUS: RESOLVED 2026-04-28 in v0.4.26 — verified arduino-esp32 v3.x puts loopTask + RFID on Core 1 via CONFIG_ARDUINO_RUNNING_CORE=1; ws2812Task explicitly pinned Core 1; WiFi/AsyncTCP stay Core 0. The original concern was a v2.x default that no longer applies after the framework upgrade.
 
 32. Heap-headroom gate at boot for each subsystem
     STATUS: RESOLVED 2026-04-28 — `heapGateOk(freeMin, blockMin, tag)`
@@ -1285,6 +1294,7 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               cite this). Medium for separating the RFID coil from the
               WROOM antenna in any v2 hardware design — that's the cheap
               hardware fix that recovers reciprocity.
+    STATUS: RESOLVED 2026-04-25 — documented finding. Findings codified in docs/Operator/INSTALL_GUIDE.md and feed downstream into #37 (asymmetry root-cause ranking) and #90 (orientation quantification). v2 hardware redesign (separate RFID coil from WROOM antenna) tracked under v0.5.0+ scope.
 
 40. Operator install guide — ESP32-WROOM antenna orientation
     OBSERVATION (2026-04-25):  During calibration walk-through a tx_power_dbm
@@ -1473,6 +1483,8 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
     version bumps should keep this literal in sync with the next
     release tag (e.g. when bumping to v0.4.11, set fallback to
     "0.4.11-dev"). Documented inline in config.h.
+
+    STATUS: RESOLVED 2026-04-25 in v0.4.10 — fallback literal now carries an explicit dev suffix. Subsequently superseded 2026-04-27 by #80's 4-component dev versioning (e.g. "0.4.20.0" sorts older than "0.4.20"); the original "-dev" string-suffix approach was replaced because semverIsNewer's lexicographic comparator broke on it. Both fixes are tracked here as a closure pair.
 
 44. Addressable LED status colors (green/yellow/red) not lighting
     STATUS: RESOLVED 2026-04-27 in v0.4.13 via deferred-flag pattern.
@@ -1925,6 +1937,8 @@ These items are the architectural follow-ups that need a v0.4.x cycle:
               truth. Root cause (NVS partial-wipe path) still open;
               targeted fix deferred to v0.5.0 (#48 dependency).
 
+    STATUS: RESOLVED 2026-04-28 in v0.4.23 audit — root cause identified as RNG-pre-WiFi pseudo-random determinism (full audit: docs/SESSIONS/UUID_DRIFT_AUDIT_2026_04_28.md). Targeted fix (`bootloader_random_enable` bookend before any RNG use) bundles with v0.5.0 alongside Hall ADC integration. Visibility piece from v0.4.11 retained.
+
 49. Bootstrap protocol does not propagate OTA URL to new siblings
     OBSERVATION (2026-04-25, during v0.4.10 fleet OTA):  Delta serial
     log captured during MQTT-triggered OTA shows:
@@ -2203,6 +2217,8 @@ with an empty buffer. CRITICAL fix path:
   - Consider migrating UUID storage to the same namespace as
     credentials (esp32cred) to eliminate the multi-namespace race.
 
+STATUS: RESOLVED 2026-04-25 — was DTR-induced second-boot, not an erase-flash bug. Confirmed 2026-04-27 against the v0.4.10 fleet: PySerial's default DTR-on-open RESETS the ESP32, so opening serial right after a `write-flash` captures the SECOND boot, not the first. The "NVS not wiped" symptom was actually "we never observed the first boot." Capture-truly-first-boot recipe documented in CLAUDE.md "Capturing fresh-device first boot".
+
 
 51. v0.4.10 stability regression — suspected LED MQTT_HEALTHY hooks
     OBSERVATION (2026-04-26 morning daily-health, RED status):
@@ -2453,6 +2469,8 @@ with an empty buffer. CRITICAL fix path:
 
     PRIORITY: Low. Bundle with #53 work — same heartbeat payload
               extension.
+
+    STATUS: RESOLVED 2026-04-28 in v0.4.23 — `mqtt_disconnects` cumulative counter shipped in the heartbeat JSON, alongside `mqtt_last_disconnect` (enum value, 0xFF until first drop). Validated end-to-end during v0.4.23 chaos suite — Bravo accumulated 3 disconnects across M1+M2+M3.
 
 56. Re-implement MQTT_HEALTHY safely via deferred-flag pattern
     OBSERVATION (2026-04-26 audit + #51 Phase A in progress):  The
@@ -2725,6 +2743,7 @@ Phase D — Developer experience
               by scanning flows.json for "type" fields prefixed with custom module
               names.
     PRIORITY: Low. Only matters at second-machine setup time.
+    STATUS: RESOLVED 2026-04-26 — audit-finding closure. Single-machine deployment so the dep-list gap is harmless today; promote to action when second-machine setup is actually attempted.
 
 # ── #51 UPDATE 2026-04-26 mid-day — Phase A INCOMPLETE ─────────────────
 Phase A's hypothesis (LED hooks alone cause the crashes) is REFUTED:
@@ -5694,19 +5713,29 @@ Next steps (operator decision):
             restart_cause field — formatting bug in mqtt_client.h's
             anchorSnip composition for boot events.
 
-     INVESTIGATION RECIPE:
-        1. Check ota.h line ~593 (the success path before
-           `ESP.restart()` after `otaValidationArmRollback`):
-              grep -n "RestartCause::set\|ESP\.restart" include/ota.h
-           Verify a call like `RestartCause::set("ota_reboot")` is
-           present BEFORE ESP.restart() in that path. If absent,
-           add it.
-        2. Same check for the OTA failure paths (also rebooting):
-           the failure path may want `restart_cause=ota_failed` or
-           `ota_panic_recovery` depending on the failure reason.
-        3. Verify the next OTA cycle leaves the right value:
-              cmd/ota_check on a known-stale device, watch the post-
-              reboot boot announcement for `restart_cause=ota_reboot`.
+     CONFIRMED 2026-04-29 evening (read-only investigation during
+     soak window): hypothesis (a) is the cause. `grep -n
+     "RestartCause::set\|ESP\.restart" include/ota.h` returns 6
+     ESP.restart() sites and ZERO RestartCause::set() calls:
+
+        line 80   _otaProgressTimeout()         needs "ota_progress_timeout"
+        line 541  heap-low pre-flight gate      needs "ota_preflight_heap_low"
+        line 606  binary URL extraction failed  needs "ota_manifest_failure"
+        line 626  success path after flash      needs "ota_reboot"   ← v0.4.31 affected boots
+        line 645  flash failure path            needs "ota_flash_failed"
+
+     PROPOSED FIX (don't ship during soak — apply tomorrow morning
+     after /morning-close):
+
+        For each ESP.restart() site in ota.h, add the matching
+        RestartCause::set("...") call immediately before the
+        delay(N) (the existing delay covers the NVS commit time per
+        restart_cause.h's usage example).
+
+        Test: bench-flash to one device, trigger cmd/ota_check on a
+        version it can OTA up to (or use SKIP_VERSIONCHECK to force
+        re-OTA on the current version), watch the post-reboot boot
+        announcement for `restart_cause:"ota_reboot"`.
 
      PRIORITY: MEDIUM. Not a stability issue — the OTA itself works.
      But the missing `restart_cause` annotation defeats the #76

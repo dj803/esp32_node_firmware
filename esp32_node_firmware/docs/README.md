@@ -4,7 +4,7 @@ Layout grouped by lifecycle (not by topic). See
 [TRACKING_DOC_CONVENTION.md](TRACKING_DOC_CONVENTION.md) for the
 underlying convention.
 
-Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
+Last sweep: 2026-04-29 (post-v0.4.31; introduced `Operator/` folder for field-facing reference).
 
 ## Active reference (foundational, read top-to-bottom)
 
@@ -26,15 +26,10 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
   conventions, command formats, status codes.
 - [sleep.md](sleep.md) — modem-sleep / deep-sleep wake-up flow.
 
-## Operational guides
+## Operational guides (engineer-facing)
 
 - [AUTONOMOUS_PROMPT_TEMPLATE.md](AUTONOMOUS_PROMPT_TEMPLATE.md) — how
   to write a multi-hour AFK prompt for the agent.
-- [CANARY_OTA.md](CANARY_OTA.md) — canary-then-fleet OTA pattern. Codifies
-  the "Charlie soaks v0.4.20.0" practice. Tracks #35.
-- [MONITORING_PRACTICE.md](MONITORING_PRACTICE.md) — heartbeat / boot-reason
-  monitoring practice (daily, live, active layers + `#84`
-  verify-after-action cadence). Tracks #36.
 - [COREDUMP_DECODE.md](COREDUMP_DECODE.md) — runbook for decoding
   `/diag/coredump` backtraces with `xtensa-esp32-elf-addr2line`
   (worked examples: #46, #78).
@@ -44,6 +39,39 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
   / Tier 2 tooling roadmap.
 - [TRACKING_DOC_CONVENTION.md](TRACKING_DOC_CONVENTION.md) — meta-doc
   on managing tracking docs.
+
+## Operator-facing reference (`Operator/`)
+
+Field- and bench-facing docs for "what do I do when…" questions live
+in [`Operator/`](Operator/README.md). Engineer-facing docs (above)
+stay in `docs/`; the operator docs link out to them when deeper
+detail is needed. See [`Operator/README.md`](Operator/README.md) for
+the full index. Quick pointers:
+
+- [Operator/INSTALL_GUIDE.md](Operator/INSTALL_GUIDE.md) — antenna +
+  power layout rules of thumb (was `OPERATOR_INSTALL_GUIDE.md`; tracks #40).
+- [Operator/HARDWARE_WIRING.md](Operator/HARDWARE_WIRING.md) — adding
+  expansion modules (4x4 NeoPixel matrix, 2-ch relay) to a breakout.
+- [Operator/AP_MODE_SETUP.md](Operator/AP_MODE_SETUP.md) — first-boot
+  bootstrap walkthrough.
+- [Operator/FLEET_OPS.md](Operator/FLEET_OPS.md) — daily-driver
+  one-liners (fleet snapshot, OTA-rollout, broker log, blip).
+- [Operator/MONITORING_PRACTICE.md](Operator/MONITORING_PRACTICE.md) —
+  heartbeat / boot-reason monitoring practice (was top-level; tracks #36).
+- [Operator/CANARY_OTA.md](Operator/CANARY_OTA.md) — canary-then-fleet
+  OTA pattern (was top-level; tracks #35).
+- [Operator/TROUBLESHOOTING.md](Operator/TROUBLESHOOTING.md) — symptom
+  → action playbook.
+- [Operator/ABNORMAL_REBOOTS.md](Operator/ABNORMAL_REBOOTS.md) —
+  boot-reason triage (operator version of `ESP32_FAILURE_MODES.md`).
+- [Operator/MQTT_COMMAND_REFERENCE.md](Operator/MQTT_COMMAND_REFERENCE.md) —
+  every `cmd/*` topic with payload examples.
+- [Operator/DIAG_TOPICS.md](Operator/DIAG_TOPICS.md) — `/status`,
+  `/diag/coredump`, `/espnow`, `/response` payload reference.
+- [Operator/LED_REFERENCE.md](Operator/LED_REFERENCE.md) — firmware-
+  driven onboard LED + WS2812 patterns.
+- [Operator/LED_COMMANDS.md](Operator/LED_COMMANDS.md) — operator-
+  driven WS2812 schema (was top-level; cmd/led API).
 
 ## Plans & roadmap
 
@@ -61,18 +89,14 @@ Last sweep: 2026-04-28 (post-v0.4.23 fleet OTA).
 - [SUGGESTED_IMPROVEMENTS_ARCHIVE.md](SUGGESTED_IMPROVEMENTS_ARCHIVE.md)
   — every entry's full body, append-only.
 - [WONT_DO.md](WONT_DO.md) — intentional non-actions with rationale.
-- [OPERATOR_INSTALL_GUIDE.md](OPERATOR_INSTALL_GUIDE.md) — antenna +
-  power layout rules of thumb derived from the 10-config RF sweep.
-  Tracks #40; supersedes ad-hoc notes once field-validated.
 - [TOPIC_VERSIONING_DESIGN.md](TOPIC_VERSIONING_DESIGN.md) — design
   proposal for versioned MQTT topic prefixes (#33). Not yet
   implemented; ship trigger is fleet > 10 devices, first breaking
   schema change, or v1.0 firmware release.
-- [LED_COMMANDS.md](LED_COMMANDS.md) — single-source operator
-  reference for every cmd/led payload (color, override, pixels,
-  scenes, schedules, broadcasts). Captured 2026-04-28 against
-  v0.4.26 after the LED feature bundle (#19/#20/#21/#22/#23/#31)
-  shipped.
+
+(Operator-facing reference docs that used to live here —
+`OPERATOR_INSTALL_GUIDE.md`, `LED_COMMANDS.md` — now live under
+[`Operator/`](Operator/README.md). See the section above.)
 
 ## `SESSIONS/` — point-in-time reports
 
