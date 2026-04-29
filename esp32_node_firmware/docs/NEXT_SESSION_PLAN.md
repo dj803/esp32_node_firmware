@@ -1,146 +1,108 @@
 # Next session plan
 
-Refreshed 2026-04-29 evening after FOUR releases shipped today
-(v0.4.27 → v0.4.28 → v0.4.29 → v0.4.30) and a real-world router-
-power-failure recovery incident that surfaced #98 (slow reconnect)
-and #99 (LED patterns).
+Refreshed 2026-04-29 evening at session close. Four releases shipped
+today (v0.4.27 morning + v0.4.28/v0.4.29/v0.4.30/v0.4.31 PM). Operator-
+facing docs folder (`docs/Operator/`) live with 13 docs. Soak deferred
+to 20:00 SAST tonight on v0.4.31 (operator will signal when ready).
 
-## State at end of session (2026-04-29 ~PM SAST)
+## State at session close (2026-04-29 ~17:00 SAST)
 
 | | |
 |---|---|
-| Master HEAD | v0.4.30 tag (CI building + gh-pages auto-update) |
-| Fleet | Mixed: Alpha v0.4.29.0, others v0.4.28/v0.4.28.0; rolling out v0.4.30 |
-| Backlog | OPEN **26**, RESOLVED **61**, WONT_DO **11** (-5 RESOLVED this session: #87/#88/#89/#95/#97; +2 NEW: #98 #99) |
-| Released today | v0.4.27 (morning #94), v0.4.28 (#78 + #96), v0.4.29 (#87/#88/#89/#95/#97), v0.4.30 (#98 partial — backoff schedule compression) |
-| Validation | Native 105/105 on each release; Alpha USB-flash + M2 30s blip PASS pre-incident; v0.4.30 inherits all v0.4.28-v0.4.29 mitigations |
-| Incident | Operator power+router cycle ~14:00 SAST; broker restart kicked all 6 clients at 14:09:11. Alpha + Delta panicked + recovered. Bravo/Charlie/Echo/Foxtrot stuck silent 16+ min in WiFi backoff saturation tier (#98 root cause). Operator power-cycled the 4 silent → all 6 healthy by 14:30. v0.4.30 hotfix compresses the schedule so this can't recur as severely. |
+| Master HEAD | `f34fe3b` + #101 commit pending below |
+| Latest tag | v0.4.31 |
+| Fleet | **6/6 on v0.4.31**, all healthy, heap_largest steady 81908 |
+| Backlog | OPEN **25**, RESOLVED **64**, WONT_DO **11** |
+| Released today | v0.4.27, v0.4.28, v0.4.29, v0.4.30, v0.4.31 |
+| Soak | Deferred to **20:00 SAST tonight** on v0.4.31 (length TBD by /evening-soak) |
 
-## What we shipped today (v0.4.29)
+## Immediate next action — soak
 
-- **#87** — Calibration UX: 1 Hz "calib":"waiting" heartbeat in
-  `espnowRangingLoop` while `_calibState != IDLE`. Surfaces
-  #86-class silence in 1 s instead of 120 s.
-- **#88** — `AppConfig.espnow_ranging_enabled` (NVS key `en_rng`,
-  default 0). Boot-time apply via `espnowRangingSetEnabled()` right
-  after `espnowResponderStart()`. Devices that miss their retained
-  `cmd/espnow/ranging` MQTT message come up in the same on/off
-  state as before reboot.
-- **#89** — `/espnow` JSON adds `cal_points_buffered` and
-  `ranging_enabled` so dashboards can warn on uncommitted points
-  before reboot. Visibility-only fix; full NVS persistence of the
-  multi-point buffer deliberately deferred.
-- **#95** — `tools/dev/pio-utf8.sh` wrapper exporting
-  `PYTHONIOENCODING=utf-8 PYTHONUTF8=1` before exec'ing pio.
-  CLAUDE.md "Build & Test" updated.
-- **#97** — `otaCheckNow()` early-returns
-  `stage:"cascade_quiet"` OTA_FAILED if `mqttGetLastDisconnectMs()`
-  is within `OTA_CASCADE_QUIET_MS` (300_000 ms = 5 min default).
-  Mirrors v0.4.28 publish-guard pattern.
+Operator will signal when ready (~19:55 SAST). Then:
 
-Build: 1647024 bytes flash (+280 vs v0.4.28), RAM 22.3 % unchanged.
+1. Run `/evening-soak` slash command (new this session, lives at
+   `~/.claude/commands/evening-soak.md`). It does pre-flight gate +
+   baseline capture + watcher arm + closure-criteria reminder.
+2. silent_watcher.sh runs as a persistent Monitor through the night.
+3. Operator returns in the morning → run `/morning-close` (PROPOSED
+   but not yet written — write tomorrow before running).
 
-## Recommended next session
+## What `/morning-close` should do
 
-Soak begins this evening at ~20:00 SAST and runs overnight. Morning
-session = closure paperwork + decision on next direction.
+(stub for tomorrow — write before running):
 
-### A. Close #46 if v0.4.30 soak is clean — but with one caveat
-The afternoon's incident produced TWO fresh panics (Alpha + Delta,
-loopTask LoadProhibited @ 0x4008a9f2 — same family as Foxtrot's
-earlier coredump). v0.4.28's cascade-window publish guard mitigates
-some panic shapes but doesn't eliminate this one. So #46 closure is
-appropriate ONLY if the overnight soak shows ZERO new occurrences
-of this signature on v0.4.30. If even one panic of this shape
-fires during the soak, leave #46 OPEN and queue symbolic decode
-of the new coredump (workflow per docs/SESSIONS/COREDUMP_DECODE_2026_04_29.md).
+- Read the most-recent baseline from `~/soak-baselines/`
+- Compare current fleet snapshot against baseline:
+   - heap_largest decline > 5%/hour on any device → flag
+   - mqtt_disconnects climbing during the window → flag
+   - Any new `/diag/coredump` payload with fresh `app_sha_prefix` → flag
+   - Any abnormal `boot_reason` in retained boot announcements → flag
+- TaskStop the silent_watcher.sh Monitor armed by /evening-soak
+- Output GREEN/YELLOW/RED + recommendation:
+   - GREEN → close #46 (long-tail abnormal-reboot investigation)
+   - YELLOW → leave #46 open, note the new evidence
+   - RED → file new SUGGESTED_IMPROVEMENTS entry, decide rollback
 
-Per CLAUDE.md "Soak windows" guidance: 8-12 h overnight on v0.4.30
-covers the v0.4.28-v0.4.29-v0.4.30 cumulative bundle. Closure criteria
-(per CLAUDE.md template):
-- No new `/diag/coredump` payloads with fresh `app_sha_prefix`.
-- No `silent_watcher.sh` LWT-or-panic alerts.
-- `heap_largest` stable (no monotonic decline > 5 % / hour).
-- `mqtt_disconnects` not climbing during the window.
-- Boot announcement at end shows expected `restart_cause`
-  (empty for clean uptime).
+## After the soak
 
-If clean → mark **#46 RESOLVED in v0.4.29** (the v0.4.22 + v0.4.28 +
-v0.4.29 bundle finally closes the long-tail abnormal-reboot
-investigation). #92 stays open as the cascade-trigger entry for
-future investigation.
+If clean (most likely):
 
-### B. #98 fix-option-(a) + #99 LED patterns — small bundled v0.4.31
-The afternoon incident showed both #98 (slow reconnect) and #99
-(LEDs not diagnostic) are real. v0.4.30 partially fixed #98 via
-schedule compression; the durable fix is option-(a) — periodic
-SSID probe during the saturation-tier wait, short-circuit on
-availability. ~30 lines in main.cpp's WiFi-recovery branch.
-Bundle with #99: distinct STATUS_LED_PIN waveforms per state
-(boot 10Hz, WiFi-up-MQTT-down 1Hz, MQTT_HEALTHY breathing,
-AP_MODE double-blink). Both small, both visible-from-bench-room
-diagnostics. Could ship as v0.4.31 in the morning if soak is clean.
+### A. Close #46
+v0.4.22 + v0.4.28 + v0.4.31 cumulative bundle covers the long-tail
+abnormal-reboot work. Move to RESOLVED in archive.
 
-### C. v0.5.0 hardware bring-up — relay + Hall on Bravo
-Plan unchanged at [PLAN_RELAY_HALL_v0.5.0.md](PLAN_RELAY_HALL_v0.5.0.md).
-GPIO assignments worked out; hardware on hand. Bravo currently
-bench-attached on COM5 (per 2026-04-29 PM PnP probe — operator
-re-attached during today's chaos prep). Blocker: #48 UUID drift fix
-must ship first. With #46 closure planned for tomorrow morning,
-this becomes the next logical big session.
+### B. Investigate `restart_cause=<unknown>` on OTA-reboot path
+Daily-health flagged YELLOW on each device because the most recent
+boot was `software` with `restart_cause=<unknown>`. The OTA-reboot
+flow apparently doesn't stamp `restart_cause=ota_reboot` in NVS
+reliably. File as #102 if it persists post-soak.
 
-### D. #93 production-serial-instrumentation
-Decide between status quo (A), 60 s heartbeat-to-serial (B,
-recommended), canary-only watermark prints (C), or on-demand
-cmd/diag/serial_dump (D, recommended bundled with B). Visibility-only,
-pairs with v0.4.29's "make firmware self-document its state" theme.
-Low-risk shippable as v0.4.30.
+### C. v0.5.0 hardware bring-up
+Operator may wire the 4x4 NeoPixel matrix + 2-channel relay onto
+Alpha (per `docs/Operator/HARDWARE_WIRING.md`). Hall sensor remains
+on the v0.5.0 plan but not in scope for this immediate session.
 
-### E. #91 ESP32-WROOM-32U + external antenna procurement
-Operator orders parts (~$15-30). Bench-test against current WROOM-32
-fleet for asymmetry / RF range / orientation sensitivity. Targets
-#37 root cause #2 + #41 RFID coupling + #90 orientation. Regulatory
-check (FCC/CE/ICASA) needed before production.
+After wiring:
+- Bench-flash with `[env:esp32dev_relay_hall]` variant (or
+  uncomment `RELAY_ENABLED` in config.h)
+- Bump LED count to 16 (replace) or 24 (cascade) via cmd/led
+- Bench-test relay clicks via `cmd/relay`
+- Watch for brownouts under combined load (Alpha v0.4.26 history)
 
-### F. Phase 2 ranging cluster — multipath / criteria adjustment
-#37, #38, #39, #42, #47, #49, #86, #90, #91 are all open in this
-group. Most need either bench time, procurement, or environmental
-re-test (clean RF). v0.4.29's #87/#88/#89 visibility wins make any
-future on-bench session smoother. Bundle option: take #38 (runtime-
-tunable beacon intervals) + #42 (active/calibrating/setup mode) as
-a small follow-on after #46 closes.
+### D. #101 log-rotation audit
+Filed this evening. Document mosquitto/Node-RED/daily-health
+rotation strategies in MONITORING_PRACTICE.md + add a daily-health
+check that verifies rotation tasks are still armed.
 
-## Bench state at session end
-
-- Alpha (COM4) on v0.4.29.0 — primary test target, M2 PASS verified
-  pre-rollout.
-- Bravo (COM5) re-attached — was off-bench until v0.5.0; now
-  bench-accessible.
-- Charlie/Delta/Echo/Foxtrot — fleet positions unchanged from v0.4.28
-  morning state. All eligible for v0.4.29 OTA rollout.
-- Charlie canary — closed 2026-04-29 morning with #54 RESOLVED;
-  Charlie is back on release firmware.
+### E. Write `/morning-close` slash command
+Pair with `/evening-soak`. ~30 lines; mirrors the daily-health
+delta logic but specific to soak baselines.
 
 ## Won't-do at next-session start
 
-- Trigger another cascade-class M3 blip without symbolic-decode
-  apparatus ready (per the v0.4.28 lesson — non-determinism means
-  single trigger can't validate).
-- Open new #78-class investigations without fresh evidence —
-  cascade-window guard + auto-OTA-recovery gate are the production
-  mitigations; vendored AsyncTCP patch deferred unless soak surfaces
-  a residual cascade.
-- Mass-flash without checking COM-port assignments (per CLAUDE.md
-  rule). PnP probe before every flash.
+- Skip the soak prep — gate exists for a reason.
+- Edit `daily_health_config.json` to set `expected_firmware` —
+  the auto-resolver handles this now (set 2026-04-29 PM via the
+  resolve_expected_firmware function).
+- Trigger chaos blips during the soak window — contaminates the
+  closure criteria.
+- v0.5.0 hardware code work without operator wiring confirmed.
 
 ## Open questions for operator
 
-- v0.4.29 is in flight as the soak target. Acceptable to skip a
-  separate v0.4.28 soak window since v0.4.29 is additive over
-  v0.4.28 and validates strictly more code surface?
-- v0.5.0 hardware (Bravo relay + Hall wiring) — ready for
-  tomorrow's session, or operator wiring still pending?
-- The blip-watcher mechanism worked end-to-end this session
-  (memory file `mosquitto_blip_watcher.md` saved). Any preference
-  on auto-running blips during off-hours (with pre-armed silent_watcher
-  for any abnormal boot signature)?
+- When will the soak be armed? Operator said "I'll let you know"
+  after wrap — expecting ~19:55-20:00 SAST.
+- Soak length on v0.4.31? Per CLAUDE.md "Soak windows": 8-12 h
+  default for the cumulative cascade-fix bundle, evening start.
+  24 h+ if you want to catch daily-cycle effects.
+- 4x4 matrix + relay wiring tonight, tomorrow, or later?
+- `/morning-close` — write tonight (so it's ready for wake-up), or
+  tomorrow morning when running it?
+
+## Reference for tomorrow
+
+- Session memory: `~/.claude/projects/<project>/memory/session_2026_04_29_pm.md`
+- Operator docs: `docs/Operator/README.md`
+- v0.5.0 plan: `docs/PLAN_RELAY_HALL_v0.5.0.md`
+- Hardware wiring guide: `docs/Operator/HARDWARE_WIRING.md`
+- Closure criteria: `CLAUDE.md` "Soak windows" section

@@ -5577,3 +5577,83 @@ Next steps (operator decision):
      last-entry-reuse making every subsequent wave size 1 too) —
      same shape as pre-v0.4.31 strict-sequential plus all the
      first-pass safety improvements.
+
+
+101. Log-rotation process audit — mosquitto + Node-RED + daily-health
+     DISCOVERED: 2026-04-29 evening. Operator flagged at session
+     close that we need a documented rotation strategy for the long-
+     running log files. Two specific gaps:
+
+     **Mosquitto log** — `C:\ProgramData\mosquitto\mosquitto.log`.
+     Size-capped rotation was added 2026-04-28 via `rotate-log.ps1`
+     after #83 caught the post-blip-watcher freeze. Current behaviour
+     (verified 2026-04-29 PM): log stays ~1-2 MB steady-state, was
+     230 MB on 2026-04-27 evening before the #83 fix landed. So the
+     rotation IS running, but:
+        - The schedule (cadence + size cap) is not documented in
+          docs/Operator/ — an operator inheriting the deployment
+          would have to spelunk through `tools/blip-watcher.ps1`
+          + the rotate-log.ps1 source to learn what happens.
+        - There's no health check that rotate-log.ps1 IS still firing.
+          If the scheduled task gets accidentally disabled (e.g.
+          during a Windows update / domain join), the log will start
+          climbing again unnoticed.
+
+     **Node-RED log** — `C:\Users\drowa\.node-red\node-red.log`
+     (path approximate; verify via the project's settings.js logging
+     section). Tier-1 T1.1 added file logging this week — file is
+     written but not auto-rotated as far as we know. 285 nodes × N
+     debug events per second = file grows steadily over weeks. Not
+     a disk-space crisis (Node-RED logs are smaller than mosquitto),
+     but it's the same pattern as the mosquitto issue pre-#83.
+
+     **Daily-health reports** — `~/daily-health/*.md`. ~3 KB per
+     report. A year's worth = ~1 MB. Not actually a problem, but
+     worth documenting "no rotation needed, no auto-prune" in the
+     same place as the others so the operator has one consolidated
+     answer for "do I need to clean up logs".
+
+     PROPOSED FIX:
+
+     1. Document each rotation strategy in
+        `docs/Operator/MONITORING_PRACTICE.md` under a new "Log
+        rotation" section. Cover:
+            - mosquitto.log: size cap + cadence + how to verify
+              the scheduled task is still armed
+            - node-red.log: current rotation status (verify, then
+              document) and how to set up if missing
+            - daily-health/*.md: no rotation needed, no auto-prune
+            - blip.log (mosquitto blip-watcher): bounded by
+              chaos-frequency, ~negligible
+            - any other long-running log files (Windows event
+              logs aren't ours; .pio cache is build-artefact, not
+              log).
+
+     2. Add a daily-health check that:
+            - Verifies mosquitto.log size hasn't grown > N MB since
+              the last check (catches rotation-task failure).
+            - Same for node-red.log.
+            - Verifies the Windows scheduled task for rotate-log.ps1
+              is enabled + last-run-time is recent.
+
+     3. If Node-RED file logging doesn't auto-rotate, set up a
+        rotation. PowerShell scheduled task in the same shape as
+        rotate-log.ps1 — size-cap + roll-on-overflow. Or reconfigure
+        Node-RED's settings.js logging block to use Winston's
+        built-in rotation.
+
+     PRIORITY: MEDIUM. Not a fire today (mosquitto rotation works,
+     Node-RED log isn't crisis-sized yet), but the audit + monitoring
+     gap is real. Pairs naturally with #36 (codified
+     monitoring practice — RESOLVED in v0.4.24 but doesn't yet
+     cover log rotation).
+
+     LINKS:
+        - #83 (RESOLVED 2026-04-28) — the mosquitto-log-frozen-
+          after-restart bug that motivated rotate-log.ps1
+        - #36 (RESOLVED 2026-04-28) — monitoring-practice doc
+          (now in `docs/Operator/MONITORING_PRACTICE.md`)
+        - tools/rotate-log.ps1 (existing; document its config in
+          MONITORING_PRACTICE.md)
+        - .node-red/settings.js logging section (verify rotation
+          config — currently unknown)

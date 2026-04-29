@@ -71,7 +71,10 @@ session-planning; reorder within a group freely.
 
 ### I. Tooling speed / ergonomics (0) — #100 RESOLVED in v0.4.31
 
-  Total open: 24  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0) — net delta 2026-04-29: v0.4.29 -5 (#87/#88/#89/#95/#97), v0.4.30 closes #98 partial (compressed schedule), v0.4.31 closes #98 fully (SSID probe) + #99 (LED patterns) + #100 (phased parallel + adaptive timeout). +1 net from incidents (#92, already in D), +0 net from session — three releases shipped today. Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+### J. Operations / process (1) — new group filed 2026-04-29 evening
+  #101  Log-rotation process audit — mosquitto + Node-RED + daily-health   (filed 2026-04-29 evening; mosquitto rotation works (rotate-log.ps1 from #83) but isn't documented; Node-RED file-logging rotation status unknown; daily-health/*.md doesn't need rotation but should be documented as "no action needed" alongside the others. Proposed fix: consolidate "Log rotation" section in MONITORING_PRACTICE.md + add daily-health check that verifies rotation tasks are still armed. MEDIUM priority)
+
+  Total open: 25  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0 + J1) — net delta 2026-04-29: v0.4.29 -5 (#87/#88/#89/#95/#97), v0.4.30 closes #98 partial (compressed schedule), v0.4.31 closes #98 fully (SSID probe) + #99 (LED patterns) + #100 (phased parallel + adaptive timeout); +1 from #101 (log-rotation audit). Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
 
   Phase 2 R1 verification 2026-04-28 evening — outcome:
     Goal was no-flash verification of #47 / #39 against the operator's
