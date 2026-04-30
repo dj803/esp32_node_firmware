@@ -4,7 +4,7 @@ Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS
 
 Last updated: 2026-04-30 morning (post-v0.4.31 overnight soak — RED verdict;
 cumulative v0.4.28-v0.4.31 stability bundle PARTIALLY validated, #103 filed
-for the recurring loopTask LoadProhibited panic that #46 has been waiting on).
++ FIXED in v0.4.32 same-day, #46 closure pending v0.4.32 re-soak).
 
 ---
 
@@ -28,6 +28,41 @@ recovery, so the publish path runs against a still-flaky link.
 ---
 
 ## Now (just shipped or in flight)
+
+### v0.4.32 — DONE (shipped 2026-04-30 morning — #103 + #102)
+
+Two fixes bundled after the v0.4.31 overnight soak surfaced #103 and
+yesterday's daily-health surfaced #102:
+
+- **#103 RESOLVED** (option (c) — atomic cascade-window stamp on every
+  WiFi event). `WiFiEvent` in `src/main.cpp` now calls
+  `mqttMarkNetworkDisconnect()` at the top of every event so the
+  `CASCADE_QUIET_MS` window is refreshed on each WiFi state transition
+  at interrupt time, before any loop() iteration can publish through a
+  brief mid-recovery GOT_IP. Closes the gap that produced last night's
+  Alpha + Delta panics at minute 7 of the flaky AP outage. The decode
+  of `0x4008a9f2` against the v0.4.31 ELF confirmed the panic shape:
+  `strlen` faulted inside `AsyncMqttClient::PublishOutPacket` ctor —
+  exactly the publish-during-recovery race the cascade window silences.
+  Cost: one millis() + volatile uint32_t write per WiFi event.
+- **#102 RESOLVED**. `include/ota.h` now includes `restart_cause.h` and
+  calls `RestartCause::set("...")` before each of its 5 `ESP.restart()`
+  sites with the matching tag (`ota_progress_timeout`,
+  `ota_preflight_heap_low`, `ota_manifest_failure`, `ota_reboot`,
+  `ota_flash_failed`). `_otaProgressTimeout` got `delay(50)` added for
+  NVS commit time; the other 4 sites already had ≥200 ms delays. Every
+  release-day daily-health will no longer YELLOW for ~24 h while the
+  post-OTA boots roll out of the `last_restart_reasons` window.
+
+#46 stays OPEN until a clean overnight soak on v0.4.32+ confirms no
+recurrence. Re-soak armed for ~17:00-20:00 SAST tonight via
+`/operator-evening-soak`.
+
+Build: esp32dev clean in 2:07 (no size delta vs v0.4.31), 105/105
+native tests pass. Skipped bench validation on operator's call —
+the fix is mechanically simple (single line added in WiFiEvent + 5
+NVS-tagged restart sites in OTA paths) and the v0.4.31 cascade-window
+guard is already in production.
 
 ### v0.4.31 — DONE (shipped 2026-04-29 PM — #98 follow-up + #99 + #100 follow-on)
 

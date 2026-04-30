@@ -15,6 +15,9 @@
 #include "semver.h"   // semverIsNewer() — extracted to allow host-side unit testing
 #include "app_config.h"   // gAppConfig.ota_json_url set via portal
 #include "led.h"
+#include "restart_cause.h"   // (#102, v0.4.32) tag every ESP.restart() with a cause
+                             // so the next boot announcement carries an actionable
+                             // restart_cause field instead of "<unknown>".
 
 // (v0.3.34) Forward-declared from ota_validation.h. Cannot #include directly
 // because the validation module needs to be ordered after mqtt_client.h
@@ -77,6 +80,8 @@ static TimerHandle_t _otaWdtFeederTimer   = NULL;  // (v0.4.09) periodic task_wd
 static void _otaProgressTimeout(TimerHandle_t /*xTimer*/) {
     LOG_E("OTA", "Progress watchdog fired (no callback for %d ms) - restarting",
           OTA_PROGRESS_TIMEOUT_MS);
+    RestartCause::set("ota_progress_timeout");
+    delay(50);   // let Preferences::end() commit before reboot
     ESP.restart();
 }
 
@@ -537,7 +542,8 @@ void otaCheckNow(bool isSiblingRetry) {
                 (unsigned)OTA_PREFLIGHT_HEAP_FREE_MIN,
                 (unsigned)OTA_PREFLIGHT_HEAP_BLOCK_MIN);
             mqttPublishStatus(FwEvent::OTA_PREFLIGHT, extra);
-            delay(200);     // let the publish drain
+            RestartCause::set("ota_preflight_heap_low");
+            delay(200);     // let the publish drain (also covers NVS commit for set())
             ESP.restart();  // fresh heap on next boot — natural retry
         }
     }
@@ -602,6 +608,7 @@ void otaCheckNow(bool isSiblingRetry) {
             "\"error\":\"binary URL extraction failed\","
             "\"current_version\":\"" FIRMWARE_VERSION "\"");
         mqttPublishStatus(FwEvent::OTA_FAILED, extra);
+        RestartCause::set("ota_manifest_failure");
         delay(200);
         ESP.restart();
     }
@@ -622,7 +629,9 @@ void otaCheckNow(bool isSiblingRetry) {
         // FIRMWARE_VERSION as the pending version, it sets the validation
         // deadline and rolls back if MQTT doesn't come back up in time.
         otaValidationArmRollback(targetVersion.c_str());
+        RestartCause::set("ota_reboot");
         delay(500);     // Give the MQTT publish time to be sent before disconnect
+                        // (also covers NVS commit for set())
         ESP.restart();  // Boot into the new firmware — watchdog state doesn't matter
     } else {
         LOG_E("OTA", "Flash failed (esp_https_ota result %d) — restarting to recover", otaResult);
@@ -641,7 +650,9 @@ void otaCheckNow(bool isSiblingRetry) {
         // would resume processing buffered data through a torn-down
         // AsyncMqttClient and crash with an InstrFetchProhibited null-vtable panic.
         mqttPublishStatus(FwEvent::OTA_FAILED, extra);
+        RestartCause::set("ota_flash_failed");
         delay(200);   // Let the LED OTA_DONE event post to the WS2812 task
+                      // (also covers NVS commit for set())
         ESP.restart();
     }
 }

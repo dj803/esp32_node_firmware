@@ -186,7 +186,24 @@ static volatile uint8_t wifiLastDisconnectReason = 0;
 // The two-argument signature (v0.3.15) gives us the reason code on
 // STA_DISCONNECTED so the recovery loop can tell "router power-cycled"
 // from "password is wrong."
+//
+// (#103, v0.4.32) Re-stamp the cascade-quiet timestamp on every WiFi
+// transition. Previously the stamp was only set from loop()'s
+// wifiConnected-change branch (lines ~711 reconnect, ~741 disconnect).
+// During a flaky-AP recovery (intermittent GOT_IP↔DISCONNECTED storm
+// at ~10 ms granularity), several events can fire between two loop()
+// iterations, so a brief mid-storm GOT_IP can leave the cascade window
+// closed by the time loop() catches up — and a publish in that gap
+// races AsyncTCP's still-tearing-down state. Stamping at event time
+// (interrupt-context) closes the window atomically with each
+// transition. Cost is one millis()+volatile-write per WiFi event,
+// negligible vs. the cascade-panic cost.
 void WiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    // Refresh the cascade-quiet window on every WiFi state change so
+    // mqttPublish can't slip through a transient reconnect during a
+    // flaky-AP recovery. See note above + #103 archive entry.
+    mqttMarkNetworkDisconnect();
+
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             // DHCP assigned an IP address — we are fully connected

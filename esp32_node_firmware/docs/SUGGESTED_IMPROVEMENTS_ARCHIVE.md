@@ -5599,7 +5599,7 @@ Next steps (operator decision):
      first-pass safety improvements.
 
 
-101. Log-rotation process audit — mosquitto + Node-RED + daily-health
+101. Log-rotation process audit — mosquitto + Node-RED + operator-daily-health
      DISCOVERED: 2026-04-29 evening. Operator flagged at session
      close that we need a documented rotation strategy for the long-
      running log files. Two specific gaps:
@@ -5627,7 +5627,7 @@ Next steps (operator decision):
      a disk-space crisis (Node-RED logs are smaller than mosquitto),
      but it's the same pattern as the mosquitto issue pre-#83.
 
-     **Daily-health reports** — `~/daily-health/*.md`. ~3 KB per
+     **Daily-health reports** — `~/operator-daily-health/*.md` (renamed 2026-04-30 from `~/daily-health/`). ~3 KB per
      report. A year's worth = ~1 MB. Not actually a problem, but
      worth documenting "no rotation needed, no auto-prune" in the
      same place as the others so the operator has one consolidated
@@ -5642,7 +5642,7 @@ Next steps (operator decision):
               the scheduled task is still armed
             - node-red.log: current rotation status (verify, then
               document) and how to set up if missing
-            - daily-health/*.md: no rotation needed, no auto-prune
+            - operator-daily-health/*.md: no rotation needed, no auto-prune
             - blip.log (mosquitto blip-watcher): bounded by
               chaos-frequency, ~negligible
             - any other long-running log files (Windows event
@@ -5755,6 +5755,19 @@ Next steps (operator decision):
         - #36 (RESOLVED 2026-04-28 in v0.4.24 — codified
           monitoring practice that uses restart_cause for
           categorisation)
+
+     STATUS: RESOLVED 2026-04-30 in v0.4.32 — RestartCause::set()
+     added at all 5 ESP.restart() sites in include/ota.h with the
+     tag strings called out above (ota_progress_timeout /
+     ota_preflight_heap_low / ota_manifest_failure / ota_reboot /
+     ota_flash_failed). The one site without a pre-existing delay
+     (_otaProgressTimeout @ line 80) got delay(50) added per
+     restart_cause.h's commit-time guidance; the other four sites
+     already had delay(200)/delay(500) covering the NVS commit
+     window. Bookkeeping note: this entry was filed in the archive
+     2026-04-29 but never indexed in SUGGESTED_IMPROVEMENTS.md OPEN
+     — added directly to the RESOLVED block 2026-04-30 along with
+     this STATUS line.
 
 
 103. 7-min-post-disconnect panic during flaky-AP recovery (refines #46 + #92)
@@ -5883,3 +5896,39 @@ Next steps (operator decision):
           signature
         - mosquitto.log lines 2026-04-30T02:48:35 through
           2026-04-30T03:07:39 capture the full timeline
+
+     STATUS: RESOLVED 2026-04-30 in v0.4.32 — option (c) shipped.
+     `WiFiEvent` handler in src/main.cpp now calls
+     `mqttMarkNetworkDisconnect()` at the top of every event so
+     the cascade-quiet window is refreshed atomically on each
+     WiFi state transition (interrupt-context, before any loop()
+     iteration can publish through a transient mid-recovery
+     GOT_IP). Cost: one millis() + volatile uint32_t write per
+     WiFi event.
+
+     Decode of 0x4008a9f2 against the v0.4.31 worktree-built ELF
+     (Windows-local SHA a541bc3b ≠ CI-built 0ee173b8 due to path-
+     baked binary drift; lib + app frames decode coherently per
+     COREDUMP_DECODE.md anti-pattern note):
+
+        0x4008a9f2  strlen   newlib/libc/machine/xtensa/strlen.S:82
+        0x400e4659  AsyncMqttClientInternals::PublishOutPacket::PublishOutPacket
+                    AsyncMqttClient/Packets/Out/Publish.cpp:23
+        0x400e2881  AsyncMqttClient::publish
+                    AsyncMqttClient.cpp:742
+        0x400ef3ce  mqttPublish                  mqtt_client.h:368
+        0x400fbb7a  espnowRangingLoop            mqtt_client.h:639
+                    (inlined into espnow_ranging.h:712)
+        0x40103ebb  loop                         main.cpp:915
+        0x4010bfd0  loopTask                     framework loop entry
+        0x4008ff51  vPortTaskWrapper             FreeRTOS task wrapper
+
+     Confirms the panic shape: strlen() faulted on a corrupted
+     char* passed into AsyncMqttClient's PublishOutPacket
+     constructor — exactly the publish-during-recovery race the
+     cascade window is meant to silence. The fix closes the brief
+     mid-recovery window by stamping at event time. (a) and (b)
+     deferred unless re-soak shows (c) alone is insufficient.
+
+     #46 stays OPEN until a clean overnight soak on v0.4.32+
+     confirms no recurrence. Re-soak ~17:00-20:00 SAST tonight.
