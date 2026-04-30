@@ -53,12 +53,20 @@ field-validated by the v0.4.32 overnight soak.
 
 ## Other items deferred from today
 
-### D. v0.5.0 hardware bring-up (G in priority)
-Operator may wire the 4×4 NeoPixel matrix + 2-ch relay onto Alpha
-per [Operator/HARDWARE_WIRING.md](Operator/HARDWARE_WIRING.md).
-Operator signalled "probably tonight" earlier in the session —
-proceed in parallel with the soak (the matrix + relay are additive,
-won't perturb the soak signal).
+### D. v0.5.0 hardware bring-up — DELAYED (relay module shipping delay)
+Relay module delivery delayed (operator update 2026-04-30 mid-morning).
+v0.5.0 wiring on Alpha deferred until parts arrive. Prep work already
+shipped this session is on-tap for whenever:
+- HARDWARE_WIRING.md schema fix (cmd/relay correct format) + 5-step
+  smoke-test sequence.
+- esp32dev_relay_hall variant build verified clean on v0.4.32 HEAD
+  (4:48, no size delta).
+- #104 RESOLVED — next tag-cut publishes
+  `firmware-esp32dev_relay_hall.bin` to the GH release, eliminating
+  the local-build dependency.
+
+When parts arrive: pick up at "[Quick smoke test](Operator/HARDWARE_WIRING.md#quick-smoke-test)"
+in HARDWARE_WIRING.md. No code work needed — just wire + flash + smoke.
 
 ### E. #91 ESP32-WROOM-32U + external antenna procurement
 Operator orders parts (~$15–30). Bench-test against current
@@ -92,12 +100,13 @@ a daily-health check. Pairs naturally with a quiet session.
 
 ## Open questions for operator
 
-- v0.5.0 wiring: tonight, or after the soak result?
 - If soak goes GREEN: do you want #46 + #103 + #102 closure
   bundled into the morning's session-close commit, or batched
   for a later docs sweep?
 - #91 antenna procurement timing — anything we can do now to
   prepare the bench rig (regulatory check, mount design)?
+- v0.5.0 wiring is deferred pending parts arrival (relay module
+  shipping delay 2026-04-30). No action required; status note only.
 
 ## Reference
 
