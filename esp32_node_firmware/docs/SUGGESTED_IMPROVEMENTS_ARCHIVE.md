@@ -5755,3 +5755,131 @@ Next steps (operator decision):
         - #36 (RESOLVED 2026-04-28 in v0.4.24 — codified
           monitoring practice that uses restart_cause for
           categorisation)
+
+
+103. 7-min-post-disconnect panic during flaky-AP recovery (refines #46 + #92)
+     DISCOVERED: 2026-04-30 04:00 SAST during the v0.4.31 overnight
+     soak closure investigation. The expected closure of #46 (long-tail
+     abnormal-reboot investigation, waiting on a clean post-v0.4.28
+     soak) failed with a NEW panic-timing pattern that doesn't match
+     either #78 (cascade publish race, fires within seconds of
+     disconnect) or #92's original characterisation (immediate cascade
+     after AP-recovery).
+
+     OBSERVATION:
+
+     During the soak window 2026-04-29 18:51 → 2026-04-30 07:58 SAST,
+     a real ~19-minute AP/WiFi outage fired at 02:48:13 SAST. Five
+     soaking devices (Charlie excluded) all stopped sending traffic
+     within 10 s of each other. Mosquitto kicked all 5 by 02:48:45
+     with "exceeded timeout".
+
+     7 minutes later, at 02:55:42 and 02:55:49, Alpha + Delta panicked
+     with the recurring `loopTask LoadProhibited @ 0x4008a9f2` shape
+     (#46 / #92 family). At the same instant (02:55:49), Bravo
+     TCP-reconnected to the broker (visible in mosquitto.log as
+     topic-subscribe traffic) — but Bravo's first heartbeat then
+     didn't arrive until 03:07:39, when Echo + Foxtrot also
+     recovered cleanly.
+
+     INTERPRETATION:
+
+     The AP outage had a flaky middle. AP came back briefly at
+     ~02:55:30 (allowing Bravo to TCP-connect), then dropped again,
+     and only fully recovered at ~03:07:30. During that brief
+     ~30-second window of partial AP availability, three things
+     happened:
+
+       - Bravo's reconnect handler ran cleanly enough to subscribe
+         to its cmd/* topics; first heartbeat queued for the next
+         60-s tick (which fell during the second outage slice and
+         never delivered).
+       - Alpha + Delta tried to publish a queued status payload
+         during the brief window. v0.4.28's `CASCADE_QUIET_MS = 5000`
+         had long since expired (5 s after the original 02:48
+         disconnect), so the publish path ran. AsyncTCP attempted
+         the TX over a still-flaky link; the partial-recovery path
+         exposes the loopTask LoadProhibited shape.
+       - Echo + Foxtrot didn't have a heartbeat tick aligned with
+         the brief 02:55 window. They simply waited out the rest of
+         the outage and recovered cleanly at 03:07:36.
+
+     EVIDENCE:
+
+       - Fresh coredumps from Alpha + Delta with `app_sha_prefix
+         = 0ee173b8` (v0.4.31 release ELF). Identical
+         `exc_pc=0x4008a9f2` and identical 8-frame backtrace shape.
+         First decodable instance of this panic on a v0.4.28+ build.
+       - mosquitto.log: 5 simultaneous "exceeded timeout"
+         disconnects at 02:48:35-45. Bravo subscribe traffic at
+         02:55:49. No fresh ESP32-* connections between 02:48 and
+         02:55. Fresh boot announcements from Alpha + Delta only,
+         no boot from Bravo / Echo / Foxtrot.
+       - silent_watcher.sh stream: ABNORMAL BOOT panic alerts
+         02:55:42 (Alpha) + 02:55:49 (Delta). RECOVERED transitions
+         03:07:36 (Echo + Foxtrot) + 03:07:39 (Bravo).
+
+     ROOT CAUSE HYPOTHESIS:
+
+     The cascade-window guard is keyed off `_lastNetworkDisconnectMs`,
+     stamped when `mqttMarkNetworkDisconnect()` fires. The guard
+     window is 5 s. After a 7+ minute AP outage, the guard has
+     long expired by the time of any brief AP recovery. The
+     publish path then runs against a still-unstable link and hits
+     the loopTask LoadProhibited shape inside AsyncTCP / AsyncMqttClient.
+
+     v0.4.30's compressed backoff schedule and v0.4.31's SSID probe
+     worked AS DESIGNED for 3/5 devices — they retried during the
+     outage, found SSID gone, kept waiting, recovered cleanly when
+     the AP fully returned. The 2 that panicked happened to have
+     a publish queued to fire during the brief partial-recovery.
+
+     PROPOSED FIX OPTIONS:
+
+     (a) **Stable-connectivity gate.** Require N consecutive
+         heartbeat-cadence-passes (e.g. 60 s × 3 = 3 min) of stable
+         WiFi + MQTT before un-silencing publishes after a disconnect.
+         Different shape from `CASCADE_QUIET_MS`. Larger surface; more
+         conservative. Defends against the flaky-recovery scenario
+         where the AP returns briefly then drops again.
+     (b) **AP-stability check before publish.** Before each publish
+         attempt during a recovery window, do a quick TCP probe to
+         the broker. If probe fails, drop the publish silently. ~10
+         lines in mqttPublish; cheap.
+     (c) **Re-stamp `_lastNetworkDisconnectMs` on every WiFi-state-
+         change event** (not just full disconnects). Brief AP returns
+         that don't sustain wouldn't open the publish window. Smallest
+         change; closest to v0.4.28's existing logic.
+
+     RECOMMENDED: (c) first as a single-line refinement; (a) as a
+     follow-on if (c) doesn't fully eliminate. (b) is a fallback if
+     neither (a) nor (c) works because the panic is happening inside
+     AsyncTCP after the publish call has already been dispatched.
+
+     POSITIVE EVIDENCE FROM THE SOAK (not lost):
+
+       - 3/5 devices (Bravo, Echo, Foxtrot) survived a real 19-min
+         AP outage WITHOUT panic. v0.4.30 backoff + v0.4.31 SSID
+         probe worked.
+       - heap_largest unchanged on every device. No fragmentation
+         drift over 13 h. v0.4.22's heap-guard + v0.4.29's cascade-
+         window publish guard are both healthy.
+       - mqtt_disconnects = 1 on the 3 surviving devices (the AP
+         outage), 0 elsewhere. No spurious reconnect storms.
+
+     PRIORITY: HIGH. This is the fix that has to ship before #46
+     can close. The decode of `0x4008a9f2` against the v0.4.31
+     release ELF will identify the exact line.
+
+     LINKS:
+        - 2026-04-30 soak closure report:
+          C:\Users\drowa\soak-closures\2026-04-30_075829.md
+        - 2026-04-29 soak baseline:
+          C:\Users\drowa\soak-baselines\2026-04-29_185000.md
+        - #46 — the long-tail investigation this fix unblocks
+        - #78 — the CASCADE_QUIET_MS publish guard this refines
+        - #92 — the original "AP-cycle reproduces #78" with which
+          this entry shares a root cause but a different timing
+          signature
+        - mosquitto.log lines 2026-04-30T02:48:35 through
+          2026-04-30T03:07:39 capture the full timeline

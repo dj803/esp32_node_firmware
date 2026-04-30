@@ -1,108 +1,129 @@
 # Next session plan
 
-Refreshed 2026-04-29 evening at session close. Four releases shipped
-today (v0.4.27 morning + v0.4.28/v0.4.29/v0.4.30/v0.4.31 PM). Operator-
-facing docs folder (`docs/Operator/`) live with 13 docs. Soak deferred
-to 20:00 SAST tonight on v0.4.31 (operator will signal when ready).
+Refreshed 2026-04-30 morning after `/morning-close`. The overnight v0.4.31
+soak ran into the recurring panic shape that #46 has been waiting on a
+clean soak to close. Soak verdict: **RED**. #103 filed for the refined
+root-cause; #46 stays OPEN until the #103 fix ships and re-soaks clean.
 
-## State at session close (2026-04-29 ~17:00 SAST)
+## State at session close (2026-04-30 ~08:00 SAST)
 
 | | |
 |---|---|
-| Master HEAD | `f34fe3b` + #101 commit pending below |
+| Master HEAD | `dcd7c65` + #103 commit pending below |
 | Latest tag | v0.4.31 |
-| Fleet | **6/6 on v0.4.31**, all healthy, heap_largest steady 81908 |
-| Backlog | OPEN **25**, RESOLVED **64**, WONT_DO **11** |
-| Released today | v0.4.27, v0.4.28, v0.4.29, v0.4.30, v0.4.31 |
-| Soak | Deferred to **20:00 SAST tonight** on v0.4.31 (length TBD by /evening-soak) |
+| Fleet | **5/5 soaking devices on v0.4.31**, all heartbeating; Alpha + Delta rebooted from panic during soak; Charlie off-fleet per operator |
+| Backlog | OPEN **26** (was 25; +1 from #103), RESOLVED **64**, WONT_DO **11** |
+| Soak closure | `C:\Users\drowa\soak-closures\2026-04-30_075829.md` |
+| Soak baseline | `C:\Users\drowa\soak-baselines\2026-04-29_185000.md` |
 
-## Immediate next action — soak
+## Highest-priority next-session item — #103 fix
 
-Operator will signal when ready (~19:55 SAST). Then:
+The overnight soak surfaced the missing piece for #46 closure. Path:
 
-1. Run `/evening-soak` slash command (new this session, lives at
-   `~/.claude/commands/evening-soak.md`). It does pre-flight gate +
-   baseline capture + watcher arm + closure-criteria reminder.
-2. silent_watcher.sh runs as a persistent Monitor through the night.
-3. Operator returns in the morning → run `/morning-close` (PROPOSED
-   but not yet written — write tomorrow before running).
+### A. Symbolic-decode `0x4008a9f2` against the v0.4.31 release ELF
 
-## What `/morning-close` should do
+First time we have a decodable instance of this panic shape on a
+v0.4.28+ build. ELF SHA prefix `0ee173b8`. Procedure per
+[../COREDUMP_DECODE.md](../COREDUMP_DECODE.md):
 
-(stub for tomorrow — write before running):
+1. Find the v0.4.31 ELF — either download from the GitHub release
+   artefacts (if retention window is open) or rebuild from the v0.4.31
+   tag locally and confirm its `app_sha_prefix` matches `0ee173b8`.
+2. `xtensa-esp32-elf-addr2line -e firmware.elf 0x4008a9f2` →
+   function:line.
+3. Decode the rest of the backtrace frames:
+   `0x400e4659 0x400e2881 0x400ef3ce 0x400fbb7a 0x40103ebb 0x4010bfd0 0x4008ff51`.
+4. Identify the call path from `loopTask` down to the LoadProhibited
+   instruction. Likely sits inside `mqttPublish()` →
+   AsyncMqttClient::publish() → AsyncTCP send.
 
-- Read the most-recent baseline from `~/soak-baselines/`
-- Compare current fleet snapshot against baseline:
-   - heap_largest decline > 5%/hour on any device → flag
-   - mqtt_disconnects climbing during the window → flag
-   - Any new `/diag/coredump` payload with fresh `app_sha_prefix` → flag
-   - Any abnormal `boot_reason` in retained boot announcements → flag
-- TaskStop the silent_watcher.sh Monitor armed by /evening-soak
-- Output GREEN/YELLOW/RED + recommendation:
-   - GREEN → close #46 (long-tail abnormal-reboot investigation)
-   - YELLOW → leave #46 open, note the new evidence
-   - RED → file new SUGGESTED_IMPROVEMENTS entry, decide rollback
+### B. Apply the proposed v0.4.32 fix (per #103 archive entry)
 
-## After the soak
+Three options, recommended order:
 
-If clean (most likely):
+1. **(c) Re-stamp `_lastNetworkDisconnectMs` on every WiFi-state-change
+   event.** Smallest change. In main.cpp's WiFi event handler, on any
+   transition (CONNECTED, DISCONNECTED, IP_LOST, etc.), call
+   `mqttMarkNetworkDisconnect()` so the brief AP-return at the start
+   of a flaky-recovery window doesn't open the publish window.
+2. **(a) Stable-connectivity gate.** Only un-silence publishes after
+   N consecutive heartbeat-cadence-passes (e.g. 60 s × 3) of stable
+   WiFi + MQTT. Larger surface; more conservative. Apply if (c) alone
+   doesn't fully eliminate.
+3. **(b) TCP-probe-before-publish.** Cheap defence-in-depth at the
+   publish call site itself. Apply if (c) + (a) still don't fully
+   eliminate (less likely).
 
-### A. Close #46
-v0.4.22 + v0.4.28 + v0.4.31 cumulative bundle covers the long-tail
-abnormal-reboot work. Move to RESOLVED in archive.
+After fix: bench-flash to one device, re-run a soak with a synthetic
+flaky-AP scenario (start the blip-watcher with multiple short blips
+spaced ~30 s apart to reproduce the partial-recovery), confirm no
+panic. Then full overnight soak. Then close #46.
 
-### B. Investigate `restart_cause=<unknown>` on OTA-reboot path
-Daily-health flagged YELLOW on each device because the most recent
-boot was `software` with `restart_cause=<unknown>`. The OTA-reboot
-flow apparently doesn't stamp `restart_cause=ota_reboot` in NVS
-reliably. File as #102 if it persists post-soak.
+### C. Apply #102 fix (independent, can ship in parallel)
 
-### C. v0.5.0 hardware bring-up
-Operator may wire the 4x4 NeoPixel matrix + 2-channel relay onto
-Alpha (per `docs/Operator/HARDWARE_WIRING.md`). Hall sensor remains
-on the v0.5.0 plan but not in scope for this immediate session.
+`RestartCause::set("ota_reboot")` (and 4 other context-specific tags)
+before each `ESP.restart()` in ota.h. Confirmed gap from yesterday's
+investigation. ~5 lines per call site. Lives at lines 80, 541, 606,
+626, 645 of `include/ota.h` (per the #102 archive entry).
 
-After wiring:
-- Bench-flash with `[env:esp32dev_relay_hall]` variant (or
-  uncomment `RELAY_ENABLED` in config.h)
-- Bump LED count to 16 (replace) or 24 (cascade) via cmd/led
-- Bench-test relay clicks via `cmd/relay`
-- Watch for brownouts under combined load (Alpha v0.4.26 history)
+### D. Tag v0.4.32 with both fixes
 
-### D. #101 log-rotation audit
-Filed this evening. Document mosquitto/Node-RED/daily-health
-rotation strategies in MONITORING_PRACTICE.md + add a daily-health
-check that verifies rotation tasks are still armed.
+Commit + tag + push. CI builds. OTA-rollout via the new phased-parallel
+script (`tools/dev/ota-rollout.sh 0.4.32`). Should complete in ~3 min
+end-to-end given the v0.4.31 rollout took 5:46.
 
-### E. Write `/morning-close` slash command
-Pair with `/evening-soak`. ~30 lines; mirrors the daily-health
-delta logic but specific to soak baselines.
+### E. Re-arm soak
+
+Run `/evening-soak` on v0.4.32 after the rollout completes. Restore
+Charlie to the fleet first (operator decision — not in scope for the
+slash command).
+
+## Other items deferred from yesterday
+
+### F. v0.5.0 hardware bring-up
+Bravo wiring + relay/Hall code. Operator may wire the 4x4 NeoPixel
+matrix + 2-ch relay onto Alpha per
+[Operator/HARDWARE_WIRING.md](Operator/HARDWARE_WIRING.md). Recommend
+**defer until #103 fix ships** — adding hardware before stabilising
+the recurring panic complicates diagnosis.
+
+### G. #91 ESP32-WROOM-32U + external antenna procurement
+Operator orders parts (~$15–30). Bench-test against current WROOM-32
+fleet for asymmetry / RF range / orientation sensitivity.
+
+### H. Phase 2 ranging cluster
+#37, #38, #39, #42, #47, #49, #86, #90, #91 still open. Bundle option
+after #46 + #103 close.
+
+### I. #99 LED patterns soak validation
+The retuned LED patterns shipped in v0.4.31 are visible on Alpha but
+haven't been operator-validated across the rest of the fleet. Confirm
+each device's LED visually matches the v0.4.31 reference table in
+[Operator/LED_REFERENCE.md](Operator/LED_REFERENCE.md).
 
 ## Won't-do at next-session start
 
-- Skip the soak prep — gate exists for a reason.
-- Edit `daily_health_config.json` to set `expected_firmware` —
-  the auto-resolver handles this now (set 2026-04-29 PM via the
-  resolve_expected_firmware function).
-- Trigger chaos blips during the soak window — contaminates the
-  closure criteria.
-- v0.5.0 hardware code work without operator wiring confirmed.
+- Close #46 — soak failed the closure criteria, fix-shaped work is needed first.
+- Roll the soak forward without a #103 fix — same scenario will reproduce.
+- Touch v0.5.0 hardware code until #103 ships.
+- Auto-rollback from v0.4.31 — partial wins (3/5 survival, heap stable,
+  SSID probe) are real and worth keeping.
 
 ## Open questions for operator
 
-- When will the soak be armed? Operator said "I'll let you know"
-  after wrap — expecting ~19:55-20:00 SAST.
-- Soak length on v0.4.31? Per CLAUDE.md "Soak windows": 8-12 h
-  default for the cumulative cascade-fix bundle, evening start.
-  24 h+ if you want to catch daily-cycle effects.
-- 4x4 matrix + relay wiring tonight, tomorrow, or later?
-- `/morning-close` — write tonight (so it's ready for wake-up), or
-  tomorrow morning when running it?
+- When to re-add Charlie to the fleet? It was excluded for tonight per
+  your earlier intent.
+- v0.4.32 timing — ship this morning after symbolic decode, or wait
+  for clearer root-cause data first?
+- v0.5.0 hardware wiring — proceed in parallel (matrix + relay are
+  additive, won't affect #103) or defer?
 
-## Reference for tomorrow
+## Reference
 
-- Session memory: `~/.claude/projects/<project>/memory/session_2026_04_29_pm.md`
-- Operator docs: `docs/Operator/README.md`
-- v0.5.0 plan: `docs/PLAN_RELAY_HALL_v0.5.0.md`
-- Hardware wiring guide: `docs/Operator/HARDWARE_WIRING.md`
-- Closure criteria: `CLAUDE.md` "Soak windows" section
+- Soak closure: `C:\Users\drowa\soak-closures\2026-04-30_075829.md`
+- Soak baseline: `C:\Users\drowa\soak-baselines\2026-04-29_185000.md`
+- #103 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+- #102 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+- COREDUMP decode runbook: docs/COREDUMP_DECODE.md
+- v0.5.0 hardware: docs/PLAN_RELAY_HALL_v0.5.0.md +
+  docs/Operator/HARDWARE_WIRING.md

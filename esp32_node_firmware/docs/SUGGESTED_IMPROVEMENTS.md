@@ -49,9 +49,10 @@ session-planning; reorder within a group freely.
   (parked 2026-04-28 — #25 needs pioarduino log_printf-wrap fix; #26 needs
    8 MB flash module. Both moved to WONT_DO with revisit triggers.)
 
-### D. Open stability investigations (2) — #78 + #96 SHIPPED in v0.4.28; #97 SHIPPED in v0.4.29; #98 RESOLVED in v0.4.30 + v0.4.31
+### D. Open stability investigations (3) — #78 + #96 SHIPPED in v0.4.28; #97 SHIPPED in v0.4.29; #98 RESOLVED in v0.4.30 + v0.4.31; #103 NEW after 2026-04-30 soak failure
   #46   Recent Abnormal Reboots — fleet-wide WDT / panic investigation     (Alpha v0.4.20 "IllegalInstruction" decoded 2026-04-28 — was actually the same bad_alloc cascade as #51, fixed by v0.4.22; remaining scope: ≥24 h fleet-soak on v0.4.22+ to confirm closure. SOAK RESET 2026-04-28 evening — Phase 2 R1 cascade event added fresh coredumps. NEW DATA 2026-04-29 morning — int_wdt failure mode observed for first time (Delta + Echo) during the overnight power-failure recovery storm. Adds int_wdt to the panic/wdt vocabulary for #46. Soak inconclusive — interrupted by power event)
   #92   Power-restoration reconnect storm reproduces #78 — 2026-04-29 morning event   (second independent cascade in 24h. Reproduction recipe: bring fleet up steady-state, kill the AP for 30+ s, restore — fleet-wide cascade follows within ~30 s of AP recovery. REFINED 2026-04-29 morning: cold-swapping 3 devices from battery to mains DID NOT cascade — confirms trigger is specifically synchronized fleet-wide WiFi loss, NOT individual device power events. Bug lives in shared-state / contention paths (lwIP PCB allocator, AsyncTCP event-queue dispatch, WiFi driver TX cleanup) — anywhere multiple connections converge on shared mutable state. Solo reconnects thread the needle without hitting it. Bench-debuggable: attach serial to Bravo or Delta before the next AP cycle. Battery does NOT help. Calibration NVS persistence confirmed across cascade)
+  #103  7-min-post-disconnect panic during flaky-AP recovery (refines #46 + #92)   (filed 2026-04-30 after the v0.4.31 overnight soak — 19-min AP outage with a flaky middle. 3/5 devices survived cleanly via v0.4.30 backoff + v0.4.31 SSID probe; 2/5 panicked at minute 7 when AP came back briefly. Same loopTask LoadProhibited @ 0x4008a9f2 shape (#46 family). v0.4.28 CASCADE_QUIET_MS=5000 expired by then. Proposed fix options: (a) stable-connectivity gate (3-min steady before un-silence), (b) TCP-probe-before-publish, (c) re-stamp _lastNetworkDisconnectMs on every WiFi-state-change. Recommended (c) first. HIGH priority — this fix unblocks #46 closure)
 
 ### E. CI / security gates (0)
   (all closed — #27 RESOLVED, #63 RESOLVED, #68 WONT_DO)
@@ -74,7 +75,7 @@ session-planning; reorder within a group freely.
 ### J. Operations / process (1) — new group filed 2026-04-29 evening
   #101  Log-rotation process audit — mosquitto + Node-RED + daily-health   (filed 2026-04-29 evening; mosquitto rotation works (rotate-log.ps1 from #83) but isn't documented; Node-RED file-logging rotation status unknown; daily-health/*.md doesn't need rotation but should be documented as "no action needed" alongside the others. Proposed fix: consolidate "Log rotation" section in MONITORING_PRACTICE.md + add daily-health check that verifies rotation tasks are still armed. MEDIUM priority)
 
-  Total open: 25  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0 + J1) — net delta 2026-04-29: v0.4.29 -5 (#87/#88/#89/#95/#97), v0.4.30 closes #98 partial (compressed schedule), v0.4.31 closes #98 fully (SSID probe) + #99 (LED patterns) + #100 (phased parallel + adaptive timeout); +1 from #101 (log-rotation audit). Detailed entries in SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+  Total open: 26  (A6 + B9 + C0 + D3 + E0 + F1 + G6 + H0 + I0 + J1) — net delta 2026-04-30: +1 from #103 (7-min-post-disconnect panic, surfaced by the v0.4.31 overnight soak failure). #46 stays open pending the #103 fix.
 
   Phase 2 R1 verification 2026-04-28 evening — outcome:
     Goal was no-flash verification of #47 / #39 against the operator's

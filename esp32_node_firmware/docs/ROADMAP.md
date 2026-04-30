@@ -2,8 +2,28 @@
 
 Forward plan synthesized from [SUGGESTED_IMPROVEMENTS.md](SUGGESTED_IMPROVEMENTS.md), [ESP32_FAILURE_MODES.md](ESP32_FAILURE_MODES.md), [memory_budget.md](memory_budget.md), [TOOLING_INTEGRATION_PLAN.md](TOOLING_INTEGRATION_PLAN.md), [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), and the per-version plans in `~/.claude/plans/`.
 
-Last updated: 2026-04-29 evening (post-v0.4.31 — three releases shipped today across the
-v0.4.27 → v0.4.31 range, including the v0.4.30 hotfix and the v0.4.31 #98/#99/#100 bundle).
+Last updated: 2026-04-30 morning (post-v0.4.31 overnight soak — RED verdict;
+cumulative v0.4.28-v0.4.31 stability bundle PARTIALLY validated, #103 filed
+for the recurring loopTask LoadProhibited panic that #46 has been waiting on).
+
+---
+
+## v0.4.31 overnight soak — 2026-04-29 18:51 → 2026-04-30 07:58 SAST · RED
+
+13 h 7 m soak across 5 devices (Charlie excluded). Real ~19-minute AP outage
+fired at 02:48 SAST. 3 of 5 devices survived without panic (Bravo, Echo,
+Foxtrot — v0.4.30 backoff + v0.4.31 SSID probe both worked as designed).
+2 panicked at minute 7 (Alpha, Delta — recurring `loopTask LoadProhibited @
+0x4008a9f2` shape on the v0.4.31 release ELF).
+
+Soak closure report: `C:\Users\drowa\soak-closures\2026-04-30_075829.md`
+
+#103 filed for the refined root-cause: the panic correlates to a brief
+AP-recovery window during a flaky-AP outage (not the disconnect itself).
+v0.4.28's `CASCADE_QUIET_MS = 5000` expires long before the brief
+recovery, so the publish path runs against a still-flaky link.
+
+#46 stays OPEN pending the #103 fix.
 
 ---
 
