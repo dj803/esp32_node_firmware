@@ -11,7 +11,7 @@
 #   # repeating loop, every 30 min for 24 h (48 cycles):
 #   powershell -File C:\path\to\broker_blip.ps1 -LoopMinutes 30 -DurationHours 24
 #
-# Logs every cycle to C:\Users\drowa\daily-health\broker_blip.log so we can
+# Logs every cycle to C:\Users\drowa\operator-daily-health\broker_blip.log so we can
 # correlate device boots against blip timestamps after the fact.
 
 param(
@@ -21,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$logDir  = 'C:\Users\drowa\daily-health'
+$logDir  = 'C:\Users\drowa\operator-daily-health'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
 $logFile = Join-Path $logDir 'broker_blip.log'
 

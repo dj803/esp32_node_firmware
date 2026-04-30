@@ -64,7 +64,7 @@ for entry in "${SEQUENCE[@]}"; do
 done
 
 if [[ $FAIL -gt 0 ]]; then
-  echo "release-smoke: ${FAIL} scenario(s) FAILED — see ~/daily-health/chaos-*.json for breakdowns" >&2
+  echo "release-smoke: ${FAIL} scenario(s) FAILED — see ~/operator-daily-health/chaos-*.json for breakdowns" >&2
   exit 1
 fi
 

@@ -34,7 +34,7 @@ YOU MAY (without asking)
     — non-elevated sessions get access-denied.)
   • Push Node-RED flows via /flows API
   • Disable/enable ESP-NOW + BLE per device
-  • Run /daily-health on demand
+  • Run /operator-daily-health on demand
   • Re-run chaos tests (M1-M4, EN1, O2, I1) per docs/CHAOS_TESTING.md
 
 DO NOT (without asking)

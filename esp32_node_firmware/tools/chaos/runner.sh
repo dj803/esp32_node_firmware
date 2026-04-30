@@ -37,7 +37,7 @@ set -euo pipefail
 BROKER_HOST="${BROKER_HOST:-192.168.10.30}"
 BROKER_PORT="${BROKER_PORT:-1883}"
 TOPIC_ROOT="${TOPIC_ROOT:-Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox}"
-REPORT_DIR="${REPORT_DIR:-$HOME/daily-health}"
+REPORT_DIR="${REPORT_DIR:-$HOME/operator-daily-health}"
 DEFAULT_WINDOW=60
 
 mkdir -p "$REPORT_DIR"

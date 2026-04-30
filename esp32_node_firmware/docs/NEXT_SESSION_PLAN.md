@@ -1,6 +1,6 @@
 # Next session plan
 
-Refreshed 2026-04-30 morning after `/morning-close`. The overnight v0.4.31
+Refreshed 2026-04-30 morning after `/operator-morning-close`. The overnight v0.4.31
 soak ran into the recurring panic shape that #46 has been waiting on a
 clean soak to close. Soak verdict: **RED**. #103 filed for the refined
 root-cause; #46 stays OPEN until the #103 fix ships and re-soaks clean.
@@ -74,7 +74,7 @@ end-to-end given the v0.4.31 rollout took 5:46.
 
 ### E. Re-arm soak
 
-Run `/evening-soak` on v0.4.32 after the rollout completes. Restore
+Run `/operator-evening-soak` on v0.4.32 after the rollout completes. Restore
 Charlie to the fleet first (operator decision — not in scope for the
 slash command).
 

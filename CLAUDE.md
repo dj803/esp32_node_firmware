@@ -42,9 +42,9 @@
 - Daily health retained summary: `Enigma/JHBDev/Office/Line/Cell/health/daily`
 
 ## Monitoring Routine
-- Run `/daily-health` (Claude slash command) each morning or via `/loop 24h /daily-health`.
+- Run `/operator-daily-health` (Claude slash command) each morning or via `/loop 24h /operator-daily-health`.
 - Backed by `C:\Users\drowa\tools\daily_health_check.py` + `daily_health_config.json`.
-- Reports land in `C:\Users\drowa\daily-health\`. Exit codes: 0=green, 1=yellow, 2=red.
+- Reports land in `C:\Users\drowa\operator-daily-health\`. Exit codes: 0=green, 1=yellow, 2=red.
 - Mosquitto file logging lives at `C:\ProgramData\mosquitto\mosquitto.log` once
   `apply-logging-config.ps1` has been run elevated.
 - **Non-elevated read of mosquitto.log is denied by default** (file owned by

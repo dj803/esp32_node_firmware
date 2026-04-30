@@ -15,13 +15,13 @@ first thing every morning before drilling deeper.
 ## Daily health check
 
 ```bash
-/daily-health    # Claude slash command
+/operator-daily-health    # Claude slash command
 # OR direct invocation:
 python C:/Users/drowa/tools/daily_health_check.py
 ```
 
 Compares today's snapshot against yesterday's for regressions. Reports
-land in `C:\Users\drowa\daily-health\`. Exit codes: `0=green`, `1=yellow`, `2=red`.
+land in `C:\Users\drowa\operator-daily-health\`. Exit codes: `0=green`, `1=yellow`, `2=red`.
 
 ## Live mosquitto stream
 

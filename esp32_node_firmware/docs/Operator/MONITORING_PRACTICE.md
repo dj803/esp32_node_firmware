@@ -32,11 +32,11 @@ Each device publishes:
 Routine ops should run all three. Quiet success and quiet failure must
 look different (#84 discipline).
 
-### 1. Daily snapshot — `/daily-health`
+### 1. Daily snapshot — `/operator-daily-health`
 
-Slash command (or `/loop 24h /daily-health`). Backed by
+Slash command (or `/loop 24h /operator-daily-health`). Backed by
 `C:\Users\drowa\tools\daily_health_check.py`. Reports land in
-`C:\Users\drowa\daily-health\` with exit codes 0=green, 1=yellow,
+`C:\Users\drowa\operator-daily-health\` with exit codes 0=green, 1=yellow,
 2=red.
 
 Checks:
@@ -49,7 +49,7 @@ Checks:
 week loses the granularity of regression detection (the script compares
 "today's snapshot" against "the most recent prior snapshot" — if that's
 8 days ago, gradual drift is harder to attribute). If automated via a
-Windows scheduled task or `/loop 24h /daily-health`, no manual action
+Windows scheduled task or `/loop 24h /operator-daily-health`, no manual action
 is needed.
 
 **What happens if the report folder gets big?** Each report is ~3 KB
@@ -58,7 +58,7 @@ of Markdown; even a year of daily reports is ~1 MB. The folder is
 The only secondary concern is that a Glob over thousands of `.md`
 files becomes slightly slower, which doesn't affect daily-health
 itself (it only reads the two newest reports). If you want to tidy
-up by hand: `rm ~/daily-health/2025-*.md` (keep the current year, prune
+up by hand: `rm ~/operator-daily-health/2025-*.md` (keep the current year, prune
 older).
 
 **Auto-resolver gotcha.** Pre-2026-04-29 the `expected_firmware`
@@ -94,7 +94,7 @@ someone eyeballs the LEDs — see CLAUDE.md "Monitoring sessions".
 
 ## Routine flow (what to actually do every day)
 
-1. Open the day with `/daily-health`. Green → move on.
+1. Open the day with `/operator-daily-health`. Green → move on.
 2. If yellow/red, run `/fleet-status` to localise which device(s).
 3. For abnormal `boot_reason`, decode the coredump (worktree-built ELF
    for the device's `firmware_version`, `addr2line -pfiaC` on the
@@ -158,7 +158,7 @@ to be a fresh heartbeat). The other 4 production devices' retained
 short window saw only `online:false` and filtered them out. Lengthening
 to 75 s captured all 5 immediately.
 
-`/fleet-status` and `/daily-health` both use ≥75 s windows for this
+`/fleet-status` and `/operator-daily-health` both use ≥75 s windows for this
 reason; ad-hoc `mosquitto_sub` invocations need the same.
 
 ## Anti-patterns

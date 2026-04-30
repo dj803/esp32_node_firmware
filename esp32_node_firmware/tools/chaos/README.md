@@ -29,7 +29,7 @@ tools/chaos/runner.sh M3 --window 300       # 180 s blip + 120 s observation
 tools/chaos/runner.sh M4 --window 90
 ```
 
-Reports land in `~/daily-health/chaos-<scenario>-<ts>.json`. Schema:
+Reports land in `~/operator-daily-health/chaos-<scenario>-<ts>.json`. Schema:
 
 ```json
 {
