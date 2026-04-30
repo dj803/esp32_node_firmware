@@ -177,7 +177,17 @@ check_archive_completeness() {
       # Accept EITHER the new STATUS: footer convention OR the
       # legacy "(addressed|resolved YYYY-MM-DD ...)" parenthetical
       # at the entry title line. Both are valid acknowledgements.
-      if ! echo "$block" | grep -qE '^    STATUS: ' \
+      #
+      # (2026-04-30 fix) Allow ANY leading-whitespace indent on the
+      # STATUS line. Different archive entries use different body
+      # indents (3-space for the audit-finding-style entries, 4-space
+      # for the recent ones, 5-space for sub-list / Roman-numeral
+      # bodies, occasionally 0-space when appended without re-indent).
+      # Forcing all entries to a single indent rule would mangle the
+      # entries' visual structure; loosening the regex is the right
+      # fix. The `STATUS: ` token is unique enough — there's no
+      # legitimate non-status line that starts with `STATUS:`.
+      if ! echo "$block" | grep -qE '^[[:space:]]*STATUS: ' \
          && ! echo "$block" | head -1 | grep -qiE '\((addressed|resolved|wont_do|won.t do|moot|deferred|partial)\b'; then
         status_missing+=("$n")
       fi
