@@ -1,129 +1,112 @@
 # Next session plan
 
-Refreshed 2026-04-30 morning after `/operator-morning-close`. The overnight v0.4.31
-soak ran into the recurring panic shape that #46 has been waiting on a
-clean soak to close. Soak verdict: **RED**. #103 filed for the refined
-root-cause; #46 stays OPEN until the #103 fix ships and re-soaks clean.
+Refreshed 2026-04-30 mid-morning after v0.4.32 fleet rollout. The
+v0.4.31 overnight soak verdict was RED (#103); the fix shipped + rolled
+to fleet within the morning session. Next-session is dominated by
+**re-soak** to confirm #103 closure and unblock #46.
 
-## State at session close (2026-04-30 ~08:00 SAST)
+## State at session close (2026-04-30 ~10:30 SAST)
 
 | | |
 |---|---|
-| Master HEAD | `dcd7c65` + #103 commit pending below |
-| Latest tag | v0.4.31 |
-| Fleet | **5/5 soaking devices on v0.4.31**, all heartbeating; Alpha + Delta rebooted from panic during soak; Charlie off-fleet per operator |
-| Backlog | OPEN **26** (was 25; +1 from #103), RESOLVED **64**, WONT_DO **11** |
-| Soak closure | `C:\Users\drowa\soak-closures\2026-04-30_075829.md` |
-| Soak baseline | `C:\Users\drowa\soak-baselines\2026-04-29_185000.md` |
+| Master HEAD | `06c976e` (v0.4.32 fixes) on top of `bf6bcfd` (operator-* rename) |
+| Latest tag | **v0.4.32** (shipped this morning) |
+| Fleet | **6/6 on v0.4.32**, all heartbeating cleanly post-rollout (Charlie restored to fleet by operator) |
+| Backlog | OPEN **25**, RESOLVED **66** (was 64 — +2 from #103/#102), WONT_DO **11** |
+| Soak status | armed for 2026-04-30 evening — operator runs `/operator-evening-soak` at ~17:00–20:00 SAST |
+| Known retained coredumps | 6 retained `/diag/coredump` payloads, all from pre-v0.4.32 firmware (Alpha+Delta v0.4.31 #103 panics + 4 older). No fresh v0.4.32-prefix coredumps post-rollout |
 
-## Highest-priority next-session item — #103 fix
+## Highest-priority next-session item — soak closure for #46
 
-The overnight soak surfaced the missing piece for #46 closure. Path:
+The v0.4.32 re-soak is the gate for #46 closure. Path:
 
-### A. Symbolic-decode `0x4008a9f2` against the v0.4.31 release ELF
+### A. `/operator-evening-soak` at ~17:00–20:00 SAST tonight
 
-First time we have a decodable instance of this panic shape on a
-v0.4.28+ build. ELF SHA prefix `0ee173b8`. Procedure per
-[../COREDUMP_DECODE.md](../COREDUMP_DECODE.md):
+Run on operator's bench. Expect a clean GO gate (6/6 fresh heartbeats,
+no abnormal pre-existing boots, no in-flight OTA, no blip-watcher
+activity). Baseline file lands in
+`C:\Users\drowa\soak-baselines\YYYY-MM-DD_HHMMSS.md`.
 
-1. Find the v0.4.31 ELF — either download from the GitHub release
-   artefacts (if retention window is open) or rebuild from the v0.4.31
-   tag locally and confirm its `app_sha_prefix` matches `0ee173b8`.
-2. `xtensa-esp32-elf-addr2line -e firmware.elf 0x4008a9f2` →
-   function:line.
-3. Decode the rest of the backtrace frames:
-   `0x400e4659 0x400e2881 0x400ef3ce 0x400fbb7a 0x40103ebb 0x4010bfd0 0x4008ff51`.
-4. Identify the call path from `loopTask` down to the LoadProhibited
-   instruction. Likely sits inside `mqttPublish()` →
-   AsyncMqttClient::publish() → AsyncTCP send.
+Recommended length: **8–12 h** (overnight default) per CLAUDE.md
+"Soak windows" — matches the ship-cadence of the recent fixes.
 
-### B. Apply the proposed v0.4.32 fix (per #103 archive entry)
+### B. `/operator-morning-close` next morning
 
-Three options, recommended order:
+Reads the baseline, captures current state, decides GREEN/YELLOW/RED
+per the closure criteria.
 
-1. **(c) Re-stamp `_lastNetworkDisconnectMs` on every WiFi-state-change
-   event.** Smallest change. In main.cpp's WiFi event handler, on any
-   transition (CONNECTED, DISCONNECTED, IP_LOST, etc.), call
-   `mqttMarkNetworkDisconnect()` so the brief AP-return at the start
-   of a flaky-recovery window doesn't open the publish window.
-2. **(a) Stable-connectivity gate.** Only un-silence publishes after
-   N consecutive heartbeat-cadence-passes (e.g. 60 s × 3) of stable
-   WiFi + MQTT. Larger surface; more conservative. Apply if (c) alone
-   doesn't fully eliminate.
-3. **(b) TCP-probe-before-publish.** Cheap defence-in-depth at the
-   publish call site itself. Apply if (c) + (a) still don't fully
-   eliminate (less likely).
+**Verdict outcomes:**
+- **GREEN** → close #46 (close cumulative v0.4.22→v0.4.32 stability
+  bundle as field-validated).
+- **YELLOW** → investigate the FLAG; #46 stays open.
+- **RED** → look for a new failure shape; if it's the same
+  `0x4008a9f2` strlen pattern, escalate to #103 fix option (a)
+  stable-connectivity gate (3 min steady before un-silencing
+  publishes), since (c) alone wasn't enough.
 
-After fix: bench-flash to one device, re-run a soak with a synthetic
-flaky-AP scenario (start the blip-watcher with multiple short blips
-spaced ~30 s apart to reproduce the partial-recovery), confirm no
-panic. Then full overnight soak. Then close #46.
+### C. If GREEN — close #46
 
-### C. Apply #102 fix (independent, can ship in parallel)
+Move the index entry to RESOLVED block. Append archive STATUS line.
+The closure narrative: cumulative bundle of #51 (v0.4.16/v0.4.22),
+#78 (v0.4.28), #97 (v0.4.29), #98 (v0.4.30+v0.4.31), #103 (v0.4.32)
+field-validated by the v0.4.32 overnight soak.
 
-`RestartCause::set("ota_reboot")` (and 4 other context-specific tags)
-before each `ESP.restart()` in ota.h. Confirmed gap from yesterday's
-investigation. ~5 lines per call site. Lives at lines 80, 541, 606,
-626, 645 of `include/ota.h` (per the #102 archive entry).
+## Other items deferred from today
 
-### D. Tag v0.4.32 with both fixes
+### D. v0.5.0 hardware bring-up (G in priority)
+Operator may wire the 4×4 NeoPixel matrix + 2-ch relay onto Alpha
+per [Operator/HARDWARE_WIRING.md](Operator/HARDWARE_WIRING.md).
+Operator signalled "probably tonight" earlier in the session —
+proceed in parallel with the soak (the matrix + relay are additive,
+won't perturb the soak signal).
 
-Commit + tag + push. CI builds. OTA-rollout via the new phased-parallel
-script (`tools/dev/ota-rollout.sh 0.4.32`). Should complete in ~3 min
-end-to-end given the v0.4.31 rollout took 5:46.
+### E. #91 ESP32-WROOM-32U + external antenna procurement
+Operator orders parts (~$15–30). Bench-test against current
+WROOM-32 fleet for asymmetry / RF range / orientation sensitivity
+once parts arrive.
 
-### E. Re-arm soak
+### F. Phase 2 ranging cluster
+#37, #38, #39, #42, #47, #49, #86, #90, #91 still open. Bundle
+option after #46 closes (re-soak GREEN unblocks).
 
-Run `/operator-evening-soak` on v0.4.32 after the rollout completes. Restore
-Charlie to the fleet first (operator decision — not in scope for the
-slash command).
+### G. #93 Production firmware serial-silent decision
+Operator decision required: status quo (A), periodic
+heartbeat-to-serial (B), canary-only watermark prints (C), or
+on-demand cmd/diag/serial_dump (D). B+D recommended in archive
+entry.
 
-## Other items deferred from yesterday
-
-### F. v0.5.0 hardware bring-up
-Bravo wiring + relay/Hall code. Operator may wire the 4x4 NeoPixel
-matrix + 2-ch relay onto Alpha per
-[Operator/HARDWARE_WIRING.md](Operator/HARDWARE_WIRING.md). Recommend
-**defer until #103 fix ships** — adding hardware before stabilising
-the recurring panic complicates diagnosis.
-
-### G. #91 ESP32-WROOM-32U + external antenna procurement
-Operator orders parts (~$15–30). Bench-test against current WROOM-32
-fleet for asymmetry / RF range / orientation sensitivity.
-
-### H. Phase 2 ranging cluster
-#37, #38, #39, #42, #47, #49, #86, #90, #91 still open. Bundle option
-after #46 + #103 close.
-
-### I. #99 LED patterns soak validation
-The retuned LED patterns shipped in v0.4.31 are visible on Alpha but
-haven't been operator-validated across the rest of the fleet. Confirm
-each device's LED visually matches the v0.4.31 reference table in
-[Operator/LED_REFERENCE.md](Operator/LED_REFERENCE.md).
+### H. #101 Log-rotation process audit
+MEDIUM priority. Documentation work in MONITORING_PRACTICE.md +
+a daily-health check. Pairs naturally with a quiet session.
 
 ## Won't-do at next-session start
 
-- Close #46 — soak failed the closure criteria, fix-shaped work is needed first.
-- Roll the soak forward without a #103 fix — same scenario will reproduce.
-- Touch v0.5.0 hardware code until #103 ships.
-- Auto-rollback from v0.4.31 — partial wins (3/5 survival, heap stable,
-  SSID probe) are real and worth keeping.
+- Trigger another OTA on v0.4.32 — fleet just rolled out, let it
+  soak.
+- Touch #46 closure prematurely — wait for the morning soak verdict.
+- Bench-flash anything during the soak window — the operator's call
+  per "Self-corrections from 2026-04-30 review" (ask before
+  bench-flash during soak).
+- Re-roll v0.4.32 to canary — Charlie is back in production fleet
+  per operator's call this morning.
 
 ## Open questions for operator
 
-- When to re-add Charlie to the fleet? It was excluded for tonight per
-  your earlier intent.
-- v0.4.32 timing — ship this morning after symbolic decode, or wait
-  for clearer root-cause data first?
-- v0.5.0 hardware wiring — proceed in parallel (matrix + relay are
-  additive, won't affect #103) or defer?
+- v0.5.0 wiring: tonight, or after the soak result?
+- If soak goes GREEN: do you want #46 + #103 + #102 closure
+  bundled into the morning's session-close commit, or batched
+  for a later docs sweep?
+- #91 antenna procurement timing — anything we can do now to
+  prepare the bench rig (regulatory check, mount design)?
 
 ## Reference
 
-- Soak closure: `C:\Users\drowa\soak-closures\2026-04-30_075829.md`
-- Soak baseline: `C:\Users\drowa\soak-baselines\2026-04-29_185000.md`
-- #103 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md
-- #102 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md
+- v0.4.32 release: https://github.com/dj803/esp32_node_firmware/releases/tag/v0.4.32
+- OTA manifest: https://dj803.github.io/esp32_node_firmware/ota.json (v0.4.32)
+- Rollout log: `esp32_node_firmware/ota-rollout-20260430-*.jsonl` (most recent)
+- v0.4.31 soak closure: `C:\Users\drowa\soak-closures\2026-04-30_075829.md`
+- #103 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md (line 5760+ with STATUS)
+- #102 archive entry: docs/SUGGESTED_IMPROVEMENTS_ARCHIVE.md (line 5682+ with STATUS)
 - COREDUMP decode runbook: docs/COREDUMP_DECODE.md
 - v0.5.0 hardware: docs/PLAN_RELAY_HALL_v0.5.0.md +
   docs/Operator/HARDWARE_WIRING.md
