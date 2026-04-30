@@ -155,6 +155,7 @@ jobs:
         env:
           - esp32dev_minimal
           - esp32dev_relay_hall
+          - esp32dev_ble
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -233,6 +234,7 @@ jobs:
             firmware.bin
             firmware-esp32dev_minimal.bin
             firmware-esp32dev_relay_hall.bin
+            firmware-esp32dev_ble.bin
           name: "Firmware v${{ steps.version.outputs.version }}"
           body: |
             ## ESP32 Credential Bootstrap Firmware v${{ steps.version.outputs.version }}
@@ -248,6 +250,7 @@ jobs:
             | `firmware.bin` | Default (RFID + LED + ranging) — what OTA delivers |
             | `firmware-esp32dev_minimal.bin` | RFID disabled (smaller flash footprint) |
             | `firmware-esp32dev_relay_hall.bin` | + 2-channel relay + Hall sensor (v0.5.0 hardware) |
+            | `firmware-esp32dev_ble.bin` | + NimBLE scanner for beacon tracking (10% scan duty for WiFi coexistence) |
 
             ```
             esptool.py --chip esp32 --baud 921600 write_flash 0x10000 firmware.bin
