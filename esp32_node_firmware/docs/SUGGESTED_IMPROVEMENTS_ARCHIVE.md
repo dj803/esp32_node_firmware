@@ -5678,6 +5678,42 @@ Next steps (operator decision):
         - .node-red/settings.js logging section (verify rotation
           config — currently unknown)
 
+     STATUS: RESOLVED 2026-04-30 — docs + monitoring-check landed.
+
+     AUDIT FINDINGS (2026-04-30):
+        - mosquitto.log: rotate-log.ps1 lives at
+          C:\ProgramData\mosquitto\rotate-log.ps1 (not under
+          repo tools/ as the original entry assumed). Daily
+          scheduled task `MosquittoLogRotate` is NOT actually
+          armed — the script's setup-comment instructions
+          were never executed. Size-cap fallback (100 MB)
+          inside the script is what's been keeping the log
+          bounded; current size 1.4 MB on 2026-04-30. Daily
+          task install command is documented in
+          MONITORING_PRACTICE.md "Log rotation".
+        - Node-RED log: settings.js sets filename via
+          `new Date().toISOString().slice(0,10)` at handler-init
+          (Node-RED startup), NOT per-write. So the filename
+          is locked to startup date and grows until restart.
+          One file present 2026-04-30:
+          `C:\Users\drowa\node-red-logs\node-red-2026-04-27.log`
+          ~14 KB. Not a fire at info level; flagged as future
+          cleanup if operator enables debug/trace.
+        - operator-daily-health/*.md: ~3 KB each, ~1 MB/year,
+          no rotation needed — documented as such.
+        - blip.log: chaos-frequency-bounded, ~negligible.
+
+     SHIPPED:
+        - docs/Operator/MONITORING_PRACTICE.md "Log rotation"
+          section with the table + per-file detail blocks.
+        - C:\Users\drowa\tools\daily_health_check.py
+          check_tooling_readiness sub-check 5: queries
+          `schtasks /Query /TN "MosquittoLogRotate"`, flags
+          YELLOW with the install command if missing.
+          Verified firing on 2026-04-30 — daily-health now
+          reports the gap on every run until operator
+          installs the task.
+
 
 102. OTA-reboot path doesn't stamp restart_cause reliably
      DISCOVERED: 2026-04-29 evening daily-health run. Every device's
@@ -5932,3 +5968,51 @@ Next steps (operator decision):
 
      #46 stays OPEN until a clean overnight soak on v0.4.32+
      confirms no recurrence. Re-soak ~17:00-20:00 SAST tonight.
+
+
+104. CI variant binaries not uploaded to GitHub release
+     DISCOVERED: 2026-04-30 mid-morning during v0.5.0 hardware
+     wiring prep. `docs/Operator/HARDWARE_WIRING.md` instructed
+     the operator to "download `firmware-relay_hall.bin` from
+     the GitHub release artefacts" — but the v0.4.32 release
+     ships only the standard `firmware.bin` (verified via
+     `gh release view v0.4.32 --json assets`).
+
+     The `[env:esp32dev_relay_hall]` and `[env:esp32dev_minimal]`
+     variants ARE built by CI on every release (build.yml
+     `build-variants` job, matrix). The job's comment explicitly
+     states "No artifact upload — purely a compile gate"
+     (build.yml line 141).
+
+     This means:
+     - Tonight's v0.5.0 wiring requires the operator to USB-flash
+       a locally-built `.pio/build/esp32dev_relay_hall/firmware.bin`
+       (no remote OTA path).
+     - HARDWARE_WIRING.md was misleading until 2026-04-30 — fixed
+       in this session to give the local-build commands as the
+       working path.
+     - Once OTA-routing per device variant lands (post-v0.5.0,
+       depends on a NVS `BUILD_VARIANT` field + manifest fan-out),
+       the variant publish step will be needed.
+
+     PROPOSED FIX:
+     Two steps to build.yml:
+     1. In `build-variants` job, add an upload-artifact step that
+        publishes `firmware-{matrix.env}.bin` (e.g. `firmware-esp32dev_relay_hall.bin`).
+     2. In the `release` job, attach those artifacts to the GH
+        release alongside `firmware.bin`.
+     ~10-15 lines of YAML; one tag re-cut to validate.
+
+     PRIORITY: LOW — workaround (local build + USB-flash) is
+     ~5 min and the operator does this on the bench anyway. But
+     once variant-OTA-routing exists, this becomes a hard gate.
+
+     LINKS:
+        - .github/workflows/build.yml lines 144-185
+          (build-variants job — currently has no upload step)
+        - docs/Operator/HARDWARE_WIRING.md (was misleading; fixed
+          this session)
+        - #71 (resolved 2026-04-28 — variant build gate, the job
+          this entry would extend)
+        - #58 (planned post-v0.5.0 — per-device variant routing
+          via NVS, the consumer of the published binaries)

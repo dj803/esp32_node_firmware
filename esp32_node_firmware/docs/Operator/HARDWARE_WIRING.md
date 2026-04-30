@@ -114,22 +114,83 @@ The relay module is gated behind `#define RELAY_ENABLED` in
   `// #define RELAY_ENABLED` (config.h:672), rebuild + USB-flash that
   device. The OTA path won't deliver this — it's a compile-time gate.
 - **Variant build (preferred):** flash the `[env:esp32dev_relay_hall]`
-  variant from PlatformIO. CI builds this variant on every release;
-  download `firmware-relay_hall.bin` from the GitHub release artefacts
-  and USB-flash, OR set the device's `BUILD_VARIANT` NVS field once
-  per-device variant routing is finalised (#58 — currently planned for
-  post-v0.5.0).
+  variant from PlatformIO locally:
+  ```bash
+  cd esp32_node_firmware
+  python -m platformio run -e esp32dev_relay_hall
+  python -m platformio run -e esp32dev_relay_hall -t upload --upload-port COM4
+  # (use the pio-utf8.sh wrapper if you hit the cp1252 console hang — #95)
+  ```
+  CI builds this variant on every release as a compile gate (build.yml
+  `build-variants` job) but **does NOT upload the variant binary to
+  the GitHub release** — the published `firmware.bin` is the standard
+  esp32dev only. So the path right now is local-build + USB-flash. A
+  backlog entry to publish variant binaries alongside `firmware.bin`
+  is queued. Once OTA-routing per device variant lands (post-v0.5.0),
+  the operator can pin a device to `BUILD_VARIANT=relay_hall` in NVS
+  and OTA delivers the right binary.
 
-After enabling, control via MQTT:
+After enabling, control via MQTT. Schema is `{"ch":<n>,"state":<bool>}`
+for a single channel, or `{"ch":"all","state":<bool>}` to set both
+together (verified against `mqtt_client.h::onMqttMessage` — the
+PLAN doc's schema is canonical; an earlier draft of this doc had the
+wrong combined-fields example):
 
 ```bash
-# Energise CH1, leave CH2 off
-mosquitto_pub -h 192.168.10.30 -r \
+# Energise CH1
+mosquitto_pub -h 192.168.10.30 \
   -t 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/cmd/relay' \
-  -m '{"ch1":true,"ch2":false}'
+  -m '{"ch":1,"state":true}'
+
+# De-energise CH2
+mosquitto_pub -h 192.168.10.30 \
+  -t 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/cmd/relay' \
+  -m '{"ch":2,"state":false}'
+
+# All channels off (also accepts "all" for ch)
+mosquitto_pub -h 192.168.10.30 \
+  -t 'Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/<uuid>/cmd/relay' \
+  -m '{"ch":"all","state":false}'
 ```
 
-State publishes back to `<root>/<uuid>/status/relay` (retained).
+State publishes back to `<root>/<uuid>/status/relay` (retained) as
+`{"ch1":<bool>,"ch2":<bool>}` — that's the **status** payload (combined
+view of both channels), not the **command** payload.
+
+## Quick smoke test (after firmware flash + wiring)
+
+Once Alpha (or any device) is on the relay+hall variant build with the
+hardware physically attached, this 5-step sequence proves end-to-end
+that the firmware sees the modules:
+
+```bash
+UUID="<your_device_uuid>"   # resolve from /fleet-status if unsure
+T="Enigma/JHBDev/Office/Line/Cell/ESP32NodeBox/$UUID"
+
+# 1. Confirm relay_enabled + hall_enabled in heartbeat (75 s window)
+timeout 75 mosquitto_sub -h 192.168.10.30 -W 75 -t "$T/status" \
+  | grep -oE '"(relay|hall)_enabled":[a-z]+' | head -4
+
+# 2. Click relay 1 closed (audible click) and verify status echo
+mosquitto_pub -h 192.168.10.30 -t "$T/cmd/relay" -m '{"ch":1,"state":true}'
+sleep 1
+timeout 5 mosquitto_sub -h 192.168.10.30 -W 5 -t "$T/status/relay"
+
+# 3. Click relay 1 open
+mosquitto_pub -h 192.168.10.30 -t "$T/cmd/relay" -m '{"ch":1,"state":false}'
+
+# 4. Watch live hall telemetry for 10 s — should publish at 1 Hz default
+timeout 10 mosquitto_sub -h 192.168.10.30 -W 10 -t "$T/telemetry/hall"
+
+# 5. Wave a magnet near the sensor — expect threshold-edge events
+timeout 30 mosquitto_sub -h 192.168.10.30 -W 30 -t "$T/telemetry/hall/edge"
+```
+
+If any step is silent: re-check `RELAY_ENABLED`/`HALL_ENABLED` is in
+the binary (`firmware-relay_hall.bin` from the GH release artefacts,
+NOT plain `firmware.bin`), wiring per the table above, and that the
+heap-largest didn't drop significantly post-flash (#84-style
+verify-after-action discipline).
 
 ## Bench checklist before powering up
 

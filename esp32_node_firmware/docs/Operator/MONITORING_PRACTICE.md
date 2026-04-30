@@ -161,6 +161,74 @@ to 75 s captured all 5 immediately.
 `/fleet-status` and `/operator-daily-health` both use ≥75 s windows for this
 reason; ad-hoc `mosquitto_sub` invocations need the same.
 
+## Log rotation
+
+Three running log files plus the daily-health archive. Audit landed
+2026-04-30 (#101); summary of "do I need to clean up logs":
+
+| File | Path | Rotation | Status |
+|---|---|---|---|
+| `mosquitto.log` | `C:\ProgramData\mosquitto\mosquitto.log` | `rotate-log.ps1` daily + 100 MB size cap | **Daily task gap** — script exists, scheduled task not armed; size cap is the backstop |
+| Node-RED log | `C:\Users\drowa\node-red-logs\node-red-YYYY-MM-DD.log` | Date in filename set at Node-RED startup, never re-evaluated | **Known gap** — file grows until Node-RED restarts; low priority (smaller than mosquitto, not crisis-sized) |
+| `operator-daily-health/*.md` | `C:\Users\drowa\operator-daily-health\` | None needed | ~3 KB each; a year of daily reports = ~1 MB. No action |
+| `blip.log` | `C:\ProgramData\mosquitto\blip.log` | Bounded by chaos-frequency | ~negligible. No action |
+
+### Mosquitto rotation
+
+Script: `C:\ProgramData\mosquitto\rotate-log.ps1`. Renames
+`mosquitto.log` to `mosquitto.log.YYYY-MM-DD`, keeps the last 5
+generations, restarts the mosquitto service so a fresh log is opened.
+Two trigger paths:
+
+1. **Daily** (intended): Windows scheduled task `MosquittoLogRotate`
+   runs as SYSTEM at 02:00. **Currently NOT armed**. To set up:
+   ```powershell
+   # Run from elevated PowerShell:
+   schtasks /Create /TN "MosquittoLogRotate" `
+     /TR "powershell -File C:\ProgramData\mosquitto\rotate-log.ps1" `
+     /SC DAILY /ST 02:00 /RU SYSTEM /F
+   ```
+2. **Size-cap backstop** (already active): if mosquitto.log crosses
+   100 MB, the next invocation rotates immediately even if
+   "already rotated today." Catches the #83 freeze pattern (mosquitto
+   silently fails to re-open after ~200 MB on Windows).
+
+`/operator-daily-health` Tooling readiness check #5 verifies the
+scheduled task is armed; YELLOW if missing.
+
+### Node-RED rotation (known gap)
+
+`settings.js` sets the log filename via
+`'node-red-' + new Date().toISOString().slice(0, 10) + '.log'` at
+handler-init time (Node-RED startup), NOT per-write. Result: the
+filename is locked to whatever date Node-RED was restarted on, and
+the file grows indefinitely until next Node-RED restart. Current
+state (2026-04-30): one file `node-red-2026-04-27.log` ~14 KB, has
+been appended to since 2026-04-27 startup.
+
+Not a fire — Node-RED logs grow ~10-20 KB/day at info level. But
+worth fixing if the operator decides to enable `debug` or `trace`
+levels. Two options:
+- Replace the date-in-filename with a Winston rotating-file
+  transport (preferred — npm `winston-daily-rotate-file`).
+- Or wrap it in a PowerShell scheduled task that rolls
+  `node-red-logs/*.log` weekly, same shape as `rotate-log.ps1`.
+
+Filed for future cleanup. No daily-health check yet — file isn't
+big enough to warrant one.
+
+### Daily-health archive
+
+`~/operator-daily-health/*.md`, one per run. ~3 KB Markdown each. No
+rotation needed — a year of daily reports is ~1 MB. Glob-over-thousands
+is the only theoretical concern; daily-health itself only reads the
+two newest reports, so even at 10k+ files the script stays fast.
+
+If you want to tidy by hand:
+```bash
+rm ~/operator-daily-health/2025-*.md   # keep current year, prune older
+```
+
 ## Anti-patterns
 
 - **Trusting the dashboard alone** — Node-RED's `boot_history` view is
