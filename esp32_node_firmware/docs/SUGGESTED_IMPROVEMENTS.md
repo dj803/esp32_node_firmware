@@ -73,10 +73,9 @@ session-planning; reorder within a group freely.
 
 ### J. Operations / process (0) — #101 RESOLVED 2026-04-30
 
-### K. CI / release tooling (1) — new group filed 2026-04-30 mid-morning
-  #104  CI variant binaries not uploaded to GitHub release   (filed 2026-04-30 during v0.5.0 wiring prep; build-variants job builds esp32dev_minimal + esp32dev_relay_hall on every release as a compile gate but doesn't upload the binaries; HARDWARE_WIRING.md instructed operator to download from release artefacts but only firmware.bin is published. Workaround: local build + USB-flash. Hard gate when post-v0.5.0 variant-OTA-routing lands. LOW priority)
+### K. CI / release tooling (0) — #104 RESOLVED 2026-04-30 same-day-as-filed
 
-  Total open: 25  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0 + J0 + K1) — net delta 2026-04-30: -3 from #103/#102/#101 RESOLVED, +1 from #104 filed = net -2. #46 stays open pending re-soak on v0.4.32 to confirm the #103 fix holds.
+  Total open: 24  (A6 + B9 + C0 + D2 + E0 + F1 + G6 + H0 + I0 + J0 + K0) — net delta 2026-04-30: -4 (#103/#102/#101/#104 all RESOLVED). #46 stays open pending re-soak on v0.4.32 to confirm the #103 fix holds.
 
   Phase 2 R1 verification 2026-04-28 evening — outcome:
     Goal was no-flash verification of #47 / #39 against the operator's
@@ -196,6 +195,7 @@ session-planning; reorder within a group freely.
 
   #102  OTA-reboot path doesn't stamp restart_cause reliably               (resolved 2026-04-30 in v0.4.32 — RestartCause::set() added at all 5 ESP.restart() sites in include/ota.h with corresponding tag strings: ota_progress_timeout / ota_preflight_heap_low / ota_manifest_failure / ota_reboot / ota_flash_failed; full text in archive)
   #103  7-min-post-disconnect panic during flaky-AP recovery               (resolved 2026-04-30 in v0.4.32 — option (c) shipped: WiFiEvent handler in main.cpp now calls mqttMarkNetworkDisconnect() at the top of every event so the cascade-quiet window is refreshed atomically on each WiFi state transition, closing the brief mid-recovery publish window that v0.4.28's loop-driven stamp could miss; full text in archive)
-  #101  Log-rotation process audit                                         (resolved 2026-04-30 — docs/Operator/MONITORING_PRACTICE.md now has a "Log rotation" section covering mosquitto.log (rotate-log.ps1 + size-cap, but daily task gap noted), Node-RED log (date-in-filename gap noted, low priority), operator-daily-health/*.md (no action), blip.log (no action). daily_health_check.py check_tooling_readiness sub-check 5 added — verifies MosquittoLogRotate scheduled task armed; full text in archive)
+  #101  Log-rotation process audit                                         (resolved 2026-04-30 — docs/Operator/MONITORING_PRACTICE.md now has a "Log rotation" section covering mosquitto.log (rotate-log.ps1 + size-cap, but daily task gap noted), Node-RED log (date-in-filename gap noted, low priority), operator-daily-health/*.md (no action), blip.log (no action). daily_health_check.py check_tooling_readiness sub-check 5 added — checks behavioral evidence of recent rotation since SYSTEM-owned scheduled tasks aren't visible to non-elevated PowerShell; full text in archive)
+  #104  CI variant binaries not uploaded to GitHub release                 (resolved 2026-04-30 in build.yml — build-variants job now uploads firmware-{env}.bin per matrix entry; release job needs both [build, build-variants] and attaches firmware.bin + firmware-esp32dev_minimal.bin + firmware-esp32dev_relay_hall.bin. Validates on next tag-cut. HARDWARE_WIRING.md updated to document local-build path until then. Full text in archive)
 
-  Total resolved: 67
+  Total resolved: 68

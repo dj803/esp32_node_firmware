@@ -17,6 +17,11 @@ Thumbs.db
 Logs/
 .claude/scheduled_tasks.lock
 
+# Per-rollout logs from tools/dev/ota-rollout.sh — written to wherever
+# the script was invoked. One file per rollout, ~2-5 KB each. Useful
+# for forensics after the fact but not source-controlled.
+ota-rollout-*.jsonl
+
 # Python build / cache
 __pycache__/
 *.pyc

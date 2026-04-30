@@ -6016,3 +6016,19 @@ Next steps (operator decision):
           this entry would extend)
         - #58 (planned post-v0.5.0 — per-device variant routing
           via NVS, the consumer of the published binaries)
+
+     STATUS: RESOLVED 2026-04-30 in build.yml — same-day fix.
+     Two CI workflow changes:
+        1. `build-variants` job gains an upload-artifact step per
+           matrix entry. Each variant produces
+           `firmware-{matrix.env}.bin` named for the env it builds.
+        2. `release` job now `needs: [build, build-variants]`,
+           downloads all `firmware*` artifacts, attaches all three
+           binaries (firmware.bin + firmware-esp32dev_minimal.bin
+           + firmware-esp32dev_relay_hall.bin) to the GitHub
+           Release. Release notes body updated with a binary
+           selection table.
+
+     Will validate on next tag-cut (probably v0.4.33 — there's no
+     reason to push a tag just for this). Until then, operator
+     uses the local-build path documented in HARDWARE_WIRING.md.
